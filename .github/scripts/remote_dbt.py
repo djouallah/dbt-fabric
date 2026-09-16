@@ -12,7 +12,7 @@ original delta repo never ran dbt on the runner: its run_dbt.py used duckrun's R
 HOW. duckrun.workspace(...).run_python(...) ships this repo to a throwaway Fabric Python
 notebook of FABRIC_CORES vCores, pip-installs requirements/<engine>.txt there, mints the tokens
 the profile needs from notebookutils (the kernel-side `setup` hook below), runs
-.github/scripts/dbt_in_fabric.py as a subprocess with the config env forwarded, streams the log
+.github/scripts/run_in_fabric.py as a subprocess with the config env forwarded, streams the log
 back as `[remote]` lines, and deletes the notebook. This script then lifts the parity
 fingerprint out of that log so history/parity/<engine>.json lands where the upload step finds
 it for the local legs too.
@@ -44,7 +44,7 @@ CORES = int(os.environ.get("FABRIC_CORES", "8"))
 # emitted, and NOTHING token-shaped. Not forwarded on purpose: AZURE_TRANSPORT_OPTION_TYPE /
 # CURL_CA_INFO (inside Fabric DuckDB's default OneLake transport is the one that works, and the
 # on-run-start hook renders to nothing when the variable is unset) and DUCKDB_TEMP_DIR
-# (dbt_in_fabric.py points it at the notebook's 135 GiB work disk, not the 19 GiB /tmp overlay).
+# (run_in_fabric.py points it at the notebook's 135 GiB work disk, not the 19 GiB /tmp overlay).
 FORWARD = (
     "FILES_PATH", "LANDING_PATH", "ONELAKE_TABLES_PATH",
     "WAREHOUSE_PATH", "ONELAKE_ENDPOINT",
@@ -98,7 +98,7 @@ def main() -> int:
 
     result = ws.run_python(
         str(REPO),
-        entry=".github/scripts/dbt_in_fabric.py",
+        entry=".github/scripts/run_in_fabric.py",
         args=[engine],
         cores=CORES,
         lakehouse=os.environ["DATA_LAKEHOUSE_ID"],
@@ -109,7 +109,7 @@ def main() -> int:
         name=f"dbt-{engine}-{os.environ.get('GITHUB_RUN_ID', 'local')}",
     )
 
-    # The fingerprint JSON is in the streamed log (dbt_in_fabric.py runs the run-operation
+    # The fingerprint JSON is in the streamed log (run_in_fabric.py runs the run-operation
     # last). Same capture as the local legs' `| parity.py capture`, so the artifact is identical.
     capture = subprocess.run(
         [sys.executable, str(REPO / ".github/scripts/parity.py"), "capture", "history/parity"],

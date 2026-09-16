@@ -94,7 +94,7 @@ python download_aemo.py && dbt build --target duckrun --profiles-dir .
   scales with the target's partition span, not the batch, which is what OOM-kills big facts.
   `partition_by` + `incremental_predicates` on `month_key` is what makes the probe prune.
 - **duckrun, ducklake and iceberg run dbt INSIDE Fabric** (`.github/scripts/remote_dbt.py` →
-  duckrun's `run_python`, 8 vCores; `dbt_in_fabric.py` is what runs there). Do not move them
+  duckrun's `run_python`, 8 vCores; `run_in_fabric.py` is what runs there). Do not move them
   back onto the runner: DuckDB folds the archive in memory and the 7 GB hosted runner was shut
   down mid-`fct_scada` twice in one day. Tokens are minted in the notebook by `notebookutils`
   (the `setup` hook); only the `FORWARD` allowlist of config travels, never anything

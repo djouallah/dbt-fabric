@@ -122,6 +122,12 @@ aemo_electricity:
             # Direct Lake can read. Under Files/ the export produced nothing Fabric could see.
             # The ducklake_* schema folders keep it apart from the other engines' tables.
             data_path: "{{ env_var('DUCKLAKE_DATA_PATH', env_var('FILES_PATH', '/tmp') ~ '/Tables') }}"
+            # A DuckLake catalog RECORDS its data path on first attach and refuses a different
+            # one afterwards ("DATA_PATH parameter ... does not match existing data path in the
+            # catalog"). This catalog was first attached under Files/ducklake; without the
+            # override every attach against Tables/ fails before a single model runs. Int 1,
+            # not true: dbt-duckdb drops boolean attach options.
+            override_data_path: 1
             data_inlining_row_limit: 0
             # Required for delta_export: without it the exporter cannot find the catalog.
             # Not mssql-specific — the sqlite backend fails the same way.
