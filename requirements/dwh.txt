@@ -9,6 +9,4 @@
 # dbt-fabric ships an internal macro package called `dbt_fabric`, and a project of the same
 # name makes dbt refuse to start with "found more than one package with the name".
 dbt-fabric
-pyyaml
-ms-fabric-cli
 duckrun

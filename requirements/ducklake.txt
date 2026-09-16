@@ -10,4 +10,3 @@ dbt-duckdb
 duckdb==1.5.5
 azure-storage-blob
 duckrun
-ms-fabric-cli

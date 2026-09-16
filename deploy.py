@@ -15,6 +15,9 @@ thread-pool iterator so a failed copy re-raises instead of being silently swallo
 
 --full is off by default. The real orchestration is GitHub Actions; the Fabric notebook and
 pipeline are a demo of in-Fabric scheduling, and redeploying them on every run is churn.
+
+Not run by any workflow. The `fab` backend needs `pip install ms-fabric-cli` and `fab auth
+login`; no CI leg installs it, because provision.py creates every item through the REST API.
 """
 from __future__ import annotations
 
