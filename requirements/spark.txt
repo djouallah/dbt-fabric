@@ -3,4 +3,9 @@
 # Set DBT_FABRICSPARK_SKIP_OPTIMIZE=true in CI: dbt-fabricspark 1.13.0 started running
 # OPTIMIZE after every Delta build, which rewrites the layout the run just produced.
 dbt-fabricspark
+# dbt-spark is named explicitly: dbt-fabricspark imports dbt.adapters.spark but does NOT
+# declare it as a dependency, so a clean install fails at adapter load with
+# ModuleNotFoundError: No module named 'dbt.adapters.spark'. It only appears to work on a
+# machine where something else already pulled dbt-spark in.
+dbt-spark
 duckrun

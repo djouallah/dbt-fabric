@@ -4,5 +4,10 @@
 dbt-duckdb
 dbt-fabric-samdebruyn
 dbt-fabricspark
+# dbt-spark is named explicitly: dbt-fabricspark imports dbt.adapters.spark but does NOT
+# declare it as a dependency, so a clean install fails at adapter load with
+# ModuleNotFoundError: No module named 'dbt.adapters.spark'. It only appears to work on a
+# machine where something else already pulled dbt-spark in.
+dbt-spark
 sqlglot
 pytest
