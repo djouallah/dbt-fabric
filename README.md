@@ -163,8 +163,10 @@ green. `check_gating.py` asserts the prefix offline.
 
 - `ci.yml` — free and credential-less: pytest, plus `check_gating.py` as a five-way matrix
   (one environment per engine). Runs on every push.
-- `build.yml` — the reusable per-engine leg: land → `dbt build` → test → fingerprint.
-- `pipeline.yml` — manual only; runs the engines one at a time, then the **parity** job
+- `build.yml` — the reusable per-engine leg: land → `dbt build` → test → fingerprint. The
+  landing step is skipped when the caller passes `land: false`.
+- `pipeline.yml` — manual only; lands ONCE in a shared `land` job, then runs all five engines
+  in parallel, then the **parity** job
   compares their fingerprints.
 
 Manual only because deploying Fabric items and spending capacity is a deliberate act, and

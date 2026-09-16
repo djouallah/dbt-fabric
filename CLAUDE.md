@@ -116,6 +116,13 @@ python download_aemo.py && dbt build --target duckrun --profiles-dir .
 
 ## Things not to "fix"
 
+- **`pipeline.yml` lands once, then fans out.** The five legs run in PARALLEL and pass
+  `land: false`; the shared `land` job runs `download_aemo.py` before them. Do not move
+  landing back into the legs to "make them independent": download_aemo.py rewrites
+  `csv_raw_archive_log.parquet` with a delete-then-copy, so concurrent legs race on that one
+  file. The `land` job also provisions the folder, `dbt_landing` and the shared `dbt`
+  lakehouse up front, which is what stops five parallel create-if-missing calls colliding.
+
 - The duplicated model files. Five copies of `fct_summary.sql` is the design: they are
   gated so exactly one is live, and the duplication is what lets each engine say what its
   adapter forces without a thicket of conditionals. The shared *data* — the AEMO column

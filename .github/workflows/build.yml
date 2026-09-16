@@ -32,6 +32,11 @@ on:
         required: false
         default: "1000"
         type: string
+      land:
+        description: Run download_aemo.py in this leg. pipeline.yml sets false — it lands ONCE in a shared job so the legs can run in parallel.
+        required: false
+        default: true
+        type: boolean
       spark_resource_profile:
         required: false
         # readHeavyForPBI, not the workspace default: fct_summary is read by Power BI
@@ -132,6 +137,12 @@ jobs:
       - name: Land AEMO files
         # One downloader for every engine, one landing zone, plain CSV. If the engines read
         # different bytes the parity comparison below means nothing.
+        #
+        # SKIPPED when pipeline.yml already landed in its shared `land` job. It has to be:
+        # download_aemo.py rewrites csv_raw_archive_log.parquet with a delete-then-copy, so
+        # five legs landing at once would race on that one file — which is the only reason
+        # the legs used to be forced through max-parallel: 1.
+        if: ${{ inputs.land }}
         run: python download_aemo.py
 
       # ---- build -------------------------------------------------------------------
