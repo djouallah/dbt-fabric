@@ -5,10 +5,12 @@ Every model in this project is an insert-only incremental merge — that is deli
 small data file per table and nothing ever folds them back together. This runs
 iceberg_rewrite_data_files() over each table, consolidating files below the target size.
 
-iceberg_rewrite_data_files landed in duckdb/duckdb-iceberg#1035 and is not in a stable
-duckdb release yet — requirements.txt pins duckdb==1.6.0.dev365 (it self-identifies as
-v2.0.0-alpha), and the iceberg extension binary is keyed to the duckdb build, so pinning
-duckdb pins the extension too.
+iceberg_rewrite_data_files landed in duckdb/iceberg#1035 and is not in a stable
+duckdb release yet, so requirements/iceberg.txt installs the latest PRE-release duckdb
+(`--pre duckdb`, unpinned) rather than a hand-bumped build. The iceberg extension binary is
+keyed to the duckdb build, so whatever pip resolves brings its own matching extension.
+has_rewrite_function() checks for the function rather than assuming it, so a resolution
+that happens to lack it degrades to "nothing to compact" instead of failing the job.
 
 Ported from djouallah/analytics-as-code scripts/compact_iceberg.py, which runs this against
 an R2-backed catalog. Two things differ here:
@@ -101,10 +103,10 @@ TABLES = [
 
 def connect():
     con = duckdb.connect(":memory:")
-    # Plain install first. duckdb 1.6.0.dev365 identifies itself as v2.0.0-alpha*, and
+    # Plain install first. The 1.6.0/2.0.0 dev line self-identifies as v2.0.0-alpha*, and
     # nightly-extensions.duckdb.org has no iceberg build under that version — asking
-    # core_nightly first just buys a 404 and a scary log line. The core extension for this
-    # build does carry iceberg_rewrite_data_files.
+    # core_nightly first just buys a 404 and a scary log line. The core extension for these
+    # builds does carry iceberg_rewrite_data_files.
     try:
         con.install_extension("iceberg")
     except Exception as e:
@@ -168,7 +170,7 @@ def prime(con, fq):
     """Make the table's storage credentials available to the rewrite, and count its files.
 
     iceberg_rewrite_data_files doesn't fetch credentials itself — called cold it can die with
-    403 "No credentials are provided" (duckdb/duckdb-iceberg#1349). The reference
+    403 "No credentials are provided" (duckdb/iceberg#1349). The reference
     implementation tried the cheaper options (LIMIT 0, LIMIT 1) against a real catalog and
     both still 403'd: the 403 is on the manifest avro, and iceberg_metadata() is what reads
     those.

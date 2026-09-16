@@ -225,10 +225,15 @@ def download_aemo(session, files_path, download_limit, daily_download_limit):
         # runners share IPs — without a token the listing calls hit the anonymous quota.
         github_token = os.environ.get("GITHUB_TOKEN") or os.environ.get("GH_TOKEN")
         if github_token:
+            # INLINED, not a bind parameter: DuckDB's CREATE SECRET does not accept
+            # prepared-statement parameters and dies with "Unrecognized expression type
+            # PARAMETER". It only bites when this backfill branch runs, so an earlier leg
+            # that had enough new nemweb files sails past it -- which is exactly how it
+            # reached CI green on four engines and killed the fifth.
             session.execute(
-                "CREATE OR REPLACE SECRET github_api "
-                "(TYPE HTTP, BEARER_TOKEN ?, SCOPE 'https://api.github.com')",
-                [github_token],
+                "CREATE OR REPLACE SECRET github_api (TYPE HTTP, BEARER_TOKEN '"
+                + github_token.replace("'", "''")
+                + "', SCOPE 'https://api.github.com')"
             )
         years = range(2018, datetime.now(timezone.utc).year + 1)
         reads = " UNION ALL ".join(

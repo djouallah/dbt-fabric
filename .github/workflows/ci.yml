@@ -47,10 +47,18 @@ jobs:
   # property". Both were found here rather than locally. Splitting the matrix is also more
   # faithful — each engine is validated against exactly the dependencies it builds with.
   gating:
+    # `label` is cosmetic — the only thing the Actions UI shows. `engine` is the real target
+    # name that dbt, the folder layout and every script key on; do not rename those.
+    name: gating (${{ matrix.label }})
     strategy:
       fail-fast: false
       matrix:
-        engine: [duckrun, iceberg, ducklake, dwh, spark]
+        include:
+          - {engine: duckrun,  label: duckdb-delta_rs}
+          - {engine: iceberg,  label: duckdb-iceberg}
+          - {engine: ducklake, label: ducklake}
+          - {engine: dwh,      label: fabric-warehouse}
+          - {engine: spark,    label: fabric-spark}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -62,6 +70,6 @@ jobs:
           cache: pip
           cache-dependency-path: requirements/${{ matrix.engine }}.txt
       - run: pip install -r requirements/${{ matrix.engine }}.txt
-      - name: Gating (${{ matrix.engine }})
+      - name: Gating (${{ matrix.label }})
         # The one check that catches "green run, built nothing".
         run: python .github/scripts/check_gating.py ${{ matrix.engine }}

@@ -1,10 +1,14 @@
 # iceberg: dbt-duckdb writing through the OneLake Iceberg REST catalog.
 #
-# The duckdb pin is deliberate and must be bumped BY HAND — nothing floats it for you.
-# Compaction (.github/scripts/compact_iceberg.py) needs iceberg_rewrite_data_files(),
-# which only exists on the 1.6.0 dev line. It satisfies duckrun's duckdb>=1.5.4 floor, so
-# pip resolves it without --pre. The DuckDB extension binaries (azure/iceberg/avro) are
-# keyed to the duckdb build, so this pin pins the iceberg extension too.
-# Keep fabric_items/run.Notebook/notebook-content.ipynb cell 0 in step with this.
-duckdb==1.6.0.dev365
+# LATEST PRE-RELEASE, UNPINNED. Compaction (.github/scripts/compact_iceberg.py) needs
+# iceberg_rewrite_data_files(), which exists only on the 1.6.0 dev line — so this needs a
+# pre-release, but it floats rather than sitting on one hand-bumped build. The DuckDB
+# extension binaries (azure/iceberg/avro) are keyed to the duckdb build, so whatever this
+# resolves to pins the iceberg extension with it.
+#
+# The `--pre` is what makes pip consider dev builds at all; without it pip resolves the
+# newest STABLE duckdb and compaction silently loses its rewrite function (the script
+# already degrades gracefully via has_rewrite_function()).
+--pre
+duckdb
 duckrun

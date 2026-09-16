@@ -242,14 +242,20 @@ def main() -> int:
         # UTF-8 one, which CANNOT be changed after creation.
         db_id = find("sqlDatabases", DUCKLAKE_SQL_DB)
         if not db_id:
-            body = {
+            # NO folderId ON THIS CREATE. The sqlDatabases endpoint rejects it (400), and
+            # the failure is silent unless you read the body: the poll below then spends
+            # ten minutes waiting for a database that was never created. Every other item
+            # type accepts it, so this one is provisioned at the root and moved after.
+            r = req("POST", f"workspaces/{WS}/sqlDatabases", json={
                 "displayName": DUCKLAKE_SQL_DB,
                 "creationPayload": {"collation": "Latin1_General_100_BIN2_UTF8"},
-            }
-            if folder_id:
-                body["folderId"] = folder_id
-            r = req("POST", f"workspaces/{WS}/sqlDatabases", json=body)
+            })
             log(f"  + created SQL DB {DUCKLAKE_SQL_DB}: {r.status_code}")
+            if r.status_code not in (200, 201, 202):
+                # Fail here with the body rather than polling for something that is not coming.
+                raise SystemExit(
+                    f"could not create SQL DB {DUCKLAKE_SQL_DB}: {r.status_code} {r.text[:500]}"
+                )
         server = database = ""
         for _ in range(40):  # provisioning is async and the connection details land last
             r = req("GET", f"workspaces/{WS}/sqlDatabases")
@@ -257,8 +263,9 @@ def main() -> int:
                 for it in r.json().get("value", []):
                     if it.get("displayName") == DUCKLAKE_SQL_DB:
                         db_id = it["id"]
-                        p = it.get("properties", {})
-                        server, database = p.get("serverFqdn", ""), p.get("databaseName", "")
+                        props = it.get("properties", {})
+                        server = props.get("serverFqdn", "")
+                        database = props.get("databaseName", "")
             if server and database:
                 break
             time.sleep(15)

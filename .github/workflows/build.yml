@@ -34,7 +34,9 @@ on:
         type: string
       spark_resource_profile:
         required: false
-        default: writeHeavy
+        # readHeavyForPBI, not the workspace default: fct_summary is read by Power BI
+        # through Direct Lake, and this is the only profile that turns V-Order on.
+        default: readHeavyForPBI
         type: string
 
 permissions:

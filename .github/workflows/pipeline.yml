@@ -27,10 +27,10 @@ on:
         type: string
         default: "60"
       spark_resource_profile:
-        description: writeHeavy (workspace default) or readHeavyForPBI (turns V-Order on and changes file layout)
+        description: readHeavyForPBI (V-Order on, Power BI-facing layout) or writeHeavy (the Fabric workspace default)
         type: choice
-        default: writeHeavy
-        options: [writeHeavy, readHeavyForPBI]
+        default: readHeavyForPBI
+        options: [readHeavyForPBI, writeHeavy]
 
 permissions:
   id-token: write
@@ -56,22 +56,34 @@ jobs:
     steps:
       - id: pick
         # A GitHub matrix cannot be filtered by an input, so the list is computed here.
+        #
+        # Each entry is {engine, label}. `engine` is the real target name and is what every
+        # file in the repo keys on — do NOT rename those. `label` is cosmetic: it is the only
+        # thing the Actions UI shows, and it names the STACK rather than the adapter package,
+        # because "duckrun" and "iceberg" say nothing about what is underneath them.
         run: |
+          ALL='[{"engine":"duckrun","label":"duckdb-delta_rs"},
+                {"engine":"iceberg","label":"duckdb-iceberg"},
+                {"engine":"ducklake","label":"ducklake"},
+                {"engine":"dwh","label":"fabric-warehouse"},
+                {"engine":"spark","label":"fabric-spark"}]'
           if [ "${{ inputs.engines }}" = "all" ]; then
-            echo 'engines=["duckrun","iceberg","ducklake","dwh","spark"]' >> "$GITHUB_OUTPUT"
+            echo "engines=$(echo "$ALL" | jq -c .)" >> "$GITHUB_OUTPUT"
           else
-            echo 'engines=["${{ inputs.engines }}"]' >> "$GITHUB_OUTPUT"
+            echo "engines=$(echo "$ALL" | jq -c --arg e '${{ inputs.engines }}' '[.[]|select(.engine==$e)]')" >> "$GITHUB_OUTPUT"
           fi
 
   build:
     needs: plan
+    # Cosmetic only — `engine` below is still the real target name.
+    name: build (${{ matrix.label }})
     strategy:
       # One engine at a time: they share a workspace and a landing zone, and the point of
       # the run is comparability, not wall-clock.
       max-parallel: 1
       fail-fast: false
       matrix:
-        engine: ${{ fromJSON(needs.plan.outputs.engines) }}
+        include: ${{ fromJSON(needs.plan.outputs.engines) }}
     uses: ./.github/workflows/build.yml
     with:
       engine: ${{ matrix.engine }}
