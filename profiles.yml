@@ -124,10 +124,12 @@ aemo_electricity:
             data_path: "{{ env_var('DUCKLAKE_DATA_PATH', env_var('FILES_PATH', '/tmp') ~ '/Tables') }}"
             # A DuckLake catalog RECORDS its data path on first attach and refuses a different
             # one afterwards ("DATA_PATH parameter ... does not match existing data path in the
-            # catalog"). This catalog was first attached under Files/ducklake; without the
-            # override every attach against Tables/ fails before a single model runs. Int 1,
-            # not true: dbt-duckdb drops boolean attach options.
-            override_data_path: 1
+            # catalog"). Do NOT reach for OVERRIDE_DATA_PATH to move it: per the DuckLake docs it
+            # overrides the path for that connection only and leaves the stored value alone, so
+            # the writes moved to Tables/ while delta_export() -- which reads the catalog --
+            # kept writing every _delta_log under the old Files/ducklake path. The stored value
+            # is the thing to change (dbo.ducklake_metadata, key data_path, in the SQL DB); all
+            # schema, table and file paths are relative to it.
             data_inlining_row_limit: 0
             # Required for delta_export: without it the exporter cannot find the catalog.
             # Not mssql-specific — the sqlite backend fails the same way.
