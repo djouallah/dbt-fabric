@@ -1,6 +1,16 @@
-# Everything the offline checks need: check_gating.py parses all five targets, so every
-# adapter must be importable, and tests_py/test_dialects.py needs sqlglot.
--r duckrun.txt
+# Everything the offline checks need: check_gating.py parses all FIVE targets in one
+# process, so every adapter has to be importable at once, and tests_py/test_dialects.py
+# needs sqlglot.
+#
+# dbt-core and dbt-adapters are PINNED to the same set requirements/dwh.txt pins — the
+# strictest of the five legs. Unpinned, pip resolved dbt-core 1.12.5 here while the legs
+# install 1.11.x, so CI was gating a different dbt from the one that actually builds, and
+# 1.12 rejected the spark profile outright ("'database' is a required property"). A gate
+# that does not match the thing it gates is worse than no gate.
+dbt-core==1.11.10
+dbt-adapters==1.23.0
+
+duckrun
 dbt-duckdb
 dbt-fabric-samdebruyn
 dbt-fabricspark
@@ -9,5 +19,6 @@ dbt-fabricspark
 # ModuleNotFoundError: No module named 'dbt.adapters.spark'. It only appears to work on a
 # machine where something else already pulled dbt-spark in.
 dbt-spark
+
 sqlglot
 pytest
