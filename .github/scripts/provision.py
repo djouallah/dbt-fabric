@@ -13,7 +13,8 @@ lakehouse now and are separated by SCHEMA instead (see macros/generate_schema_na
 
     <FOLDER>/
       dbt_landing        Lakehouse  the CSVs download_aemo.py lands. Written ONCE, read by all five.
-      dbt                Lakehouse  duckrun_* iceberg_* ducklake_* spark_* schemas
+      dbt                Lakehouse  duckrun_* iceberg_* ducklake_* spark_* schemas (Tables/), and
+                                    the duckrun_remote/ round-trip files of the Fabric-side runs
       dbt_dwh            Warehouse  dwh_landing, dwh_mart
       dbt_ducklake_meta  SQL DB     DuckLake catalog metadata only, no data
 
@@ -64,19 +65,28 @@ def emit(key: str, value: str) -> None:
     print(f"{key}={value}")
 
 
-def token(resource: str = "https://api.fabric.microsoft.com") -> str:
-    try:
-        import duckrun.auth
+FABRIC_RESOURCE = "https://api.fabric.microsoft.com"
 
-        return duckrun.auth.get_fabric_token()
-    except Exception:
-        import subprocess
 
-        return subprocess.run(
-            ["az", "account", "get-access-token", "--resource", resource,
-             "--query", "accessToken", "-o", "tsv"],
-            capture_output=True, text=True, check=True,
-        ).stdout.strip()
+def token(resource: str = FABRIC_RESOURCE) -> str:
+    """A bearer token for `resource`. duckrun mints the Fabric control-plane one from the GitHub
+    OIDC assertion with no login step; any OTHER audience (the SQL DB token for ducklake) goes
+    through `az`, because duckrun's public helpers only mint storage and Fabric tokens -- this
+    used to hand a Fabric-API token to every caller regardless of the resource asked for."""
+    if resource == FABRIC_RESOURCE:
+        try:
+            import duckrun.auth
+
+            return duckrun.auth.get_fabric_token()
+        except Exception:
+            pass
+    import subprocess
+
+    return subprocess.run(
+        ["az", "account", "get-access-token", "--resource", resource,
+         "--query", "accessToken", "-o", "tsv"],
+        capture_output=True, text=True, check=True,
+    ).stdout.strip()
 
 
 def req(method: str, path: str, **kw):
@@ -223,6 +233,9 @@ def main() -> int:
     # to it: the dwh leg needs it to host the landing shortcut.
     data_id = ensure("lakehouses", DATA_LAKEHOUSE,
                      {"creationPayload": {"enableSchemas": True}}, folder_id)
+    # remote_dbt.py needs the item (not a path) for run_python's result round-trip: the
+    # workspace holds many lakehouses, so duckrun cannot infer one.
+    emit("DATA_LAKEHOUSE_ID", data_id)
 
     if engine in LAKEHOUSE_ENGINES:
         # Reads the landing zone directly — no shortcut, no second copy.
@@ -285,11 +298,16 @@ def main() -> int:
         if folder_id and db_id:
             move_to_folder(db_id, folder_id)
         emit("DUCKLAKE_CATALOG_DSN", f"Server={server};Database={database};Encrypt=yes")
-        # DuckLake's parquet goes under the shared lakehouse's FILES, not its Tables — it
-        # is not a lakehouse table until the delta_export on-run-end hook runs. Its own key,
-        # NOT an override of FILES_PATH: overriding that is what used to send this leg's
-        # downloader off to a private copy of the CSVs.
-        emit("DUCKLAKE_DATA_PATH", f"{abfss(data_id, 'Files')}/ducklake")
+        # DuckLake's parquet goes under the shared lakehouse's TABLES, as in the original
+        # ducklake repo: DuckLake lays it out as <data_path>/<schema>/<table>/ and the
+        # delta_export() on-run-end hook writes each table's _delta_log IN PLACE, so
+        # Tables/ducklake_mart/<table> becomes a real lakehouse table Direct Lake can read.
+        # (Under Files/ the export produced nothing Fabric could see.) The ducklake_* schema
+        # folders keep it apart from duckrun_*, iceberg_* and spark_*. Its own key, NOT an
+        # override of FILES_PATH: overriding that is what used to send this leg's downloader
+        # off to a private copy of the CSVs.
+        emit("DUCKLAKE_DATA_PATH", abfss(data_id, "Tables"))
+        # For a LOCAL run of the ducklake target. The remote leg mints its own inside Fabric.
         emit("DBT_ENV_SECRET_SQL_TOKEN", token("https://database.windows.net/"))
 
     elif engine == "dwh":

@@ -104,7 +104,9 @@ Every one of these is forced by the engine, and each is documented at its site:
 | dwh | `append`, not merge — Fabric has no compare-and-swap, and the file list already excludes what is loaded |
 | dwh | never `--full-refresh`: it DROPs and recreates, which deadlocks Fabric background maintenance, loses grants and rebinds Direct Lake |
 | dwh | ≤1024 explicit BULK paths *per statement*, hence `process_limit` |
-| spark | `from_csv` over `text.\`path\`` — `__dbt_tmp` is a persistent view and cannot reference a TEMPORARY VIEW |
+| ducklake | `delta_export()` takes no arguments and writes each table's `_delta_log` in place, so its `data_path` is the lakehouse `Tables/` section |
+| dwh | `fct_summary`'s rebuild is decided by the runner, as in the original repo: `check_new_daily` before the build, `rebuild_summary: true` (delete+insert) when daily files are landing |
+| spark | the CSV read lands in a `<model>__stage` Delta table from two pre_hooks (a temp view `USING csv` over this run's files, then a CTAS). On a schema-enabled lakehouse `__dbt_tmp` is a persistent view, so the body can neither read a TEMPORARY VIEW nor a path datasource Fabric's base32hex name decoder rejects (`text.\`path\`` dies on the `x`) |
 | spark | `to_timestamp(..., 'yyyy/MM/dd HH:mm:ss')`: Spark's `CAST` returns NULL for slash dates instead of erroring, which silently nulled the column. DuckDB and T-SQL both parse them, so only this leg was affected |
 | spark | `threads: 4` is a hard cap — one Spark REPL per thread, five REPLs per Livy session |
 
@@ -163,8 +165,12 @@ green. `check_gating.py` asserts the prefix offline.
 
 - `ci.yml` — free and credential-less: pytest, plus `check_gating.py` as a five-way matrix
   (one environment per engine). Runs on every push.
-- `build.yml` — the reusable per-engine leg: land → `dbt build` → test → fingerprint. The
-  landing step is skipped when the caller passes `land: false`.
+- `build.yml` — the reusable per-engine leg: `dbt build` → test → fingerprint (it lands
+  only when the caller passes `land: true`). **duckrun, ducklake and iceberg run dbt on
+  Fabric compute** — a throwaway Python notebook of 8 vCores through duckrun's `run_python`
+  (`.github/scripts/remote_dbt.py`); the runner only provisions, launches and collects the
+  log. DuckDB folds the archive in memory and a 7 GB hosted runner does not survive it. dwh
+  and spark run dbt on the runner, where it is only a client of the Warehouse / Livy.
 - `pipeline.yml` — manual only; lands ONCE in a shared `land` job, then runs all five engines
   in parallel, then the **parity** job
   compares their fingerprints.

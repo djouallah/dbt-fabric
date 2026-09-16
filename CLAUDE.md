@@ -93,6 +93,19 @@ python download_aemo.py && dbt build --target duckrun --profiles-dir .
   rewritten. Prefer it to `merge` wherever the model only ever adds rows; a delta-rs merge
   scales with the target's partition span, not the batch, which is what OOM-kills big facts.
   `partition_by` + `incremental_predicates` on `month_key` is what makes the probe prune.
+- **duckrun, ducklake and iceberg run dbt INSIDE Fabric** (`.github/scripts/remote_dbt.py` →
+  duckrun's `run_python`, 8 vCores; `dbt_in_fabric.py` is what runs there). Do not move them
+  back onto the runner: DuckDB folds the archive in memory and the 7 GB hosted runner was shut
+  down mid-`fct_scada` twice in one day. Tokens are minted in the notebook by `notebookutils`
+  (the `setup` hook); only the `FORWARD` allowlist of config travels, never anything
+  token-shaped. `DATA_LAKEHOUSE_ID` from provision.py is what run_python needs.
+- **`delta_export()` takes no arguments** and writes each DuckLake table's `_delta_log` in
+  place, which is why ducklake's `data_path` is the shared lakehouse's `Tables/` section
+  (`Tables/ducklake_mart/<table>` is then a real lakehouse table). A two-argument call was
+  invented once and failed every run.
+- **The ducklake output needs the same OneLake `access_token` secret as iceberg**, and the
+  transport hook must reach it: gate on `target.type in ('duckdb', 'duckrun')`, never a list
+  of target names.
 - **duckrun maintenance is built in** (compaction on byte debt, vacuum after). Do not add
   OPTIMIZE/VACUUM jobs for it. Iceberg is the opposite: it has no snapshot expiry, so
   `compact_iceberg.py` is a real job — and it speeds up reads without shrinking storage.
@@ -105,6 +118,17 @@ python download_aemo.py && dbt build --target duckrun --profiles-dir .
   onto the SELECT and comments it out.
 - **Never `--full-refresh` on dwh.** It DROPs and recreates: a Sch-M swap that deadlocks
   Fabric background maintenance, loses grants and rebinds Direct Lake.
+- **dwh `fct_summary` is rebuilt only when build.yml says so**: `check_new_daily` runs before
+  the build and, when it raises, the build carries `--vars "{rebuild_summary: true}"`
+  (delete+insert). The model cannot decide this itself — its strategy is a parse-time config —
+  and without the probe the summary appends intraday forever while daily files add days.
+- **Fabric's Spark catalog base32hex-decodes every part of a multipart name** (alphabet
+  `0-9A-V`). `text.\`path\`` fails on the `x` ("Failed to decode multipart name: 'text'");
+  `parquet.\`path\`` works only because every letter of `parquet` is inside the alphabet. And
+  on a schema-enabled lakehouse dbt-fabricspark's `__dbt_tmp` is a PERSISTENT view, so a model
+  body cannot read a TEMPORARY VIEW either. The spark fact models therefore read through a
+  `<model>__stage` Delta table built by two pre_hooks (`macros/spark_read_csv.sql`). Do not
+  "simplify" it back to a direct read.
 - **Spark's `CAST(string AS TIMESTAMP)` returns NULL for `yyyy/MM/dd` instead of erroring.**
   AEMO ships slashes. Parse the format explicitly. DuckDB and T-SQL both accept slashes, so
   only the spark leg was ever affected — a good example of why parity is checked.

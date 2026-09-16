@@ -43,7 +43,14 @@ clean-targets: ["target", "dbt_packages"]
 
 on-run-start:
   # Each hook renders to whitespace on the engines it does not apply to.
-  - "{% if target.name in ['duckrun', 'iceberg'] and env_var('AZURE_TRANSPORT_OPTION_TYPE', 'default') != 'default' %}SET GLOBAL azure_transport_option_type = '{{ env_var('AZURE_TRANSPORT_OPTION_TYPE') }}'{% endif %}"
+  #
+  # target.type, NOT target.name: the OneLake transport is a DuckDB-family concern and must
+  # reach duckrun, iceberg AND ducklake. Gating it on ['duckrun', 'iceberg'] left ducklake on
+  # DuckDB's default transport, which fails the OneLake TLS handshake anywhere but inside a
+  # Fabric notebook ("Problem with the SSL CA cert (path? access rights?)"). Same condition
+  # parity_fingerprint uses. Inside Fabric the variable is unset and this renders to nothing,
+  # which is right there -- the default transport is the one that works on a notebook.
+  - "{% if target.type in ['duckdb', 'duckrun'] and env_var('AZURE_TRANSPORT_OPTION_TYPE', 'default') != 'default' %}SET GLOBAL azure_transport_option_type = '{{ env_var('AZURE_TRANSPORT_OPTION_TYPE') }}'{% endif %}"
   # Set here and not in profiles.yml: dbt-duckdb re-applies `settings:` on every cursor and
   # DuckDB refuses to switch temp_directory once anything has spilled.
   - "{% if target.name == 'iceberg' %}SET GLOBAL temp_directory = '{{ env_var('DUCKDB_TEMP_DIR', '/tmp/duckdb_spill') }}'{% endif %}"
@@ -63,7 +70,13 @@ on-run-end:
   - "{% if target.name == 'ducklake' and flags.WHICH in ['run', 'build'] %}CALL ducklake_rewrite_data_files('ducklake'){% endif %}"
   - "{% if target.name == 'ducklake' and flags.WHICH in ['run', 'build'] %}CALL ducklake_merge_adjacent_files('ducklake'){% endif %}"
   - "{% if target.name == 'ducklake' and flags.WHICH in ['run', 'build'] %}CALL ducklake_cleanup_old_files('ducklake', cleanup_all => true){% endif %}"
-  - "{% if target.name == 'ducklake' and flags.WHICH in ['run', 'build'] %}CALL delta_export('ducklake', '{{ env_var('DUCKLAKE_DATA_PATH', env_var('FILES_PATH', '/tmp') ~ '/Tables') }}/delta'){% endif %}"
+  # delta_export() takes NO arguments (community extension delta_export 0.1.0 -- the only
+  # signature it has, and what the original ducklake repo called). It exports every table of
+  # the attached DuckLake catalog by writing a _delta_log next to that table's parquet, IN
+  # PLACE under data_path -- which is why data_path is the lakehouse's Tables section (see
+  # profiles.yml). A two-argument form was invented here once and failed every run with
+  # "No function matches the given name and argument types 'delta_export(VARCHAR, VARCHAR)'".
+  - "{% if target.name == 'ducklake' and flags.WHICH in ['run', 'build'] %}CALL delta_export(){% endif %}"
 
 models:
   aemo_electricity:

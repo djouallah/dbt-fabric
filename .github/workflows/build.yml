@@ -1,9 +1,23 @@
 name: build (one engine)
 
-# The reusable leg: land the AEMO files, build one engine, test it, fingerprint its gold
-# table. pipeline.yml calls this once per engine. Everything engine-specific is an input,
-# so there is exactly one copy of the skeleton the four source repos each had their own
-# version of.
+# The reusable leg: build one engine, test it, fingerprint its gold table. pipeline.yml calls
+# this once per engine after landing ONCE in its shared `land` job. Everything engine-specific
+# is an input, so there is exactly one copy of the skeleton the four source repos each had
+# their own version of.
+#
+# WHERE dbt RUNS depends on the engine:
+#
+#   duckrun, ducklake, iceberg   ON FABRIC COMPUTE (FABRIC_CORES vCores), through duckrun's
+#                                run_python -- .github/scripts/remote_dbt.py. DuckDB folds the
+#                                AEMO archive in memory, and the 7 GB hosted runner was shut
+#                                down mid-fct_scada twice in one day ("The runner has received
+#                                a shutdown signal"). The original delta repo never ran dbt on
+#                                the runner either (RemoteRunner: "the runner pulls every byte
+#                                across the internet twice"). Here the runner only provisions,
+#                                launches and collects the log. Cancelling the GitHub job does
+#                                NOT stop the notebook -- it runs, and bills, to completion.
+#   dwh, spark                   on the runner. dbt is only a client there; the compute is the
+#                                Warehouse / the Livy session.
 #
 # Deliberately NO `--select` anywhere: model selection is entirely +enabled in
 # dbt_project.yml, keyed on the target name.
@@ -29,6 +43,7 @@ on:
         default: "60"
         type: string
       process_limit:
+        description: Files each fact model folds per run, oldest first. Every engine honours it; a backlog converges over runs.
         required: false
         default: "1000"
         type: string
@@ -54,13 +69,17 @@ jobs:
     timeout-minutes: 120
     env:
       ENGINE: ${{ inputs.engine }}
+      # The three legs whose dbt runs inside Fabric. Exact match on the list, not a substring.
+      REMOTE: ${{ contains(fromJSON('["duckrun", "ducklake", "iceberg"]'), inputs.engine) }}
+      FABRIC_CORES: "8"
       DBT_SCHEMA: ${{ inputs.dbt_schema }}
       download_limit: ${{ inputs.download_limit }}
       daily_download_limit: ${{ inputs.daily_download_limit }}
       process_limit: ${{ inputs.process_limit }}
       SPARK_RESOURCE_PROFILE: ${{ inputs.spark_resource_profile }}
-      # duckrun picks the OneLake HTTP transport itself; curl uses the runner's system CA
-      # bundle, which is what works off a Fabric notebook.
+      # For anything DuckDB that still runs ON THE RUNNER (a local build of a DuckDB target):
+      # off a Fabric notebook the azure extension needs the curl transport and the system CA
+      # bundle. remote_dbt.py deliberately does not forward these into Fabric.
       AZURE_TRANSPORT_OPTION_TYPE: curl
       CURL_CA_INFO: /etc/ssl/certs/ca-certificates.crt
       DUCKDB_TEMP_DIR: /tmp/duckdb_spill
@@ -88,13 +107,10 @@ jobs:
         run: pip install -r requirements/${{ inputs.engine }}.txt
 
       # ---- auth -------------------------------------------------------------------
-      # Two modes. duckrun — and ONLY duckrun — mints every token it needs (OneLake storage,
-      # Fabric control plane, Power BI) by exchanging a fresh GitHub OIDC assertion, so its
-      # leg needs no login step. Every other engine needs an Azure session.
-      #
-      # `iceberg` was wrongly exempted here too. It is dbt-duckdb and mints nothing: the
-      # very next step shells out to `az account get-access-token` for the OneLake token,
-      # which with no session failed the whole leg before it ever reached provisioning.
+      # duckrun — and ONLY duckrun — mints every token it needs (OneLake storage, Fabric
+      # control plane) by exchanging a fresh GitHub OIDC assertion, so its leg needs no login
+      # step. Every other engine gets an Azure session: provision.py falls back to `az` for
+      # any audience duckrun cannot mint, and the dwh leg captures its Warehouse token below.
       - name: Azure login
         if: inputs.engine != 'duckrun'
         uses: azure/login@v2
@@ -102,22 +118,6 @@ jobs:
           client-id: ${{ secrets.AZURE_CLIENT_ID }}
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           allow-no-subscriptions: true
-
-      - name: Mint OneLake token
-        if: inputs.engine == 'iceberg'
-        run: |
-          TOKEN=$(az account get-access-token --resource https://storage.azure.com/ --query accessToken -o tsv)
-          echo "::add-mask::$TOKEN"
-          echo "ONELAKE_TOKEN=$TOKEN" >> "$GITHUB_ENV"
-
-      - name: Fabric CLI login
-        if: inputs.engine == 'ducklake' || inputs.engine == 'dwh'
-        run: |
-          fab config set encryption_fallback_enabled true
-          FED_TOKEN=$(curl -sH "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
-            "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=api://AzureADTokenExchange" | jq -r '.value')
-          fab auth login -t "${{ secrets.AZURE_TENANT_ID }}" -u "${{ secrets.AZURE_CLIENT_ID }}" \
-            --federated-token "$FED_TOKEN"
 
       # ---- provision ---------------------------------------------------------------
       - name: Provision Fabric items
@@ -146,18 +146,42 @@ jobs:
         run: python download_aemo.py
 
       # ---- build -------------------------------------------------------------------
+      - name: dbt build on Fabric compute
+        if: env.REMOTE == 'true'
+        # build || retry, then the fingerprint, all inside one Fabric Python notebook; the
+        # fingerprint is lifted out of the streamed log into history/parity/<engine>.json.
+        run: python .github/scripts/remote_dbt.py "$ENGINE"
+
       - name: dbt build
+        if: env.REMOTE != 'true'
         # `dbt retry` needs --target too, or it renders the profile's default target.
+        #
+        # dwh: the RUNNER decides whether fct_summary is rebuilt, exactly as the original dwh
+        # repo's CI did. check_new_daily raises when daily files are landing that fct_scada has
+        # not ingested yet, and the build then carries `rebuild_summary: true`, which flips the
+        # model to delete+insert over the full history — never --full-refresh, which DROPs and
+        # recreates and deadlocks Fabric's background maintenance. Without this probe the
+        # summary only ever appended intraday while the daily backfill kept adding days.
         run: |
-          dbt build --target "$ENGINE" --profiles-dir . \
+          VARS=()
+          if [ "$ENGINE" = "dwh" ]; then
+            if dbt run-operation check_new_daily --target "$ENGINE" --profiles-dir .; then
+              echo "no new daily files pending: fct_summary appends intraday"
+            else
+              echo "new daily files pending: fct_summary rebuilds (delete+insert)"
+              VARS=(--vars "{rebuild_summary: true}")
+            fi
+          fi
+          dbt build --target "$ENGINE" --profiles-dir . "${VARS[@]}" \
             || dbt retry --target "$ENGINE" --profiles-dir .
 
       - name: dbt docs
-        if: always()
+        if: always() && env.REMOTE != 'true'
         run: dbt docs generate --target "$ENGINE" --profiles-dir . || true
 
       # ---- fingerprint -------------------------------------------------------------
       - name: Fingerprint gold layer
+        if: env.REMOTE != 'true'
         run: |
           mkdir -p history/parity
           dbt run-operation parity_fingerprint --target "$ENGINE" --profiles-dir . \
@@ -214,8 +238,8 @@ jobs:
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           allow-no-subscriptions: true
       - name: Mint OneLake token
-        # $GITHUB_ENV does not cross jobs, so this job re-mints its own token and
-        # re-resolves the warehouse path.
+        # $GITHUB_ENV does not cross jobs, so this job mints its own token and re-resolves
+        # the warehouse path. This one runs on the runner: it is a metadata rewrite, not a fold.
         run: |
           TOKEN=$(az account get-access-token --resource https://storage.azure.com/ --query accessToken -o tsv)
           echo "::add-mask::$TOKEN"

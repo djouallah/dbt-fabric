@@ -31,6 +31,10 @@ on:
         type: choice
         default: readHeavyForPBI
         options: [readHeavyForPBI, writeHeavy]
+      process_limit:
+        description: Files each fact model folds per run, oldest first (every engine honours it; a backlog converges over runs). The throttle for spark's first build.
+        type: string
+        default: "1000"
 
 permissions:
   id-token: write
@@ -129,6 +133,7 @@ jobs:
       land: false
       download_limit: ${{ inputs.download_limit }}
       daily_download_limit: ${{ inputs.daily_download_limit }}
+      process_limit: ${{ inputs.process_limit }}
       spark_resource_profile: ${{ inputs.spark_resource_profile }}
     secrets: inherit
 

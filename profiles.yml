@@ -63,8 +63,8 @@ aemo_electricity:
       # build, so pinning duckdb in requirements/iceberg.txt pins the iceberg extension too.
 
     # ---------------------------------------------------------------- ducklake -----------
-    # DuckDB compute over a DuckLake catalog whose metadata lives in a Fabric SQL DB (or a
-    # local SQL Server on the CI leg), with the tables exported to Delta on run end.
+    # DuckDB compute over a DuckLake catalog whose metadata lives in a Fabric SQL DB, with
+    # the tables exported to Delta on run end. Runs on Fabric compute in CI (remote_dbt.py).
     ducklake:
       type: duckdb
       path: ':memory:'
@@ -80,8 +80,16 @@ aemo_electricity:
         mssql_query_timeout: 600
         mssql_metadata_timeout: 600
         mssql_connection_timeout: 120
-        # Set only on the CI leg, which runs against Azurite rather than OneLake.
-        azure_storage_connection_string: "{{ env_var('AZURE_STORAGE_CONNECTION_STRING', '') }}"
+      # The same OneLake secret the iceberg output carries. The original ducklake repo ran
+      # dbt INSIDE a Fabric notebook, where DuckDB got no OneLake token from the profile and
+      # did not need one; anywhere else that is an unauthenticated abfss:// write. ONELAKE_TOKEN
+      # is minted by notebookutils on the remote leg (see .github/scripts/remote_dbt.py) or by
+      # `az account get-access-token --resource https://storage.azure.com/` on a laptop.
+      secrets:
+        - type: azure
+          name: onelake_storage
+          provider: access_token
+          access_token: "{{ env_var('ONELAKE_TOKEN') }}"
       extensions:
         - parquet
         - json
@@ -96,21 +104,23 @@ aemo_electricity:
         - name: delta_export
           repo: community
       attach:
-        # The whole catalog DSN comes from one env var so the Fabric and CI legs share this
-        # single output. They MUST share it: the target name is the engine selector, so a
-        # second output named `ci` would enable no models at all.
-        #   Fabric: Server=<host>;Database=<db>;Encrypt=yes
-        #   CI:     Server=127.0.0.1,1433;Database=ducklake_meta;User Id=sa;Password=...;
-        #           Encrypt=yes;TrustServerCertificate=yes
+        # The whole catalog DSN comes from one env var (provision.py emits it). ONE output,
+        # not a `ci` twin: the target name is the engine selector, so a second output named
+        # anything else would enable no models at all.
+        #   Server=<host>;Database=<db>;Encrypt=yes
         - path: "ducklake:mssql:{{ env_var('DUCKLAKE_CATALOG_DSN') }}"
           alias: ducklake
           options:
-            # Its OWN key, and deliberately not under the landing zone. DuckLake's parquet
-            # lives in the shared lakehouse's FILES section (not its Tables) — it is not a
-            # lakehouse table until the delta_export on-run-end hook runs. This used to be
-            # '{{ FILES_PATH }}/Tables' with provision.py re-pointing FILES_PATH at the
-            # ducklake item, which also sent THIS LEG'S DOWNLOADER to a private copy of the
-            # CSVs. Keep the two paths separate.
+            # Its OWN key, deliberately separate from FILES_PATH (the landing zone this leg
+            # READS). It used to be '{{ FILES_PATH }}/Tables' with provision.py re-pointing
+            # FILES_PATH at the ducklake item, which also sent THIS LEG'S DOWNLOADER to a
+            # private copy of the CSVs. Keep the two variables separate.
+            # The VALUE is the shared lakehouse's Tables section, as in the original ducklake
+            # repo: DuckLake lays its parquet out as <data_path>/<schema>/<table>/ and the
+            # delta_export() on-run-end hook writes each table's _delta_log IN PLACE, so under
+            # Tables/ the result is Tables/ducklake_mart/<table> -- a real lakehouse table that
+            # Direct Lake can read. Under Files/ the export produced nothing Fabric could see.
+            # The ducklake_* schema folders keep it apart from the other engines' tables.
             data_path: "{{ env_var('DUCKLAKE_DATA_PATH', env_var('FILES_PATH', '/tmp') ~ '/Tables') }}"
             data_inlining_row_limit: 0
             # Required for delta_export: without it the exporter cannot find the catalog.
