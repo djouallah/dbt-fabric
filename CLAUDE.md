@@ -112,16 +112,22 @@ python download_aemo.py && dbt build --target duckrun --profiles-dir .
 - **Fabric OPENROWSET cannot read gzip CSV.** `DATA_COMPRESSION` is only valid under PARSER
   1.0, which cannot parse the ragged/quoted AEMO rows. Plain CSV + PARSER 2.0 is the only
   working combination, and it is why everything lands uncompressed.
-- **dbt-fabric wraps merge models in `MERGE ... USING (<sql>)`**, so a leading top-level
-  `WITH` is invalid — use nested derived tables. It wraps views in
-  `EXEC('create view ... as <sql>')`, where a leading `-- {{ ref(...) }}` comment collapses
-  onto the SELECT and comments it out.
+- **dbt-fabric wraps singular tests in a CTE of its own**, so a test's SQL cannot start with
+  `WITH` — use nested derived tables (`tests/aemo/dwh/*`). Merge models are built as a CTAS
+  temp table and merged FROM it, so `fct_summary` may start with `WITH` (it does). Views are
+  wrapped in `EXEC('create view ... as <sql>')`, where a leading `-- {{ ref(...) }}` comment
+  collapses onto the SELECT and comments it out.
 - **Never `--full-refresh` on dwh.** It DROPs and recreates: a Sch-M swap that deadlocks
   Fabric background maintenance, loses grants and rebinds Direct Lake.
-- **dwh `fct_summary` is rebuilt only when build.yml says so**: `check_new_daily` runs before
-  the build and, when it raises, the build carries `--vars "{rebuild_summary: true}"`
-  (delete+insert). The model cannot decide this itself — its strategy is a parse-time config —
-  and without the probe the summary appends intraday forever while daily files add days.
+- **`fct_summary` is ONE design on all five engines**, taken from
+  `djouallah/direct-lake-parquet-layout`: recompute the dates that could still be stale each
+  run (never seen, last 6 days, in the intraday feed), merge key by key, gate the intraday
+  tail on `dispatch_duids`. The consolidation first shipped three generations of it (a
+  has-new-daily probe on the DuckDB legs, a runner probe on dwh, the reference on spark) and
+  parity split by up to 63k rows. Do not reintroduce a per-engine variant. A drifted summary
+  is reset by DROPPING the table — any engine, a one-off manual drop is fine on dwh too, it is
+  the per-run `--full-refresh` that is not — because merge cannot retract rows and
+  `--full-refresh` on iceberg fails (`fct_summary__dbt_tmp does not exist`).
 - **Fabric's Spark catalog base32hex-decodes every part of a multipart name** (alphabet
   `0-9A-V`). `text.\`path\`` fails on the `x` ("Failed to decode multipart name: 'text'");
   `parquet.\`path\`` works only because every letter of `parquet` is inside the alphabet. And
@@ -168,7 +174,8 @@ python download_aemo.py && dbt build --target duckrun --profiles-dir .
 - `fct_price` is AEMO's DREGION record (all 130 columns) and `fct_scada` is the DUNIT record
   (all 53). `fct_summary` exposes 5 of those ~180 columns; the wide facts are the analytical
   surface.
-- The crater-heal filter in `fct_summary` (`HAVING COUNT(DISTINCT time) >= 280`) and
-  `assert_fct_summary_no_partial_dates` are a matched pair: a date can land partially during
-  backfill, and the old "skip any date already present" filter meant it was never revisited.
-  Observed 2025-09-13: 49 intervals in the summary against 288 in `fct_scada`.
+- `assert_fct_summary_no_partial_dates` guards `fct_summary`'s rebuild window (never-seen
+  dates, the last 6 days, dates in the intraday feed): a date can land partially during
+  backfill, and the window is what revisits it. Under the old "skip any date already present"
+  filter it never was — observed 2025-09-13: 49 intervals in the summary against 288 in
+  `fct_scada`.

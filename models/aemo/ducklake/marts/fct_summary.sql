@@ -1,17 +1,30 @@
 -- depends_on: {{ ref('fct_scada_today') }}
 -- depends_on: {{ ref('fct_price_today') }}
 
--- Insert-only merge on the (date, time, DUID) grain — one operation, one commit.
--- The OneLake Iceberg REST catalog allows only ONE add-snapshot update per commit
--- ("Only one instance of each update type is allowed per request"), so a merge with
--- a WHEN MATCHED UPDATE branch (delete files + data files in one commit) is rejected
--- with BadRequest 400. WHEN MATCHED DO NOTHING keeps every run a single append
--- snapshot: the daily branch backfills dates missing from the summary, the intraday
--- branch tops up after the cutoff, and re-runs dedupe on the key instead of
--- double-appending. Consequences: once a key exists (e.g. from intraday), the daily
--- value never overwrites it — same measurement, so acceptable — and within-date key
--- gaps aren't revisited; `dbt run --full-refresh` is the reconciliation lever.
--- assert_fct_summary_grain is the duplicate tripwire.
+-- Determinism contract: same inputs => same summary, on every engine, regardless of that
+-- engine's run history. Every run emits the COMPLETE recomputation -- the same SQL as a full
+-- refresh -- for exactly the dates whose stored content could still be stale, and the write
+-- reconciles that batch key by key. A partial top-up would fossilize gaps forever.
+--
+-- This is the fct_summary of djouallah/direct-lake-parquet-layout, the design that got its
+-- engines to the same row count, and it is the SAME logic in all five trees here. The
+-- previous copy in this tree (a has-new-daily probe, an insert of missing keys only, and a
+-- "skip dates with >= 280 intervals" crater filter) fossilised every date first written from
+-- the intraday feed and never revisited it; parity measured it 1,911-3,244 rows short.
+--
+-- Insert-only on the DuckDB family, which is a real limitation and not a preference: the
+-- OneLake Iceberg REST catalog rejects a matched-UPDATE branch (BadRequest 400), and the three
+-- DuckDB trees run one config so duckrun and ducklake give up the update they could do.
+-- Consequence: a re-emitted row carrying REVISED mw/price does NOT overwrite what is stored --
+-- craters (missing keys) are repaired, changed values are not. spark and dwh do update, so a
+-- revision would show up as a value difference between the engine pairs; the repair lever on
+-- this side is a full rebuild: REBUILD_SUMMARY=1 on the dispatch adds
+-- `dbt run --select fct_summary --full-refresh` to the leg.
+-- Not delete+insert on duckrun: that adapter implements it as a fenced full-table overwrite.
+--
+-- No merge path DELETES a row the recomputation stops producing, which is why dispatch_duids
+-- below gates the intraday branch to units the daily branch can reproduce. Treat any edit to
+-- dispatch_duids as load-bearing -- nothing catches a mistake in it except parity.
 {{ config(
     materialized='incremental',
     incremental_strategy='merge',
@@ -20,119 +33,48 @@
     schema='mart'
 ) }}
 
-{% if is_incremental() %}
+{# Full-history rebuild lever here is plain `--full-refresh` (REBUILD_SUMMARY=1 makes CI add
+   that step). Deliberately NOT a var that makes the incremental branch emit all history: that
+   would hand the merge the whole table as a source. #}
+{# Closes with `%}`, NOT `-%}`: a right-strip swallows the newlines after this tag and
+   glues WITH onto the `-- depends_on` comment line above, commenting the keyword out
+   (the compiled SQL then starts at `daily_summary AS (` and the parser errors there). #}
+{%- set scoped = is_incremental() %}
 
--- Deliberately still counts DISTINCT dates, not fully-captured ones. Making this gate fire on
--- partial dates would pin it permanently true — source-limited dates can never reach a full
--- day — and the daily branch would then run every time, starving the intraday branch and
--- letting today's data go stale. So crater healing (see the filter below) rides on the daily
--- branch whenever it does run, which during backfill is most runs.
-{%- set has_new_daily_query -%}
-SELECT
-  (SELECT COUNT(DISTINCT DATE) FROM {{ ref('fct_scada') }} WHERE INTERVENTION = 0) as scada_days,
-  (SELECT COUNT(DISTINCT date) FROM {{ this }}) as summary_days
-{%- endset -%}
-
-{%- if execute and flags.WHICH in ('run', 'build', 'retry') -%}
-  {%- set result = run_query(has_new_daily_query) -%}
-  {%- set has_new_daily = result and result.rows[0][0] > result.rows[0][1] -%}
-{%- else -%}
-  {%- set has_new_daily = true -%}
-{%- endif -%}
-
-{% if has_new_daily %}
-
--- New daily data found: backfill ONLY the dates missing from the summary. Computing
--- full history here OOMs the 7GB CI runner — the merge materializes its source as a
--- temp relation before joining the target, so the source must stay small. Within-date
--- gaps (a key missing for a date the summary already has) need `--full-refresh`.
-WITH daily_summary AS (
-  SELECT
-    s.DATE as date,
-    CAST(strftime(s.SETTLEMENTDATE, '%H%M') AS INT) as time,
-    (SELECT MAX(CAST(SETTLEMENTDATE AS TIMESTAMPTZ)) FROM {{ ref('fct_scada') }}) as cutoff,
-    s.DUID,
-    MAX(s.INITIALMW) as mw,
-    MAX(p.RRP) as price
-  FROM {{ ref('fct_scada') }} s
-  LEFT JOIN {{ ref('dim_duid') }} d ON s.DUID = d.DUID
-  LEFT JOIN {{ ref('fct_price') }} p
-    ON s.SETTLEMENTDATE = p.SETTLEMENTDATE AND d.Region = p.REGIONID
-  WHERE
-    s.INTERVENTION = 0
-    AND s.INITIALMW <> 0
-    AND p.INTERVENTION = 0
-    {% if is_incremental() %}
-    -- Skip only the dates the summary already holds IN FULL. A partially-loaded date has to
-    -- be revisited: during backfill a date can land with just the intervals fct_scada
-    -- happened to hold at that moment (typically the 49 that came from the previous day's
-    -- archive file), and the old `NOT IN (SELECT date FROM this)` filter meant it was never
-    -- looked at again once the rest of the day arrived — a permanent crater. Observed
-    -- 2025-09-13: 49 intervals in the summary against 288 in fct_scada.
-    -- Reprocessing is safe and cheap under the insert-only merge — the missing
-    -- (date, time, DUID) keys insert, the ones already present DO NOTHING, and it stays a
-    -- single append snapshot, so OneLake's one-add-per-commit rule still holds.
-    -- 280 rather than 288 matches the tolerance in assert_fct_summary_no_partial_dates.
-    -- Dates the source itself is still short on (the backfill has not reached the preceding
-    -- archive file yet) get re-read on each daily run and insert nothing until it does — a
-    -- few dates' worth of scan, bounded and harmless, and they fill in on their own.
-    AND s.DATE NOT IN (
-      SELECT date FROM {{ this }} GROUP BY date HAVING COUNT(DISTINCT time) >= 280
-    )
-    {% endif %}
-  GROUP BY ALL
-)
-
-SELECT
-  date,
-  time,
-  DUID,
-  CAST(mw AS DECIMAL(18, 4)) AS mw,
-  CAST(price AS DECIMAL(18, 4)) AS price,
-  cutoff
-FROM daily_summary
-
-{% else %}
-
--- No new daily data: append intraday after cutoff
-WITH max_cutoff AS (
-  SELECT MAX(cutoff) as cutoff FROM {{ this }}
+WITH
+-- The unit universe the DAILY branch can reproduce. Gates the intraday branch so it never
+-- emits a unit that will be unreproducible once the date settles (see the header).
+-- Deliberately UNBOUNDED, not a trailing window: fct_scada is append-only, so this set only
+-- ever GROWS and can never orphan a row it previously admitted. A rolling window would
+-- reintroduce the same bug from the other side — a unit ageing out of the window turns its
+-- already-written intraday rows into orphans, which merge still cannot delete.
+-- Outside the `scoped` block on purpose: a --full-refresh runs the intraday branch too and
+-- must apply the identical filter.
+dispatch_duids AS (
+  SELECT DISTINCT DUID FROM {{ ref('fct_scada') }}
 ),
-
-incremental_data AS (
-  SELECT
-    s.DATE as date,
-    s.SETTLEMENTDATE,
-    s.DUID,
-    MAX(s.INITIALMW) AS mw,
-    MAX(p.RRP) AS price
-  FROM {{ ref('fct_scada_today') }} s
-  JOIN {{ ref('dim_duid') }} d ON s.DUID = d.DUID
-  JOIN {{ ref('fct_price_today') }} p
-    ON s.SETTLEMENTDATE = p.SETTLEMENTDATE AND d.Region = p.REGIONID
-  CROSS JOIN max_cutoff mc
-  WHERE
-    s.INITIALMW <> 0
-    AND p.INTERVENTION = 0
-    AND s.SETTLEMENTDATE > mc.cutoff
-  GROUP BY ALL
-)
-
-SELECT
-  date,
-  CAST(strftime(SETTLEMENTDATE, '%H%M') AS INT) AS time,
-  DUID,
-  CAST(mw AS DECIMAL(18, 4)) AS mw,
-  CAST(price AS DECIMAL(18, 4)) AS price,
-  CAST(MAX(SETTLEMENTDATE) OVER () AS TIMESTAMPTZ) AS cutoff
-FROM incremental_data
-
+{% if scoped %}
+-- Dates whose stored content could differ from a clean recomputation. Everything older
+-- is settled: its daily file has landed and been folded in, so recomputing it would
+-- reproduce it exactly. Shrinking this window silently reduces what can be repaired.
+rebuild_dates AS (
+  -- Never seen before: archive backfill, or a first build catching up.
+  SELECT DISTINCT s.DATE AS date FROM {{ ref('fct_scada') }} s
+  WHERE s.INTERVENTION = 0
+    AND s.DATE NOT IN (SELECT DISTINCT date FROM {{ this }})
+  UNION
+  -- Recently settled: a date first written from the intraday feed is incomplete until
+  -- its daily file lands, which is several days later if the pipeline missed a run — so
+  -- a window, not just the newest daily date.
+  SELECT DISTINCT s.DATE FROM {{ ref('fct_scada') }} s
+  WHERE s.DATE >= (SELECT MAX(DATE) - INTERVAL 6 DAY FROM {{ ref('fct_scada') }})
+  UNION
+  -- Still in flux: the intraday feed keeps extending these until their daily file lands.
+  SELECT DISTINCT s.DATE FROM {{ ref('fct_scada_today') }} s
+),
 {% endif %}
 
-{% else %}
-
--- Full refresh from daily + today data
-WITH daily_summary AS (
+daily_summary AS (
   SELECT
     s.DATE as date,
     CAST(strftime(s.SETTLEMENTDATE, '%H%M') AS INT) as time,
@@ -140,17 +82,24 @@ WITH daily_summary AS (
     MAX(s.INITIALMW) as mw,
     MAX(p.RRP) as price
   FROM {{ ref('fct_scada') }} s
-  LEFT JOIN {{ ref('dim_duid') }} d ON s.DUID = d.DUID
-  LEFT JOIN {{ ref('fct_price') }} p
+  -- INNER joins: `WHERE p.INTERVENTION = 0` always discarded null-price rows anyway,
+  -- so the old LEFT JOINs were inner joins in disguise — say what we do.
+  JOIN {{ ref('dim_duid') }} d ON s.DUID = d.DUID
+  JOIN {{ ref('fct_price') }} p
     ON s.SETTLEMENTDATE = p.SETTLEMENTDATE AND d.Region = p.REGIONID
   WHERE
     s.INTERVENTION = 0
     AND s.INITIALMW <> 0
     AND p.INTERVENTION = 0
+    {% if scoped %}
+    AND s.DATE IN (SELECT date FROM rebuild_dates)
+    {% endif %}
   GROUP BY ALL
 
   UNION ALL
 
+  -- Intraday tail: intervals beyond the daily horizon. Every date here is in
+  -- rebuild_dates by construction, so no extra scoping predicate is needed.
   SELECT
     s.DATE as date,
     CAST(strftime(s.SETTLEMENTDATE, '%H%M') AS INT) as time,
@@ -164,6 +113,8 @@ WITH daily_summary AS (
   WHERE
     s.INITIALMW <> 0
     AND p.INTERVENTION = 0
+    -- Only units the daily branch will be able to reproduce once this date settles.
+    AND s.DUID IN (SELECT DUID FROM dispatch_duids)
     AND s.SETTLEMENTDATE > (SELECT MAX(CAST(SETTLEMENTDATE AS TIMESTAMPTZ)) FROM {{ ref('fct_scada') }})
   GROUP BY ALL
 )
@@ -174,11 +125,14 @@ SELECT
   DUID,
   CAST(mw AS DECIMAL(18, 4)) AS mw,
   CAST(price AS DECIMAL(18, 4)) AS price,
+  -- Provenance column only — no read path depends on it anymore. Kept (and kept
+  -- populated) to avoid a schema change that would force a table DROP on dwh.
   (SELECT GREATEST(
     (SELECT MAX(CAST(SETTLEMENTDATE AS TIMESTAMPTZ)) FROM {{ ref('fct_scada') }}),
     COALESCE((SELECT MAX(CAST(SETTLEMENTDATE AS TIMESTAMPTZ)) FROM {{ ref('fct_scada_today') }}), CAST('1900-01-01' AS TIMESTAMPTZ))
   )) AS cutoff
 FROM daily_summary
-ORDER BY date
-
-{% endif %}
+-- Parity with the spark and dwh copies, which end with the same sort. It makes no claim about
+-- physical layout: this SQL is a merge SOURCE, so nothing about the ordering reaches the
+-- stored table. It is here so the legs pay the same cost.
+ORDER BY date, time

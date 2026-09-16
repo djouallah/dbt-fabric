@@ -155,24 +155,8 @@ jobs:
       - name: dbt build
         if: env.REMOTE != 'true'
         # `dbt retry` needs --target too, or it renders the profile's default target.
-        #
-        # dwh: the RUNNER decides whether fct_summary is rebuilt, exactly as the original dwh
-        # repo's CI did. check_new_daily raises when daily files are landing that fct_scada has
-        # not ingested yet, and the build then carries `rebuild_summary: true`, which flips the
-        # model to delete+insert over the full history — never --full-refresh, which DROPs and
-        # recreates and deadlocks Fabric's background maintenance. Without this probe the
-        # summary only ever appended intraday while the daily backfill kept adding days.
         run: |
-          VARS=()
-          if [ "$ENGINE" = "dwh" ]; then
-            if dbt run-operation check_new_daily --target "$ENGINE" --profiles-dir .; then
-              echo "no new daily files pending: fct_summary appends intraday"
-            else
-              echo "new daily files pending: fct_summary rebuilds (delete+insert)"
-              VARS=(--vars "{rebuild_summary: true}")
-            fi
-          fi
-          dbt build --target "$ENGINE" --profiles-dir . "${VARS[@]}" \
+          dbt build --target "$ENGINE" --profiles-dir . \
             || dbt retry --target "$ENGINE" --profiles-dir .
 
       - name: dbt docs

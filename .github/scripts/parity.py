@@ -22,9 +22,11 @@ the last place:
     thing in T-SQL. A neutral reader cannot grade a writer's rounding.
   * Summing ~10^5 doubles in a different order gives a different last bit.
 
-The tolerance is deliberately tight (1e-9 relative). It is there to absorb float
-association, not to paper over a logic difference -- if a leg drifts past it, that is a
-finding, not a threshold to raise.
+The tolerance is 1e-7 relative. It is there to absorb rounding and float association, not
+to paper over a logic difference -- if a leg drifts past it, that is a finding, not a
+threshold to raise. Measured 2026-09-16: ducklake and dwh with IDENTICAL row counts (26.8M
+rows, a clean recomputation on both) differed by 1.0e-8 on mw_sum and 3.7e-8 on price_sum --
+26.8M DECIMAL(18,4) roundings, three tie-breaking rules. The old 1e-9 failed that pair.
 """
 from __future__ import annotations
 
@@ -35,7 +37,7 @@ from pathlib import Path
 
 EXACT = ["rows_total", "duids", "days", "date_min", "date_max"]
 APPROX = ["mw_sum", "price_sum"]
-REL_TOL = 1e-9
+REL_TOL = 1e-7
 
 
 def capture(out_dir: Path) -> int:
