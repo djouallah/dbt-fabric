@@ -1,0 +1,115 @@
+name: 'aemo_electricity'
+version: '1.0.0'
+profile: 'aemo_electricity'
+
+model-paths: ["models"]
+macro-paths: ["macros"]
+test-paths: ["tests"]
+seed-paths: ["seeds"]
+clean-targets: ["target", "dbt_packages"]
+
+# =====================================================================================
+# HOW ONE RUN SELECTS ONE ENGINE
+#
+# models/aemo/<engine>/<layer>/<model>.sql — the SAME model file name exists in all five
+# engine folders. That collision is legal only because exactly one engine tree is +enabled
+# per run; dbt's duplicate-resource-name check only ever sees enabled nodes.
+#
+# `dbt build --target dwh` sets target.name == 'dwh', so only models/aemo/dwh/** is
+# enabled and the other four trees parse into manifest['disabled']. There is no --select
+# anywhere in CI; selection is ENTIRELY +enabled.
+#
+# WE GATE ON target.name, NOT target.type. direct-lake-parquet-layout — where this scheme
+# comes from — gates on target.type, which it can because only one of its targets is
+# DuckDB. Here `iceberg` and `ducklake` are BOTH `type: duckdb`, so target.type cannot
+# tell five trees apart. target.type is still the right discriminator inside a macro that
+# is about DIALECT rather than engine (see parse_filename), and it is the WRONG one for
+# anything that must separate iceberg from ducklake (see iceberg_adapter_overrides.sql,
+# where a `duckdb__` macro reaches both and has to branch on target.name).
+#
+# Three rules, each of which has already cost a silent failure in one of the four source
+# repos or in the template:
+#
+#   1. NOTHING ON THE `aemo_electricity` PROJECT KEY, EVER. A generic test declared in a patch
+#      file gets the fqn of the YML FILE, not of the model it patches, so a gate on the
+#      project key also disables every generic test. A bare project-key gate once made two
+#      whole targets run ZERO tests — green.
+#   2. BOTH AXES IN ONE +enabled. +enabled is a scalar, so a deeper folder key CLOBBERS a
+#      shallower one rather than combining with it.
+#   3. THE DEFAULT FAILURE MODE OF THIS DESIGN IS A GREEN RUN THAT BUILT NOTHING. A target
+#      name that matches no folder disables everything, and `dbt build` then says "Nothing
+#      to do" and exits 0. .github/scripts/check_gating.py is not optional.
+# =====================================================================================
+
+on-run-start:
+  # Each hook renders to whitespace on the engines it does not apply to.
+  - "{% if target.name in ['duckrun', 'iceberg'] and env_var('AZURE_TRANSPORT_OPTION_TYPE', 'default') != 'default' %}SET GLOBAL azure_transport_option_type = '{{ env_var('AZURE_TRANSPORT_OPTION_TYPE') }}'{% endif %}"
+  # Set here and not in profiles.yml: dbt-duckdb re-applies `settings:` on every cursor and
+  # DuckDB refuses to switch temp_directory once anything has spilled.
+  - "{% if target.name == 'iceberg' %}SET GLOBAL temp_directory = '{{ env_var('DUCKDB_TEMP_DIR', '/tmp/duckdb_spill') }}'{% endif %}"
+  - "{% if target.name == 'duckrun' %}SET GLOBAL preserve_insertion_order = false{% endif %}"
+  - "{% if target.name == 'duckrun' %}SET GLOBAL temp_directory = '{{ env_var('DUCKDB_TEMP_DIR', '/tmp/duckdb_spill') }}'{% endif %}"
+  # DuckLake compaction knobs, applied per run rather than per table.
+  - "{% if target.name == 'ducklake' and flags.WHICH in ['run', 'build'] %}CALL ducklake.set_option('rewrite_delete_threshold', 0){% endif %}"
+  - "{% if target.name == 'ducklake' and flags.WHICH in ['run', 'build'] %}CALL ducklake.set_option('target_file_size', '128MB'){% endif %}"
+  - "{% if target.name == 'ducklake' and flags.WHICH in ['run', 'build'] %}CALL ducklake.set_option('expire_older_than', '2 day'){% endif %}"
+  # Fabric Warehouse does not auto-create schemas, and CREATE SCHEMA must be alone in its
+  # batch — hence the EXEC() inside the macro.
+  - "{% if target.name == 'dwh' %}{{ create_schemas_if_not_exists(['landing', 'mart']) }}{% endif %}"
+
+on-run-end:
+  # DuckLake writes many small parquet files and needs an explicit Delta export before a
+  # Direct Lake model can read the result.
+  - "{% if target.name == 'ducklake' and flags.WHICH in ['run', 'build'] %}CALL ducklake_rewrite_data_files('ducklake'){% endif %}"
+  - "{% if target.name == 'ducklake' and flags.WHICH in ['run', 'build'] %}CALL ducklake_merge_adjacent_files('ducklake'){% endif %}"
+  - "{% if target.name == 'ducklake' and flags.WHICH in ['run', 'build'] %}CALL ducklake_cleanup_old_files('ducklake', cleanup_all => true){% endif %}"
+  - "{% if target.name == 'ducklake' and flags.WHICH in ['run', 'build'] %}CALL delta_export('ducklake', '{{ env_var('FILES_PATH', '/tmp') }}/Tables'){% endif %}"
+
+models:
+  aemo_electricity:
+    aemo:
+      # The patch files (_staging.yml, _dimensions.yml, _marts.yml) live at models/aemo/,
+      # one level ABOVE these engine keys, so ONE patch documents and tests whichever tree
+      # is enabled. Do not move them to the root of models/ — they would lose the gateable
+      # folder segment.
+      duckrun:
+        +enabled: "{{ target.name == 'duckrun' }}"
+        staging:    {+materialized: view,       +schema: landing}
+        dimensions: {+materialized: table,      +schema: mart}
+        marts:      {+materialized: incremental, +schema: landing}
+      iceberg:
+        +enabled: "{{ target.name == 'iceberg' }}"
+        staging:    {+materialized: view,       +schema: landing}
+        dimensions: {+materialized: table,      +schema: mart}
+        marts:      {+materialized: incremental, +schema: landing}
+      ducklake:
+        +enabled: "{{ target.name == 'ducklake' }}"
+        staging:    {+materialized: view,       +schema: landing}
+        dimensions: {+materialized: table,      +schema: mart}
+        marts:      {+materialized: incremental, +schema: landing}
+      dwh:
+        +enabled: "{{ target.name == 'dwh' }}"
+        staging:    {+materialized: view,       +schema: landing}
+        dimensions: {+materialized: table,      +schema: mart}
+        marts:      {+materialized: incremental, +schema: landing}
+      spark:
+        +enabled: "{{ target.name == 'spark' }}"
+        staging:    {+materialized: view,       +schema: landing}
+        dimensions: {+materialized: table,      +schema: mart}
+        marts:      {+materialized: incremental, +schema: landing}
+
+data_tests:
+  aemo_electricity:
+    aemo:
+      # NOTE THE ASYMMETRY WITH `models:` ABOVE, AND DO NOT "FIX" IT.
+      # A generic test declared in models/aemo/_*.yml has fqn
+      #   ['aemo_electricity', 'aemo', '<test_name>']
+      # — an `aemo` segment but NO engine segment — so this key is the only one that can
+      # reach it. It therefore must NOT carry a target clause, or the generic tests would
+      # run on one engine only. The singular tests under tests/aemo/<engine>/ do have an
+      # engine segment, so they are gated on the keys below.
+      duckrun:  {+enabled: "{{ target.name == 'duckrun' }}"}
+      iceberg:  {+enabled: "{{ target.name == 'iceberg' }}"}
+      ducklake: {+enabled: "{{ target.name == 'ducklake' }}"}
+      dwh:      {+enabled: "{{ target.name == 'dwh' }}"}
+      spark:    {+enabled: "{{ target.name == 'spark' }}"}

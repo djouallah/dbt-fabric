@@ -1,0 +1,29 @@
+# dbt
+target/
+logs/
+dbt_packages/
+.user.yml
+
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+*.db
+
+# Fabric CLI scratch — deploy.py writes these and removes them in a finally,
+# but a crashed run leaves them behind.
+_fab_deploy_pipeline.yml
+_fab_deploy_tmp.yml
+_remote_bim_cache.bim
+fabric_download/
+
+# Local landing zone for `python download_aemo.py` with FILES_PATH=./landing
+landing/
+warehouse/
+
+# Windows / tooling artefacts
+nul
+%SystemDrive%/
+.claude/
+blog.md
+PLAN.md
