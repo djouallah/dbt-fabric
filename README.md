@@ -7,7 +7,7 @@ One dbt project that builds the **same AEMO gold layer** on five adapters:
 | `duckrun` | `dbt-duckrun` | DuckDB | Delta Lake on OneLake, via delta-rs |
 | `iceberg` | `dbt-duckdb` | DuckDB | Iceberg, through the OneLake Iceberg REST catalog |
 | `ducklake` | `dbt-duckdb` | DuckDB | DuckLake parquet + a Delta export, catalog in a Fabric SQL DB |
-| `dwh` | `dbt-fabric-samdebruyn` | Fabric Warehouse | Warehouse tables (T-SQL) |
+| `dwh` | `dbt-fabric` | Fabric Warehouse | Warehouse tables (T-SQL) |
 | `spark` | `dbt-fabricspark` | Fabric Spark | Delta in a Fabric Lakehouse |
 
 **The thesis: the engine does not matter, the output does.** Every engine builds the same
@@ -37,9 +37,16 @@ Check the wiring without credentials, and **before spending any capacity**:
 
 ```bash
 pip install -r requirements/dev.txt
-python -m pytest tests_py/ -q            # column spec, adapter overrides, SQL dialects
-python .github/scripts/check_gating.py   # all five targets
+python -m pytest tests_py/ -q                    # column spec, adapter overrides, SQL dialects
+
+pip install -r requirements/duckrun.txt
+python .github/scripts/check_gating.py duckrun   # one engine, in that engine's own env
 ```
+
+Gating runs **one engine per environment**, because the adapters cannot share one:
+`dbt-fabric` and `dbt-fabricspark` shadow each other under the `dbt.adapters` namespace.
+CI runs it as a five-way matrix; with no argument the script does every engine whose adapter
+it can import.
 
 ## Layout
 
@@ -107,9 +114,9 @@ One `download_aemo.py`, one landing zone, **plain CSV for every engine**. The Du
 used to gzip into `csv/` while dwh landed plain into `csv_raw/`; if the engines read
 different bytes then comparing their output means nothing.
 
-It is a script, not a dbt python model, because dbt-fabric's python models are
-PySpark-via-Livy only and the spark leg has no usable python-model runtime either — which is
-why the dwh repo already kept a fifth copy of it outside `model-paths`.
+It is a script, not a dbt python model, because the Fabric Warehouse adapter's python
+models are PySpark-via-Livy only and the spark leg has no usable python-model runtime
+either — which is why the dwh repo already kept a fifth copy of it outside `model-paths`.
 
 ## Isolating a run
 
@@ -120,7 +127,8 @@ run out of the way.
 
 ## CI
 
-- `ci.yml` — free and credential-less: pytest plus `check_gating.py`. Runs on every push.
+- `ci.yml` — free and credential-less: pytest, plus `check_gating.py` as a five-way matrix
+  (one environment per engine). Runs on every push.
 - `build.yml` — the reusable per-engine leg: land → `dbt build` → test → fingerprint.
 - `pipeline.yml` — manual only; runs the engines one at a time, then the **parity** job
   compares their fingerprints.

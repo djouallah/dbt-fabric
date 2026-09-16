@@ -1,15 +1,16 @@
 name: CI
 
-# Free, credential-less, and the gate everything else depends on. It runs the whole
-# (engine x target) matrix through `dbt parse` and asserts what is enabled — because the
-# default failure mode of this repo's layout is a run that builds NOTHING and exits 0.
-# Costs seconds and no Fabric capacity, so it runs on every push.
+# Free, credential-less, and the gate everything else depends on. It runs each engine
+# through `dbt parse` and asserts what is enabled — because the default failure mode of
+# this repo's layout is a run that builds NOTHING and exits 0. Costs no Fabric capacity,
+# so it runs on every push.
 
 on:
   push:
     branches: ["**"]
   pull_request:
     branches: [main]
+  workflow_call:
   workflow_dispatch:
 
 permissions:
@@ -20,29 +21,47 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  checks:
+  unit:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
-
       - uses: actions/setup-python@v5
         with:
-          # 3.12: dbt-fabric-samdebruyn requires it, and check_gating.py parses the dwh
-          # target, so every adapter has to be importable here.
           python-version: "3.12"
           cache: pip
           # Default glob is **/requirements.txt, which this repo has not got.
           cache-dependency-path: requirements/dev.txt
-
-      - name: Install all five adapters
-        run: pip install -r requirements/dev.txt
-
+      - run: pip install -r requirements/dev.txt
       - name: Unit tests
         # Pins the shared column spec, the iceberg adapter overrides against the INSTALLED
         # dbt-duckdb, and every singular test against its own SQL dialect.
         run: python -m pytest tests_py/ -q
 
-      - name: Gating
+  # ONE JOB PER ENGINE, each installing only that engine's requirements.
+  #
+  # Not one job installing all five: the adapters cannot share an environment. dbt-fabric
+  # and dbt-fabricspark shadow each other under the dbt.adapters namespace, so loading the
+  # spark plugin fails with "has no attribute 'Plugin'"; the dbt-fabric-samdebruyn fork this
+  # replaced instead made the spark profile fail validation with "'database' is a required
+  # property". Both were found here rather than locally. Splitting the matrix is also more
+  # faithful — each engine is validated against exactly the dependencies it builds with.
+  gating:
+    strategy:
+      fail-fast: false
+      matrix:
+        engine: [duckrun, iceberg, ducklake, dwh, spark]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          # 3.12: dbt-fabric requires it.
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements/${{ matrix.engine }}.txt
+      - run: pip install -r requirements/${{ matrix.engine }}.txt
+      - name: Gating (${{ matrix.engine }})
         # The one check that catches "green run, built nothing".
-        run: python .github/scripts/check_gating.py
+        run: python .github/scripts/check_gating.py ${{ matrix.engine }}

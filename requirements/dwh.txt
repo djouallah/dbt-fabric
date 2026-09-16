@@ -1,13 +1,14 @@
-# dwh: Fabric Warehouse (T-SQL).
+# dwh: Fabric Warehouse (T-SQL), on Microsoft's official adapter.
 #
-# dbt-fabric-samdebruyn depends on dbt-adapters, NOT dbt-core, so dbt-core must be named
-# explicitly to get the `dbt` CLI entry point. Pin dbt-core + dbt-adapters to the adapter's
-# tested set — unpinned, pip backtracks dbt-core to an ancient 1.7.x.
-# It uses the pure-Python mssql-python driver: no ODBC (msodbcsql18/unixODBC) to install,
-# but it requires Python >= 3.12.
-dbt-fabric-samdebruyn
-dbt-core==1.11.10
-dbt-adapters==1.23.0
+# dbt-fabric depends on mssql-python, i.e. the pure-Python TDS driver — so there is no ODBC
+# to install (no msodbcsql18/unixODBC), and the profile has no `driver:` and no `port:`.
+# That is why this is no longer the dbt-fabric-samdebruyn fork: the fork existed to get a
+# non-ODBC driver, and the official adapter supports TDS directly now.
+#
+# NOTE this is also why the dbt project is named `aemo_electricity` and not `dbt_fabric`:
+# dbt-fabric ships an internal macro package called `dbt_fabric`, and a project of the same
+# name makes dbt refuse to start with "found more than one package with the name".
+dbt-fabric
 pyyaml
 ms-fabric-cli
 duckrun

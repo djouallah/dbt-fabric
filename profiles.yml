@@ -116,9 +116,12 @@ aemo_electricity:
             meta_access_token: "{{ env_var('DBT_ENV_SECRET_SQL_TOKEN', '') }}"
 
     # ---------------------------------------------------------------- dwh (T-SQL) --------
-    # Fabric Warehouse. dbt-fabric-samdebruyn keeps type `fabric` but uses Microsoft's
-    # pure-Python mssql-python driver — hence NO `driver:` and NO `port:` key, and nothing to
-    # install on the runner. Requires Python >= 3.12.
+    # Fabric Warehouse, on Microsoft's official dbt-fabric. It talks TDS through the
+    # pure-Python mssql-python driver — hence NO `driver:` and NO `port:` key, and no ODBC
+    # to install on the runner. Requires Python >= 3.12.
+    #
+    # This used to be the dbt-fabric-samdebruyn fork, which existed to get a non-ODBC
+    # driver; the official adapter supports TDS directly now, so the fork is gone.
     dwh:
       type: fabric
       # SQL analytics endpoint, e.g. xxxxxxxx.datawarehouse.fabric.microsoft.com

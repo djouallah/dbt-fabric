@@ -1,29 +1,16 @@
-# Everything the offline checks need: check_gating.py parses all FIVE targets in one
-# process, so every adapter has to be importable at once, and tests_py/test_dialects.py
-# needs sqlglot.
+# The unit-test environment only. tests_py/ pins the shared column spec, the iceberg
+# adapter overrides (against the INSTALLED dbt-duckdb) and every singular test against its
+# own SQL dialect. None of that needs the Fabric adapters.
 #
-# dbt-core and dbt-adapters are PINNED to the same set requirements/dwh.txt pins — the
-# strictest of the five legs. Unpinned, pip resolved dbt-core 1.12.5 here while the legs
-# install 1.11.x, so this gate was validating a different dbt from the one that actually
-# builds. A gate that does not match the thing it gates is worse than no gate.
-dbt-core==1.11.10
-dbt-adapters==1.23.0
-
-duckrun
+# THERE IS DELIBERATELY NO "all five adapters" ENVIRONMENT, because they cannot share one:
+#   * dbt-fabric and dbt-fabricspark shadow each other under the dbt.adapters namespace --
+#     loading the spark plugin then fails with "has no attribute 'Plugin'"
+#   * dbt-fabric-samdebruyn (the fork this replaced) instead made the spark profile fail
+#     validation with "'database' is a required property"
+# Both were found by CI, not locally, and neither is a config error to work around in
+# profiles.yml. So check_gating.py takes ONE engine and CI runs it as a five-way matrix,
+# each leg installing only requirements/<engine>.txt -- which is more faithful anyway:
+# every engine is then validated against exactly the dependencies it will build with.
 dbt-duckdb
-dbt-fabric-samdebruyn
-# Pinned: 1.13.5 rejects this profile with "'database' is a required property",
-# even though the adapter's own FabricSparkCredentials marks database as
-# `field(default=None, init=False)` — "internal, always derived from lakehouse name,
-# not a user input". So there is no value to supply; adding one would be wrong. 1.13.4
-# parses this profile cleanly (verified against 1.13.4 directly). Revisit on the next
-# release rather than working around it in profiles.yml.
-dbt-fabricspark==1.13.4
-# dbt-spark is named explicitly: dbt-fabricspark imports dbt.adapters.spark but does NOT
-# declare it as a dependency, so a clean install fails at adapter load with
-# ModuleNotFoundError: No module named 'dbt.adapters.spark'. It only appears to work on a
-# machine where something else already pulled dbt-spark in.
-dbt-spark
-
 sqlglot
 pytest

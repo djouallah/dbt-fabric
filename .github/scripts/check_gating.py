@@ -16,7 +16,14 @@ Runs `dbt parse` once per target with dummy env vars and asserts, for each:
     one that regressed elsewhere: a gate on the project key silently disabled them,
     because a generic test takes the fqn of the YML FILE, not of the model it patches
 
-Usage:  python .github/scripts/check_gating.py
+ONE ENGINE PER INVOCATION, and CI runs it as a five-way matrix. The adapters cannot share
+an environment: dbt-fabric and dbt-fabricspark shadow each other under the dbt.adapters
+namespace ("has no attribute 'Plugin'"), and the samdebruyn fork this replaced instead made
+the spark profile fail validation outright. Running per engine is also more faithful — each
+one is validated against exactly the dependencies it will build with.
+
+Usage:  python .github/scripts/check_gating.py <engine>
+        python .github/scripts/check_gating.py            # every engine whose adapter is installed
 """
 from __future__ import annotations
 
@@ -128,9 +135,36 @@ def check(target: str, manifest: dict) -> list[str]:
     return errs
 
 
+def adapter_installed(target: str) -> bool:
+    import importlib.util
+
+    mod = {"duckrun": "dbt.adapters.duckrun", "iceberg": "dbt.adapters.duckdb",
+           "ducklake": "dbt.adapters.duckdb", "dwh": "dbt.adapters.fabric",
+           "spark": "dbt.adapters.fabricspark"}[target]
+    try:
+        return importlib.util.find_spec(mod) is not None
+    except (ImportError, ValueError):
+        return False
+
+
 def main() -> int:
+    if len(sys.argv) > 1:
+        if sys.argv[1] not in ENGINES:
+            print(f"unknown engine {sys.argv[1]!r}; expected one of {', '.join(ENGINES)}",
+                  file=sys.stderr)
+            return 2
+        targets = [sys.argv[1]]
+    else:
+        targets = [e for e in ENGINES if adapter_installed(e)]
+        skipped = [e for e in ENGINES if e not in targets]
+        if skipped:
+            print(f"skipping (adapter not installed): {', '.join(skipped)}")
+        if not targets:
+            print("no adapters installed", file=sys.stderr)
+            return 2
+
     failed = False
-    for target in ENGINES:
+    for target in targets:
         with tempfile.TemporaryDirectory() as td:
             manifest = parse(target, Path(td))
         errs = check(target, manifest)
@@ -144,7 +178,7 @@ def main() -> int:
     if failed:
         print("\ngating is WRONG -- do not spend capacity on this build", file=sys.stderr)
         return 1
-    print("\ngating ok for all five engines")
+    print(f"\ngating ok for {', '.join(targets)}")
     return 0
 
 
