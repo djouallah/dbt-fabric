@@ -105,7 +105,13 @@ aemo_electricity:
         - path: "ducklake:mssql:{{ env_var('DUCKLAKE_CATALOG_DSN') }}"
           alias: ducklake
           options:
-            data_path: "{{ env_var('FILES_PATH', '/tmp') }}/Tables"
+            # Its OWN key, and deliberately not under the landing zone. DuckLake's parquet
+            # lives in the shared lakehouse's FILES section (not its Tables) — it is not a
+            # lakehouse table until the delta_export on-run-end hook runs. This used to be
+            # '{{ FILES_PATH }}/Tables' with provision.py re-pointing FILES_PATH at the
+            # ducklake item, which also sent THIS LEG'S DOWNLOADER to a private copy of the
+            # CSVs. Keep the two paths separate.
+            data_path: "{{ env_var('DUCKLAKE_DATA_PATH', env_var('FILES_PATH', '/tmp') ~ '/Tables') }}"
             data_inlining_row_limit: 0
             # Required for delta_export: without it the exporter cannot find the catalog.
             # Not mssql-specific — the sqlite backend fails the same way.

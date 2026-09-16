@@ -16,7 +16,7 @@ on:
         required: true
         type: string
       dbt_schema:
-        description: DBT_SCHEMA — anything but 'mart' redirects the whole run into <value>_landing / <value>_mart
+        description: DBT_SCHEMA — 'mart' gives <engine>_landing / <engine>_mart; anything else prefixes further, into <value>_<engine>_landing / <value>_<engine>_mart
         required: false
         default: mart
         type: string
@@ -81,11 +81,15 @@ jobs:
         run: pip install -r requirements/${{ inputs.engine }}.txt
 
       # ---- auth -------------------------------------------------------------------
-      # Two modes. duckrun mints every token it needs (OneLake storage, Fabric control
-      # plane, Power BI) by exchanging a fresh GitHub OIDC assertion, so its legs need no
-      # login step at all. The others need an Azure session.
+      # Two modes. duckrun — and ONLY duckrun — mints every token it needs (OneLake storage,
+      # Fabric control plane, Power BI) by exchanging a fresh GitHub OIDC assertion, so its
+      # leg needs no login step. Every other engine needs an Azure session.
+      #
+      # `iceberg` was wrongly exempted here too. It is dbt-duckdb and mints nothing: the
+      # very next step shells out to `az account get-access-token` for the OneLake token,
+      # which with no session failed the whole leg before it ever reached provisioning.
       - name: Azure login
-        if: inputs.engine != 'duckrun' && inputs.engine != 'iceberg'
+        if: inputs.engine != 'duckrun'
         uses: azure/login@v2
         with:
           client-id: ${{ secrets.AZURE_CLIENT_ID }}
@@ -172,6 +176,11 @@ jobs:
       COMPACT_BUDGET_MINUTES: "70"
       COMPACT_MIN_INPUT_FILES: "5"
       PYTHONUNBUFFERED: "1"
+      # Separate job, so $GITHUB_ENV from the build does not reach it. Without this the
+      # script would resolve iceberg_landing/iceberg_mart while the run built into
+      # test_iceberg_landing/test_iceberg_mart, and report a tidy catalog having compacted
+      # nothing.
+      DBT_SCHEMA: ${{ inputs.dbt_schema }}
       AZURE_TRANSPORT_OPTION_TYPE: curl
       CURL_CA_INFO: /etc/ssl/certs/ca-certificates.crt
       AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}

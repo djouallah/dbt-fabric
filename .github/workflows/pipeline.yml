@@ -15,7 +15,7 @@ on:
         default: all
         options: [all, duckrun, iceberg, ducklake, dwh, spark]
       dbt_schema:
-        description: DBT_SCHEMA — leave as 'mart' for production, or set e.g. 'dbt' to land the whole run in dbt_landing / dbt_mart instead
+        description: DBT_SCHEMA — leave as 'mart' for production (schemas are <engine>_landing / <engine>_mart), or set e.g. 'test' to land the whole run in test_<engine>_landing / test_<engine>_mart instead
         type: string
         default: mart
       download_limit:

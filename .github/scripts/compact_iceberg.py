@@ -66,6 +66,15 @@ BUDGET_MINUTES = float(os.environ.get("COMPACT_BUDGET_MINUTES", "70"))
 # script is not a dbt run, so it sets it itself. Same default, same env var.
 AZURE_TRANSPORT = os.environ.get("AZURE_TRANSPORT_OPTION_TYPE", "default")
 
+# The schemas are resolved the SAME WAY macros/generate_schema_name.sql resolves them, and
+# must stay in step with it: this script is not a dbt run, so nothing else would catch a
+# drift. All five engines share one lakehouse, so the iceberg tables live under
+# `iceberg_landing` / `iceberg_mart`; compacting a bare `landing`/`mart` would either find
+# nothing (and report a tidy catalog, wrongly) or reach into another engine's schema.
+_DBT_SCHEMA = os.environ.get("DBT_SCHEMA", "mart")
+_PREFIX = "iceberg" if _DBT_SCHEMA == "mart" else f"{_DBT_SCHEMA}_iceberg"
+LANDING, MART = f"{_PREFIX}_landing", f"{_PREFIX}_mart"
+
 # Hand-ordered, not discovered — we know the models, and listing them costs a metadata scan
 # per table for nothing. A new model just gets added here.
 #
@@ -73,16 +82,20 @@ AZURE_TRANSPORT = os.environ.get("AZURE_TRANSPORT_OPTION_TYPE", "default")
 # out: the dashboard-facing tables first (they take an append every run and are what Power BI
 # reads), then the staging log, then the small dimensions, then the big historical facts last
 # — those are the slowest to rewrite and the least sensitive to small-file overhead.
+#
+# This is the canonical EIGHT. `fct_summary_daily` used to be listed here and is NOT a model
+# in this repo — it existed only in the iceberg source repo, which is exactly the one-engine
+# drift the merge exists to stop. Listing it only bought a "no version-hint" read failure
+# every run.
 TABLES = [
-    "landing.fct_price_today",
-    "landing.fct_scada_today",
-    "mart.fct_summary",
-    "mart.fct_summary_daily",
-    "landing.stg_csv_archive_log",
-    "mart.dim_calendar",
-    "mart.dim_duid",
-    "landing.fct_price",
-    "landing.fct_scada",
+    f"{LANDING}.fct_price_today",
+    f"{LANDING}.fct_scada_today",
+    f"{MART}.fct_summary",
+    f"{LANDING}.stg_csv_archive_log",
+    f"{MART}.dim_calendar",
+    f"{MART}.dim_duid",
+    f"{LANDING}.fct_price",
+    f"{LANDING}.fct_scada",
 ]
 
 

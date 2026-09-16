@@ -63,7 +63,7 @@ on-run-end:
   - "{% if target.name == 'ducklake' and flags.WHICH in ['run', 'build'] %}CALL ducklake_rewrite_data_files('ducklake'){% endif %}"
   - "{% if target.name == 'ducklake' and flags.WHICH in ['run', 'build'] %}CALL ducklake_merge_adjacent_files('ducklake'){% endif %}"
   - "{% if target.name == 'ducklake' and flags.WHICH in ['run', 'build'] %}CALL ducklake_cleanup_old_files('ducklake', cleanup_all => true){% endif %}"
-  - "{% if target.name == 'ducklake' and flags.WHICH in ['run', 'build'] %}CALL delta_export('ducklake', '{{ env_var('FILES_PATH', '/tmp') }}/Tables'){% endif %}"
+  - "{% if target.name == 'ducklake' and flags.WHICH in ['run', 'build'] %}CALL delta_export('ducklake', '{{ env_var('DUCKLAKE_DATA_PATH', env_var('FILES_PATH', '/tmp') ~ '/Tables') }}/delta'){% endif %}"
 
 models:
   aemo_electricity:

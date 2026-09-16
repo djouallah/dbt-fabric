@@ -6,13 +6,33 @@
 Idempotent: every item is create-if-missing, keep-if-present. Diagnostics go to stderr so
 stdout is nothing but KEY=value lines.
 
-WHY EACH ENGINE GETS ITS OWN ITEM: the five engines write the same models to five different
-stores, and the whole point is to compare them, so they must not share a destination.
+FOUR ITEMS, ALL INSIDE ONE WORKSPACE FOLDER. The engines used to get one data item each,
+which put up to fourteen items at the root of a workspace that already has ~175 — and every
+lakehouse drags an auto-created SQLEndpoint shadow item along with it. They share one
+lakehouse now and are separated by SCHEMA instead (see macros/generate_schema_name.sql):
 
-The landing lakehouse is the exception — one `dbt_landing`, shared, holding the CSVs
-download_aemo.py lands. Every engine reads the SAME bytes; that is what makes the parity
-comparison meaningful. A Fabric WAREHOUSE has no Files section and cannot host a shortcut,
-so the dwh leg gets a small extra lakehouse that holds nothing but a shortcut to it.
+    <FOLDER>/
+      dbt_landing        Lakehouse  the CSVs download_aemo.py lands. Written ONCE, read by all five.
+      dbt                Lakehouse  duckrun_* iceberg_* ducklake_* spark_* schemas
+      dbt_dwh            Warehouse  dwh_landing, dwh_mart
+      dbt_ducklake_meta  SQL DB     DuckLake catalog metadata only, no data
+
+The Warehouse and the SQL DB cannot collapse into the lakehouse: a Warehouse cannot hold
+Delta tables another engine wrote, and DuckLake's catalog must be a SQL database. Those two
+are an engine-forced floor, not a layout choice.
+
+THE LANDING PATH AND THE READ PATH ARE DIFFERENT VARIABLES, deliberately:
+
+    LANDING_PATH  where download_aemo.py writes. IDENTICAL on all five legs, always
+                  dbt_landing/Files. This is the whole basis of parity.py — if the engines
+                  read different bytes, comparing their output means nothing.
+    FILES_PATH    how THIS engine's dbt reads that zone. Same as LANDING_PATH for four of
+                  them; the dwh leg reads through a shortcut because a Warehouse has no
+                  Files section of its own.
+
+They used to be one variable, and provision.py re-emitted it for ducklake and dwh — so
+those two legs' downloaders landed their own private copies of the AEMO CSVs and the parity
+comparison was quietly comparing different inputs.
 """
 from __future__ import annotations
 
@@ -24,21 +44,16 @@ import requests
 
 API = "https://api.fabric.microsoft.com/v1"
 WS = os.environ["FABRIC_WORKSPACE_ID"]
-FOLDER = os.environ.get("FOLDER", "aemo")
+FOLDER = os.environ.get("FOLDER", "dbt")
 
 LANDING_LAKEHOUSE = "dbt_landing"
-
-# One item per engine. Prefix, not suffix, so no name is a prefix of another.
-ITEMS = {
-    "duckrun":  ("lakehouses", "dbt_duckrun"),
-    "iceberg":  ("lakehouses", "dbt_iceberg"),
-    "ducklake": ("lakehouses", "dbt_ducklake"),
-    "spark":    ("lakehouses", "dbt_spark"),
-    "dwh":      ("warehouses", "dbt_dwh"),
-}
-# The Warehouse cannot host a shortcut to the landing zone, so dwh reads through this.
-DWH_SRC_LAKEHOUSE = "dbt_dwh_src"
+# The one lakehouse every Delta/Iceberg-writing engine shares. Schemas keep them apart.
+DATA_LAKEHOUSE = "dbt"
+DWH_WAREHOUSE = "dbt_dwh"
 DUCKLAKE_SQL_DB = "dbt_ducklake_meta"
+
+LAKEHOUSE_ENGINES = {"duckrun", "iceberg", "ducklake", "spark"}
+ENGINES = LAKEHOUSE_ENGINES | {"dwh"}
 
 
 def log(msg: str) -> None:
@@ -75,6 +90,25 @@ def req(method: str, path: str, **kw):
     return r
 
 
+def ensure_folder(name: str) -> str | None:
+    """Create-if-missing, top level. Returns None if folders are unavailable."""
+    r = req("GET", f"workspaces/{WS}/folders")
+    if r.status_code == 200:
+        for f in r.json().get("value", []):
+            # Top-level only: a nested folder of the same name is a different folder.
+            if f.get("displayName") == name and not f.get("parentFolderId"):
+                log(f"  = folder {name} exists ({f['id']})")
+                return f["id"]
+    r = req("POST", f"workspaces/{WS}/folders", json={"displayName": name})
+    if r.status_code in (200, 201):
+        fid = r.json().get("id")
+        log(f"  + created folder {name} ({fid})")
+        return fid
+    # Not fatal: items at the root still work, they are just untidy.
+    log(f"  ! could not create folder {name}: {r.status_code} {r.text[:200]}")
+    return None
+
+
 def find(kind: str, name: str) -> str | None:
     r = req("GET", f"workspaces/{WS}/{kind}")
     if r.status_code != 200:
@@ -85,15 +119,31 @@ def find(kind: str, name: str) -> str | None:
     return None
 
 
-def ensure(kind: str, name: str, payload: dict | None = None) -> str:
-    """Create if missing, keep if present."""
+def move_to_folder(item_id: str, folder_id: str) -> None:
+    """Belt and braces: folderId on create is not honoured by every item type."""
+    r = req("GET", f"workspaces/{WS}/items/{item_id}")
+    if r.status_code == 200 and r.json().get("folderId") == folder_id:
+        return
+    r = req("POST", f"workspaces/{WS}/items/{item_id}/move",
+            json={"targetFolderId": folder_id})
+    if r.status_code not in (200, 201, 202):
+        log(f"  ! could not move {item_id} into folder: {r.status_code} {r.text[:200]}")
+
+
+def ensure(kind: str, name: str, payload: dict | None = None,
+           folder_id: str | None = None) -> str:
+    """Create if missing, keep if present, and land it in the folder either way."""
     existing = find(kind, name)
     if existing:
         log(f"  = {kind[:-1]} {name} exists ({existing})")
+        if folder_id:
+            move_to_folder(existing, folder_id)
         return existing
     body = {"displayName": name}
     if payload:
         body.update(payload)
+    if folder_id:
+        body["folderId"] = folder_id
     r = req("POST", f"workspaces/{WS}/{kind}", json=body)
     if r.status_code in (200, 201, 202):
         # Fabric answers 409 ItemDisplayNameNotAvailableYet for a while after a delete, and
@@ -102,6 +152,8 @@ def ensure(kind: str, name: str, payload: dict | None = None) -> str:
             got = find(kind, name)
             if got:
                 log(f"  + created {kind[:-1]} {name} ({got})")
+                if folder_id:
+                    move_to_folder(got, folder_id)
                 return got
             time.sleep(15)
     raise SystemExit(f"could not create {kind[:-1]} {name}: {r.status_code} {r.text[:300]}")
@@ -112,11 +164,15 @@ def abfss(item_id: str, section: str) -> str:
 
 
 def ensure_landing_shortcut(host_lakehouse_id: str, landing_id: str) -> None:
-    """Shortcut Files/landing in the engine's own lakehouse -> the shared landing zone.
+    """Shortcut Files/landing in the shared lakehouse -> the landing lakehouse.
+
+    This exists for the dwh leg: a Fabric WAREHOUSE has no Files section and cannot host a
+    shortcut, so its OPENROWSET reads the landing zone through one hosted elsewhere. It used
+    to live in a lakehouse created for nothing else (`dbt_dwh_src`); the shared data
+    lakehouse hosts it now, which is one item fewer for the same mechanism.
 
     OneLake accounts a transaction against the REQUESTED path, so reading through a
-    shortcut books the cost to the item hosting the shortcut — which is how each engine's
-    read cost stays attributable to that engine rather than to the landing lakehouse.
+    shortcut books the cost to the item hosting the shortcut.
     """
     r = req("GET", f"workspaces/{WS}/items/{host_lakehouse_id}/shortcuts")
     if r.status_code == 200:
@@ -148,32 +204,36 @@ def workspace_name() -> str:
 
 
 def main() -> int:
-    if len(sys.argv) != 2 or sys.argv[1] not in ITEMS:
-        print(f"usage: provision.py [{' | '.join(ITEMS)}]", file=sys.stderr)
+    if len(sys.argv) != 2 or sys.argv[1] not in ENGINES:
+        print(f"usage: provision.py [{' | '.join(sorted(ENGINES))}]", file=sys.stderr)
         return 2
     engine = sys.argv[1]
-    kind, name = ITEMS[engine]
 
     log(f"provisioning {engine} in workspace {WS}")
+    folder_id = ensure_folder(FOLDER)
+
     landing_id = ensure("lakehouses", LANDING_LAKEHOUSE,
-                        {"creationPayload": {"enableSchemas": True}})
-    files_path = abfss(landing_id, "Files")
+                        {"creationPayload": {"enableSchemas": True}}, folder_id)
+    landing_path = abfss(landing_id, "Files")
 
-    if kind == "lakehouses":
-        item_id = ensure(kind, name, {"creationPayload": {"enableSchemas": True}})
-        ensure_landing_shortcut(item_id, landing_id)
-    else:
-        item_id = ensure(kind, name)
+    # Every engine's download_aemo.py writes HERE, and only here.
+    emit("LANDING_PATH", landing_path)
 
-    # Every engine reads the SAME landed bytes.
-    emit("FILES_PATH", files_path)
+    # The shared data lakehouse is provisioned on every leg, not just the four that write
+    # to it: the dwh leg needs it to host the landing shortcut.
+    data_id = ensure("lakehouses", DATA_LAKEHOUSE,
+                     {"creationPayload": {"enableSchemas": True}}, folder_id)
+
+    if engine in LAKEHOUSE_ENGINES:
+        # Reads the landing zone directly — no shortcut, no second copy.
+        emit("FILES_PATH", landing_path)
 
     if engine == "duckrun":
-        emit("ONELAKE_TABLES_PATH", abfss(item_id, "Tables"))
+        emit("ONELAKE_TABLES_PATH", abfss(data_id, "Tables"))
 
     elif engine == "iceberg":
         # The Iceberg REST catalog addresses the item as <workspace>/<item>, not abfss.
-        emit("WAREHOUSE_PATH", f"{WS}/{item_id}")
+        emit("WAREHOUSE_PATH", f"{WS}/{data_id}")
         emit("ONELAKE_ENDPOINT", "https://onelake.table.fabric.microsoft.com/iceberg")
 
     elif engine == "ducklake":
@@ -182,10 +242,13 @@ def main() -> int:
         # UTF-8 one, which CANNOT be changed after creation.
         db_id = find("sqlDatabases", DUCKLAKE_SQL_DB)
         if not db_id:
-            r = req("POST", f"workspaces/{WS}/sqlDatabases", json={
+            body = {
                 "displayName": DUCKLAKE_SQL_DB,
                 "creationPayload": {"collation": "Latin1_General_100_BIN2_UTF8"},
-            })
+            }
+            if folder_id:
+                body["folderId"] = folder_id
+            r = req("POST", f"workspaces/{WS}/sqlDatabases", json=body)
             log(f"  + created SQL DB {DUCKLAKE_SQL_DB}: {r.status_code}")
         server = database = ""
         for _ in range(40):  # provisioning is async and the connection details land last
@@ -193,6 +256,7 @@ def main() -> int:
             if r.status_code == 200:
                 for it in r.json().get("value", []):
                     if it.get("displayName") == DUCKLAKE_SQL_DB:
+                        db_id = it["id"]
                         p = it.get("properties", {})
                         server, database = p.get("serverFqdn", ""), p.get("databaseName", "")
             if server and database:
@@ -200,30 +264,35 @@ def main() -> int:
             time.sleep(15)
         if not (server and database):
             raise SystemExit("ducklake SQL DB connection details never appeared")
+        if folder_id and db_id:
+            move_to_folder(db_id, folder_id)
         emit("DUCKLAKE_CATALOG_DSN", f"Server={server};Database={database};Encrypt=yes")
-        # DuckLake writes its parquet under the engine's own lakehouse.
-        emit("FILES_PATH", abfss(item_id, "Files"))
+        # DuckLake's parquet goes under the shared lakehouse's FILES, not its Tables — it
+        # is not a lakehouse table until the delta_export on-run-end hook runs. Its own key,
+        # NOT an override of FILES_PATH: overriding that is what used to send this leg's
+        # downloader off to a private copy of the CSVs.
+        emit("DUCKLAKE_DATA_PATH", f"{abfss(data_id, 'Files')}/ducklake")
         emit("DBT_ENV_SECRET_SQL_TOKEN", token("https://database.windows.net/"))
 
     elif engine == "dwh":
-        emit("FABRIC_DWH_SERVER", warehouse_connection(item_id))
-        emit("FABRIC_DWH_NAME", name)
+        wh_id = ensure("warehouses", DWH_WAREHOUSE, None, folder_id)
+        emit("FABRIC_DWH_SERVER", warehouse_connection(wh_id))
+        emit("FABRIC_DWH_NAME", DWH_WAREHOUSE)
         emit("FABRIC_AUTH", "CLI")
-        # A Warehouse has no Files section, so it reads the landing zone through a
-        # shortcut hosted in a lakehouse that exists only for that purpose.
-        src_id = ensure("lakehouses", DWH_SRC_LAKEHOUSE,
-                        {"creationPayload": {"enableSchemas": True}})
-        ensure_landing_shortcut(src_id, landing_id)
-        emit("FILES_PATH", f"{abfss(src_id, 'Files')}/landing")
+        # A Warehouse has no Files section, so it reads the landing zone through a shortcut
+        # hosted in the shared data lakehouse. Note this is the READ path only — the
+        # downloader still writes to LANDING_PATH above.
+        ensure_landing_shortcut(data_id, landing_id)
+        emit("FILES_PATH", f"{abfss(data_id, 'Files')}/landing")
 
     elif engine == "spark":
-        emit("FABRIC_LAKEHOUSE_ID", item_id)
-        emit("FABRIC_LAKEHOUSE_NAME", name)
+        emit("FABRIC_LAKEHOUSE_ID", data_id)
+        emit("FABRIC_LAKEHOUSE_NAME", DATA_LAKEHOUSE)
         # Resolved from the GUID, never hardcoded: dbt-fabricspark needs the workspace NAME
         # to build relations against a schema-enabled lakehouse.
         emit("FABRIC_WORKSPACE_NAME", workspace_name())
 
-    log(f"provisioned {engine}: {name} ({item_id})")
+    log(f"provisioned {engine}")
     return 0
 
 

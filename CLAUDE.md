@@ -62,6 +62,23 @@ python download_aemo.py && dbt build --target duckrun --profiles-dir .
 
 ## Adapter facts that are easy to get wrong
 
+- **All five engines share ONE Fabric lakehouse (`dbt`) and are separated by SCHEMA** —
+  `duckrun_mart`, `iceberg_mart`, ... `generate_schema_name()` is what keeps them apart, so
+  a change there is a cross-engine data-collision risk, not a cosmetic rename. Two engines
+  resolving to the same schema would overwrite each other's gold layer inside one item with
+  every test still green, because each run would see a perfectly consistent table.
+  `check_gating.py` asserts `<engine>_landing` / `<engine>_mart` offline; do not weaken it.
+- **`LANDING_PATH` and `FILES_PATH` are different variables on purpose.** `download_aemo.py`
+  writes to `LANDING_PATH`, which is identical on all five legs; `FILES_PATH` is how that
+  engine's dbt READS the zone (a shortcut, for dwh). They were one variable, and
+  `provision.py` re-pointed it for ducklake and dwh — so those legs downloaded their own
+  private copy of the CSVs and `parity.py` was grading engines on different inputs. Never
+  re-emit `FILES_PATH` to move an engine's data somewhere; give it its own key, the way
+  `DUCKLAKE_DATA_PATH` does.
+- **Only `duckrun` is exempt from `azure/login`** in `build.yml`. It mints its own tokens
+  from the OIDC assertion; `iceberg` is dbt-duckdb and shells out to `az` for the OneLake
+  token, so exempting it there kills the leg before it provisions anything.
+
 - **`duckdb__` macros reach BOTH duckdb targets.** `macros/iceberg_adapter_overrides.sql`
   therefore branches on `target.name == 'iceberg'` and reproduces dbt-duckdb's own body
   otherwise. `tests_py/test_adapter_overrides.py` pins those fallbacks against the INSTALLED

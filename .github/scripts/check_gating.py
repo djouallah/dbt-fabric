@@ -101,6 +101,18 @@ def check(target: str, manifest: dict) -> list[str]:
         if len(fqn) != 5 or fqn[0] != PROJECT or fqn[1] != DATASET or fqn[2] != target:
             errs.append(f"{uid}: fqn {fqn} is not [{PROJECT}, {DATASET}, {target}, <layer>, <name>]")
 
+        # THE SCHEMA PREFIX IS LOAD-BEARING NOW. All five engines write into one shared
+        # Fabric lakehouse, so the engine name in the schema is the only thing keeping them
+        # apart. Two engines resolving to the same schema would overwrite each other's gold
+        # layer inside one item -- with every test still green, because each run would see a
+        # perfectly consistent table. Nothing downstream catches that; this does, offline.
+        schema = node.get("schema") or node.get("config", {}).get("schema") or ""
+        if schema not in (f"{target}_landing", f"{target}_mart"):
+            errs.append(
+                f"{uid}: schema {schema!r} is not {target}_landing or {target}_mart -- "
+                f"the engine prefix from generate_schema_name() is missing or wrong"
+            )
+
     # The other four trees must be present-and-disabled, not simply missing.
     disabled_engines = {
         n["fqn"][2]

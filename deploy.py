@@ -34,7 +34,7 @@ SEMANTIC_DIR = REPO / "semantic_model"
 SEMANTIC_MODEL = "aemo_electricity.SemanticModel"
 
 WS = os.environ.get("FABRIC_WORKSPACE_ID", "")
-FOLDER = os.environ.get("FOLDER", "aemo")
+FOLDER = os.environ.get("FOLDER", "dbt")
 
 # Which backend each engine uses, and which Fabric item its semantic model binds to.
 BACKEND = {
@@ -44,11 +44,15 @@ BACKEND = {
     "ducklake": "fab",
     "dwh": "fab",
 }
+# The four lakehouse engines share ONE item and are separated by schema
+# (duckrun_mart, iceberg_mart, ...), so this is not a per-engine item any more. Keep the
+# mapping rather than a constant: dwh is a Warehouse, and the semantic model still binds
+# per engine — to a different SCHEMA inside the same lakehouse.
 LAKEHOUSE = {
-    "duckrun": "dbt_duckrun",
-    "iceberg": "dbt_iceberg",
-    "ducklake": "dbt_ducklake",
-    "spark": "dbt_spark",
+    "duckrun": "dbt",
+    "iceberg": "dbt",
+    "ducklake": "dbt",
+    "spark": "dbt",
     "dwh": "dbt_dwh",
 }
 
