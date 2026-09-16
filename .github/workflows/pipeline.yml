@@ -1,0 +1,111 @@
+name: pipeline
+
+# Builds the same models on every engine, then proves they agree.
+#
+# Manual only. Deploying Fabric items and spending capacity is a deliberate act, and the
+# parity job commits to history/parity/, so a push trigger would make the commit start the
+# next run.
+
+on:
+  workflow_dispatch:
+    inputs:
+      engines:
+        description: Which engines to build
+        type: choice
+        default: all
+        options: [all, duckrun, iceberg, ducklake, dwh, spark]
+      dbt_schema:
+        description: DBT_SCHEMA — leave as 'mart' for production, or set e.g. 'dbt' to land the whole run in dbt_landing / dbt_mart instead
+        type: string
+        default: mart
+      download_limit:
+        description: Intraday files per feed per run (nemweb throttles bursts)
+        type: string
+        default: "6"
+      daily_download_limit:
+        description: Daily archive files per run (backfilled from GitHub, so a higher limit is safe)
+        type: string
+        default: "60"
+      spark_resource_profile:
+        description: writeHeavy (workspace default) or readHeavyForPBI (turns V-Order on and changes file layout)
+        type: choice
+        default: writeHeavy
+        options: [writeHeavy, readHeavyForPBI]
+
+permissions:
+  id-token: write
+  contents: write
+
+concurrency:
+  # Never two of these against one workspace. NOT cancel-in-progress: cancelling a GitHub
+  # job does not stop Fabric — the notebook or Livy session keeps running, and billing.
+  group: pipeline-${{ github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  # Free gate. Nothing spends capacity until the gating is proven correct, because a
+  # broken gate builds nothing and still reports success.
+  checks:
+    uses: ./.github/workflows/ci.yml
+
+  plan:
+    needs: checks
+    runs-on: ubuntu-latest
+    outputs:
+      engines: ${{ steps.pick.outputs.engines }}
+    steps:
+      - id: pick
+        # A GitHub matrix cannot be filtered by an input, so the list is computed here.
+        run: |
+          if [ "${{ inputs.engines }}" = "all" ]; then
+            echo 'engines=["duckrun","iceberg","ducklake","dwh","spark"]' >> "$GITHUB_OUTPUT"
+          else
+            echo 'engines=["${{ inputs.engines }}"]' >> "$GITHUB_OUTPUT"
+          fi
+
+  build:
+    needs: plan
+    strategy:
+      # One engine at a time: they share a workspace and a landing zone, and the point of
+      # the run is comparability, not wall-clock.
+      max-parallel: 1
+      fail-fast: false
+      matrix:
+        engine: ${{ fromJSON(needs.plan.outputs.engines) }}
+    uses: ./.github/workflows/build.yml
+    with:
+      engine: ${{ matrix.engine }}
+      dbt_schema: ${{ inputs.dbt_schema }}
+      download_limit: ${{ inputs.download_limit }}
+      daily_download_limit: ${{ inputs.daily_download_limit }}
+      spark_resource_profile: ${{ inputs.spark_resource_profile }}
+    secrets: inherit
+
+  # THE ACCEPTANCE TEST. Everything above is just a build; this is the claim the repo makes.
+  parity:
+    needs: build
+    if: ${{ !cancelled() && inputs.engines == 'all' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: parity-*
+          path: /tmp/parity
+          merge-multiple: true
+      - name: Compare engines
+        run: |
+          mkdir -p history/parity
+          cp /tmp/parity/*.json history/parity/ 2>/dev/null || true
+          python .github/scripts/parity.py compare history/parity | tee -a "$GITHUB_STEP_SUMMARY"
+      - name: Record
+        if: success()
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add history/parity
+          git diff --quiet --cached || git commit -m "parity: ${{ github.run_id }}"
+          git push

@@ -1,0 +1,13 @@
+# dwh: Fabric Warehouse (T-SQL).
+#
+# dbt-fabric-samdebruyn depends on dbt-adapters, NOT dbt-core, so dbt-core must be named
+# explicitly to get the `dbt` CLI entry point. Pin dbt-core + dbt-adapters to the adapter's
+# tested set — unpinned, pip backtracks dbt-core to an ancient 1.7.x.
+# It uses the pure-Python mssql-python driver: no ODBC (msodbcsql18/unixODBC) to install,
+# but it requires Python >= 3.12.
+dbt-fabric-samdebruyn
+dbt-core==1.11.10
+dbt-adapters==1.23.0
+pyyaml
+ms-fabric-cli
+duckrun

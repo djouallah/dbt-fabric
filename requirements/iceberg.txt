@@ -1,0 +1,10 @@
+# iceberg: dbt-duckdb writing through the OneLake Iceberg REST catalog.
+#
+# The duckdb pin is deliberate and must be bumped BY HAND — nothing floats it for you.
+# Compaction (.github/scripts/compact_iceberg.py) needs iceberg_rewrite_data_files(),
+# which only exists on the 1.6.0 dev line. It satisfies duckrun's duckdb>=1.5.4 floor, so
+# pip resolves it without --pre. The DuckDB extension binaries (azure/iceberg/avro) are
+# keyed to the duckdb build, so this pin pins the iceberg extension too.
+# Keep fabric_items/run.Notebook/notebook-content.ipynb cell 0 in step with this.
+duckdb==1.6.0.dev365
+duckrun

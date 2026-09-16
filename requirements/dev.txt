@@ -1,0 +1,8 @@
+# Everything the offline checks need: check_gating.py parses all five targets, so every
+# adapter must be importable, and tests_py/test_dialects.py needs sqlglot.
+-r duckrun.txt
+dbt-duckdb
+dbt-fabric-samdebruyn
+dbt-fabricspark
+sqlglot
+pytest

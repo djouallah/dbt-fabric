@@ -1,0 +1,198 @@
+name: build (one engine)
+
+# The reusable leg: land the AEMO files, build one engine, test it, fingerprint its gold
+# table. pipeline.yml calls this once per engine. Everything engine-specific is an input,
+# so there is exactly one copy of the skeleton the four source repos each had their own
+# version of.
+#
+# Deliberately NO `--select` anywhere: model selection is entirely +enabled in
+# dbt_project.yml, keyed on the target name.
+
+on:
+  workflow_call:
+    inputs:
+      engine:
+        description: duckrun | iceberg | ducklake | dwh | spark
+        required: true
+        type: string
+      dbt_schema:
+        description: DBT_SCHEMA — anything but 'mart' redirects the whole run into <value>_landing / <value>_mart
+        required: false
+        default: mart
+        type: string
+      download_limit:
+        required: false
+        default: "6"
+        type: string
+      daily_download_limit:
+        required: false
+        default: "60"
+        type: string
+      process_limit:
+        required: false
+        default: "1000"
+        type: string
+      spark_resource_profile:
+        required: false
+        default: writeHeavy
+        type: string
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    env:
+      ENGINE: ${{ inputs.engine }}
+      DBT_SCHEMA: ${{ inputs.dbt_schema }}
+      download_limit: ${{ inputs.download_limit }}
+      daily_download_limit: ${{ inputs.daily_download_limit }}
+      process_limit: ${{ inputs.process_limit }}
+      SPARK_RESOURCE_PROFILE: ${{ inputs.spark_resource_profile }}
+      # duckrun picks the OneLake HTTP transport itself; curl uses the runner's system CA
+      # bundle, which is what works off a Fabric notebook.
+      AZURE_TRANSPORT_OPTION_TYPE: curl
+      CURL_CA_INFO: /etc/ssl/certs/ca-certificates.crt
+      DUCKDB_TEMP_DIR: /tmp/duckdb_spill
+      # dbt-fabricspark 1.13.0 runs OPTIMIZE after every Delta build, which rewrites the
+      # layout the run just produced.
+      DBT_FABRICSPARK_SKIP_OPTIMIZE: "true"
+      AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+      AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+      FABRIC_WORKSPACE_ID: ${{ secrets.FABRIC_WORKSPACE_ID }}
+      # An authenticated GitHub API call gets 5000 req/h against 60 anonymous, and runners
+      # share IPs — without this the archive backfill listing hits the anonymous quota.
+      GITHUB_TOKEN: ${{ github.token }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install ${{ inputs.engine }} dependencies
+        run: pip install -r requirements/${{ inputs.engine }}.txt
+
+      # ---- auth -------------------------------------------------------------------
+      # Two modes. duckrun mints every token it needs (OneLake storage, Fabric control
+      # plane, Power BI) by exchanging a fresh GitHub OIDC assertion, so its legs need no
+      # login step at all. The others need an Azure session.
+      - name: Azure login
+        if: inputs.engine != 'duckrun' && inputs.engine != 'iceberg'
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          allow-no-subscriptions: true
+
+      - name: Mint OneLake token
+        if: inputs.engine == 'iceberg'
+        run: |
+          TOKEN=$(az account get-access-token --resource https://storage.azure.com/ --query accessToken -o tsv)
+          echo "::add-mask::$TOKEN"
+          echo "ONELAKE_TOKEN=$TOKEN" >> "$GITHUB_ENV"
+
+      - name: Fabric CLI login
+        if: inputs.engine == 'ducklake' || inputs.engine == 'dwh'
+        run: |
+          fab config set encryption_fallback_enabled true
+          FED_TOKEN=$(curl -sH "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+            "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=api://AzureADTokenExchange" | jq -r '.value')
+          fab auth login -t "${{ secrets.AZURE_TENANT_ID }}" -u "${{ secrets.AZURE_CLIENT_ID }}" \
+            --federated-token "$FED_TOKEN"
+
+      # ---- provision ---------------------------------------------------------------
+      - name: Provision Fabric items
+        run: python .github/scripts/provision.py "$ENGINE" >> "$GITHUB_ENV"
+
+      - name: Capture Warehouse SQL token
+        if: inputs.engine == 'dwh'
+        # Captured HERE, not lazily at dbt-run time: the OIDC client assertion lasts only
+        # ~5 minutes, and the landing step below can outlive it. Without this the run dies
+        # at the first model with AADSTS700024.
+        run: |
+          TOKEN=$(az account get-access-token --resource https://database.windows.net/ --query accessToken -o tsv)
+          echo "::add-mask::$TOKEN"
+          echo "FABRIC_ACCESS_TOKEN=$TOKEN" >> "$GITHUB_ENV"
+
+      # ---- land --------------------------------------------------------------------
+      - name: Land AEMO files
+        # One downloader for every engine, one landing zone, plain CSV. If the engines read
+        # different bytes the parity comparison below means nothing.
+        run: python download_aemo.py
+
+      # ---- build -------------------------------------------------------------------
+      - name: dbt build
+        # `dbt retry` needs --target too, or it renders the profile's default target.
+        run: |
+          dbt build --target "$ENGINE" --profiles-dir . \
+            || dbt retry --target "$ENGINE" --profiles-dir .
+
+      - name: dbt docs
+        if: always()
+        run: dbt docs generate --target "$ENGINE" --profiles-dir . || true
+
+      # ---- fingerprint -------------------------------------------------------------
+      - name: Fingerprint gold layer
+        run: |
+          mkdir -p history/parity
+          dbt run-operation parity_fingerprint --target "$ENGINE" --profiles-dir . \
+            | python .github/scripts/parity.py capture history/parity
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: parity-${{ inputs.engine }}
+          path: history/parity/${{ inputs.engine }}.json
+          if-no-files-found: warn
+
+      - name: Summary
+        if: always()
+        env:
+          JOB_STATUS: ${{ job.status }}
+        run: python .github/scripts/summary.py >> "$GITHUB_STEP_SUMMARY" || true
+
+  # Iceberg accumulates small files and has no snapshot expiry, so compaction is a separate
+  # job. `needs` is for ORDERING only — never overlap a rewrite with a load — and it must
+  # NOT gate on the build succeeding: fragmentation is just as real after a failed build.
+  compact:
+    if: ${{ inputs.engine == 'iceberg' && !cancelled() }}
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    continue-on-error: true
+    env:
+      COMPACT_BUDGET_MINUTES: "70"
+      COMPACT_MIN_INPUT_FILES: "5"
+      PYTHONUNBUFFERED: "1"
+      AZURE_TRANSPORT_OPTION_TYPE: curl
+      CURL_CA_INFO: /etc/ssl/certs/ca-certificates.crt
+      AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+      AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+      FABRIC_WORKSPACE_ID: ${{ secrets.FABRIC_WORKSPACE_ID }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -r requirements/iceberg.txt
+      - uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          allow-no-subscriptions: true
+      - name: Mint OneLake token
+        # $GITHUB_ENV does not cross jobs, so this job re-mints its own token and
+        # re-resolves the warehouse path.
+        run: |
+          TOKEN=$(az account get-access-token --resource https://storage.azure.com/ --query accessToken -o tsv)
+          echo "::add-mask::$TOKEN"
+          echo "ONELAKE_TOKEN=$TOKEN" >> "$GITHUB_ENV"
+      - run: python .github/scripts/provision.py iceberg >> "$GITHUB_ENV"
+      - run: python .github/scripts/compact_iceberg.py

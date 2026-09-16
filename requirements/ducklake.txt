@@ -1,0 +1,10 @@
+# ducklake: dbt-duckdb over a DuckLake catalog held in a Fabric SQL DB.
+#
+# duckdb 1.5.5: the mssql_ducklake community extension only publishes binaries for that
+# line, and later duckdb hides the __ducklake_metadata_* catalog from duckdb_databases(),
+# which breaks delta_export. profiles.yml pins it back into view with the
+# metadata_catalog attach option rather than downgrading duckdb further.
+dbt-duckdb
+duckdb==1.5.5
+azure-storage-blob
+duckrun

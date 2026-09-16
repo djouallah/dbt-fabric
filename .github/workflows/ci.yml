@@ -1,0 +1,46 @@
+name: CI
+
+# Free, credential-less, and the gate everything else depends on. It runs the whole
+# (engine x target) matrix through `dbt parse` and asserts what is enabled — because the
+# default failure mode of this repo's layout is a run that builds NOTHING and exits 0.
+# Costs seconds and no Fabric capacity, so it runs on every push.
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref_name }}
+  cancel-in-progress: true
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          # 3.12: dbt-fabric-samdebruyn requires it, and check_gating.py parses the dwh
+          # target, so every adapter has to be importable here.
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install all five adapters
+        run: pip install -r requirements/dev.txt
+
+      - name: Unit tests
+        # Pins the shared column spec, the iceberg adapter overrides against the INSTALLED
+        # dbt-duckdb, and every singular test against its own SQL dialect.
+        run: python -m pytest tests_py/ -q
+
+      - name: Gating
+        # The one check that catches "green run, built nothing".
+        run: python .github/scripts/check_gating.py
