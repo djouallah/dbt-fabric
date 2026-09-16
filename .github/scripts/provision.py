@@ -242,14 +242,25 @@ def main() -> int:
         # UTF-8 one, which CANNOT be changed after creation.
         db_id = find("sqlDatabases", DUCKLAKE_SQL_DB)
         if not db_id:
-            # NO folderId ON THIS CREATE. The sqlDatabases endpoint rejects it (400), and
-            # the failure is silent unless you read the body: the poll below then spends
-            # ten minutes waiting for a database that was never created. Every other item
-            # type accepts it, so this one is provisioned at the root and moved after.
-            r = req("POST", f"workspaces/{WS}/sqlDatabases", json={
+            # `creationMode: New` IS REQUIRED. SQLDatabaseCreationPayload is a polymorphic
+            # type (New | Restore | RestoreDeletedDatabase) and creationMode is its
+            # discriminator, so a payload carrying only `collation` cannot be resolved and
+            # the whole request comes back 400 InvalidInput -- with no hint that the
+            # discriminator is what is missing. `collation` and `backupRetentionDays` are
+            # accepted only under this mode.
+            #
+            # The collation must be a UTF-8 one for DuckLake and CANNOT be changed after
+            # creation, which is why this goes through the REST API rather than `fab create`.
+            body = {
                 "displayName": DUCKLAKE_SQL_DB,
-                "creationPayload": {"collation": "Latin1_General_100_BIN2_UTF8"},
-            })
+                "creationPayload": {
+                    "creationMode": "New",
+                    "collation": "Latin1_General_100_BIN2_UTF8",
+                },
+            }
+            if folder_id:
+                body["folderId"] = folder_id
+            r = req("POST", f"workspaces/{WS}/sqlDatabases", json=body)
             log(f"  + created SQL DB {DUCKLAKE_SQL_DB}: {r.status_code}")
             if r.status_code not in (200, 201, 202):
                 # Fail here with the body rather than polling for something that is not coming.
