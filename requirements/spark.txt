@@ -2,7 +2,13 @@
 #
 # Set DBT_FABRICSPARK_SKIP_OPTIMIZE=true in CI: dbt-fabricspark 1.13.0 started running
 # OPTIMIZE after every Delta build, which rewrites the layout the run just produced.
-dbt-fabricspark
+# Pinned: 1.13.5 rejects this profile with "'database' is a required property",
+# even though the adapter's own FabricSparkCredentials marks database as
+# `field(default=None, init=False)` — "internal, always derived from lakehouse name,
+# not a user input". So there is no value to supply; adding one would be wrong. 1.13.4
+# parses this profile cleanly (verified against 1.13.4 directly). Revisit on the next
+# release rather than working around it in profiles.yml.
+dbt-fabricspark==1.13.4
 # dbt-spark is named explicitly: dbt-fabricspark imports dbt.adapters.spark but does NOT
 # declare it as a dependency, so a clean install fails at adapter load with
 # ModuleNotFoundError: No module named 'dbt.adapters.spark'. It only appears to work on a
