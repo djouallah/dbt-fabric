@@ -1,4 +1,8 @@
 # duckrun: DuckDB compute, Delta Lake output via delta-rs.
-# NO duckdb / deltalake pin here on purpose — duckrun pins exact versions for documented
-# upstream-bug reasons, and overriding them is the most common way to break the adapter.
+#
+# LATEST PRE-RELEASE duckdb, like the iceberg leg, so the two DuckDB-on-OneLake legs run the
+# same engine build (2026-09-17). duckrun's own duckdb constraint still applies; `--pre` only
+# lets pip consider dev builds inside it. deltalake stays unpinned: duckrun pins it.
+--pre
+duckdb
 duckrun

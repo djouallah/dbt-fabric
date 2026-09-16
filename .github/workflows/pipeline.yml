@@ -153,7 +153,10 @@ jobs:
           path: /tmp/parity
           merge-multiple: true
       - name: Compare engines
+        # pipefail, or `| tee` reports tee's exit status and a PARITY FAILED run goes green
+        # (run 35111311688 did exactly that, and the Record step below then committed it).
         run: |
+          set -o pipefail
           mkdir -p history/parity
           cp /tmp/parity/*.json history/parity/ 2>/dev/null || true
           python .github/scripts/parity.py compare history/parity | tee -a "$GITHUB_STEP_SUMMARY"

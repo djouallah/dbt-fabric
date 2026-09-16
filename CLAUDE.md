@@ -85,9 +85,10 @@ python download_aemo.py && dbt build --target duckrun --profiles-dir .
   adapter — if it fails, dbt-duckdb changed upstream and the fallback needs re-syncing, or
   ducklake keeps running a stale copy of dbt's SQL.
 - **dbt-duckdb silently drops boolean-false attach options.** Use int `0`/`1`.
-- **Do not pin `duckdb` or `deltalake` for the duckrun target** — duckrun pins exact versions
-  for upstream-bug reasons and overriding them is the usual way to break it. The iceberg
-  target's pin is deliberate and documented in `requirements/iceberg.txt`.
+- **duckdb versions per leg (2026-09-17):** ducklake is PINNED to 1.5.5 (its community
+  extensions, `mssql_ducklake` and `delta_export`, publish for that line); duckrun and iceberg
+  track the latest PRE-RELEASE (`--pre duckdb`) so the two OneLake DuckDB legs share one
+  engine build. Never pin `deltalake` for duckrun: the adapter pins it itself.
 - **duckrun: `insert` and `merge_clauses={'when_matched':[{'action':'do_nothing'}]}` are the
   same operation** — a DuckDB anti-join plus a plain append, no delta-rs merge pool, no file
   rewritten. Prefer it to `merge` wherever the model only ever adds rows; a delta-rs merge

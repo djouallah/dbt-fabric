@@ -18,8 +18,8 @@
 -- Consequence: a re-emitted row carrying REVISED mw/price does NOT overwrite what is stored --
 -- craters (missing keys) are repaired, changed values are not. spark and dwh do update, so a
 -- revision would show up as a value difference between the engine pairs; the repair lever on
--- this side is a full rebuild: REBUILD_SUMMARY=1 on the dispatch adds
--- `dbt run --select fct_summary --full-refresh` to the leg.
+-- this side is a reset: drop the table and the next run recomputes it (--full-refresh fails
+-- on the iceberg catalog: "fct_summary__dbt_tmp does not exist").
 -- Not delete+insert on duckrun: that adapter implements it as a fenced full-table overwrite.
 --
 -- No merge path DELETES a row the recomputation stops producing, which is why dispatch_duids
@@ -33,9 +33,8 @@
     schema='mart'
 ) }}
 
-{# Full-history rebuild lever here is plain `--full-refresh` (REBUILD_SUMMARY=1 makes CI add
-   that step). Deliberately NOT a var that makes the incremental branch emit all history: that
-   would hand the merge the whole table as a source. #}
+{# No full-history lever inside the model, deliberately: a var that makes the incremental
+   branch emit all history would hand the merge the whole table as a source. Reset = drop. #}
 {# Closes with `%}`, NOT `-%}`: a right-strip swallows the newlines after this tag and
    glues WITH onto the `-- depends_on` comment line above, commenting the keyword out
    (the compiled SQL then starts at `daily_summary AS (` and the parser errors there). #}
@@ -71,6 +70,17 @@ rebuild_dates AS (
   UNION
   -- Still in flux: the intraday feed keeps extending these until their daily file lands.
   SELECT DISTINCT s.DATE FROM {{ ref('fct_scada_today') }} s
+  UNION
+  -- Partially written and never completed. A calendar date straddles TWO PUBLIC_DAILY files
+  -- (they roll at 04:00), so a date first computed when only one had landed holds ~48 or
+  -- ~240 intervals; when the second file lands in a LATER run, a 60-file backfill batch has
+  -- moved MAX(DATE) two months past the 6-day window above and the date is never revisited.
+  -- Every batch boundary of a backfill left one (measured 2026-09-17: spark short ~30k rows
+  -- on each of 2019-01-27, 2019-11-23, 2020-01-23 after three incremental runs; the reference
+  -- repo never saw it because it loads the whole archive at once). 280 matches
+  -- assert_fct_summary_no_partial_dates. A date the SOURCE itself still lacks stays in this
+  -- set and recomputes each run until its file lands -- a few dates' scan, nothing inserts.
+  SELECT date FROM {{ this }} GROUP BY date HAVING COUNT(DISTINCT time) < 280
 ),
 {% endif %}
 

@@ -22,9 +22,9 @@
     schema='mart'
 ) }}
 
-{# Full-history rebuild lever is plain `--full-refresh` (CI adds that step when the
-   rebuild_summary input is set) — never a var that makes this branch emit all history,
-   which would hand the merge a 143M-row source. #}
+{# Full-history reset is plain `--full-refresh` or dropping the table (there is no CI input
+   for it) — never a var that makes this branch emit all history, which would hand the merge
+   the whole table as a source. #}
 {# Closes with `%}`, NOT `-%}`: a right-strip swallows the newlines after this tag and
    glues WITH onto the `-- depends_on` comment line above, commenting the keyword out. #}
 {%- set scoped = is_incremental() %}
@@ -54,6 +54,17 @@ rebuild_dates AS (
   UNION
   -- Still in flux until their daily file lands.
   SELECT DISTINCT s.DATE FROM {{ ref('fct_scada_today') }} s
+  UNION
+  -- Partially written and never completed. A calendar date straddles TWO PUBLIC_DAILY files
+  -- (they roll at 04:00), so a date first computed when only one had landed holds ~48 or
+  -- ~240 intervals; when the second file lands in a LATER run, a 60-file backfill batch has
+  -- moved MAX(DATE) two months past the 6-day window above and the date is never revisited.
+  -- Every batch boundary of a backfill left one (measured 2026-09-17: spark short ~30k rows
+  -- on each of 2019-01-27, 2019-11-23, 2020-01-23 after three incremental runs; the reference
+  -- repo never saw it because it loads the whole archive at once). 280 matches
+  -- assert_fct_summary_no_partial_dates. A date the SOURCE itself still lacks stays in this
+  -- set and recomputes each run until its file lands -- a few dates' scan, nothing inserts.
+  SELECT date FROM {{ this }} GROUP BY date HAVING COUNT(DISTINCT time) < 280
 ),
 {% endif %}
 
