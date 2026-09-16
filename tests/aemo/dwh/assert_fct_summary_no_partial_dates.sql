@@ -18,16 +18,14 @@
 -- those few dates are probed against fct_scada (measured: ~46s for 2 dates vs ~233s for a
 -- full-year aggregate). The latest date is excluded -- it is legitimately still filling.
 
-WITH per_date AS (
-  SELECT [date], COUNT(DISTINCT [time]) AS intervals
-  FROM {{ ref('fct_summary') }}
-  WHERE [date] >= DATEADD(MONTH, -12, CAST(GETDATE() AS DATE))
-  GROUP BY [date]
-),
-short AS (
-  SELECT [date], intervals FROM per_date
-  WHERE [date] < (SELECT MAX([date]) FROM per_date) AND intervals < 280
-)
+-- NESTED DERIVED TABLES, NOT CTEs, AND NO TOP-LEVEL `WITH`. dbt-fabric wraps a singular
+-- test's SQL inside a CTE of its own, and T-SQL does not allow a WITH clause in a CTE
+-- body: the CTEs here parsed as detached and the run died on "Invalid object name
+-- 'per_date'". Same trap as the merge models (see CLAUDE.md); it bites tests too because
+-- of the wrapper, even though a plain table model with a leading WITH is fine.
+--
+-- `MAX([date]) OVER ()` rather than a second scan for the max: it runs over the GROUPed
+-- result, so the latest date is excluded without repeating the aggregate.
 SELECT *
 FROM (
   SELECT
@@ -36,6 +34,17 @@ FROM (
     (SELECT COUNT(DISTINCT sc.SETTLEMENTDATE)
      FROM {{ ref('fct_scada') }} sc
      WHERE sc.[DATE] = s.[date] AND sc.INTERVENTION = 0 AND sc.INITIALMW <> 0) AS scada_intervals
-  FROM short s
+  FROM (
+    SELECT [date], intervals
+    FROM (
+      SELECT [date],
+             COUNT(DISTINCT [time]) AS intervals,
+             MAX([date]) OVER () AS max_date
+      FROM {{ ref('fct_summary') }}
+      WHERE [date] >= DATEADD(MONTH, -12, CAST(GETDATE() AS DATE))
+      GROUP BY [date]
+    ) per_date
+    WHERE [date] < max_date AND intervals < 280
+  ) s
 ) x
 WHERE summary_intervals < scada_intervals

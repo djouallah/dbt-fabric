@@ -71,3 +71,22 @@ def test_no_wrong_dialect_idioms(path, dialect):
         for col in ("date", "time"):
             bare = re.search(r"(?<![`\w.])" + col + r"(?![`\w])", sql)
             assert not bare, f"bare `{col}` in Spark SQL must be backticked: {bare.group(0)!r}"
+
+
+@pytest.mark.parametrize("path,dialect", [c for c in cases() if c.values[1] == "tsql"])
+def test_tsql_singular_tests_have_no_top_level_with(path, dialect):
+    """dbt-fabric nests a singular test's SQL inside a CTE of its own, and T-SQL does not
+    allow a WITH clause in a CTE body. A test written with a leading `WITH` therefore fails
+    at run time with "Invalid object name '<first cte>'" -- which reads like a missing
+    table, not a syntax problem, and cost a full dwh leg to diagnose.
+
+    Use nested derived tables instead. Note this applies to TESTS only: a plain table or
+    incremental model with a leading WITH is fine, which is why dim_calendar.sql and
+    fct_summary.sql still have one.
+    """
+    sql = re.sub(r"--[^\n]*", "", path.read_text(encoding="utf-8"))
+    sql = re.sub(r"\{#.*?#\}", "", sql, flags=re.S).strip()
+    assert not re.match(r"(?i)with\b", sql), (
+        f"{path.relative_to(REPO)} starts with a top-level WITH. dbt-fabric wraps the test "
+        f"in a CTE and T-SQL cannot nest one -- rewrite as nested derived tables."
+    )

@@ -26,16 +26,23 @@
   {%- if not execute -%}{{ return('') }}{%- endif -%}
 
   {%- set rel = ref(model) -%}
+  {#-- `dbl` is per-dialect for the same reason the date casts are: Spark SQL has no
+       DOUBLE PRECISION and rejects it outright ("extra input 'PRECISION'"), which failed
+       the spark leg AFTER a clean 60/62 build -- the fingerprint is the last step, so a
+       dialect slip here throws away the whole run's measurement. T-SQL has no DOUBLE. --#}
   {%- if target.name == 'dwh' -%}
     {%- set d, t, mw, price = '[date]', '[time]', 'mw', 'price' -%}
+    {%- set dbl = 'FLOAT' -%}
     {%- set to_text = "CONVERT(VARCHAR(10), MIN([date]), 23)" -%}
     {%- set to_text_max = "CONVERT(VARCHAR(10), MAX([date]), 23)" -%}
   {%- elif target.name == 'spark' -%}
     {%- set d, t, mw, price = '`date`', '`time`', 'mw', 'price' -%}
+    {%- set dbl = 'DOUBLE' -%}
     {%- set to_text = "CAST(MIN(`date`) AS STRING)" -%}
     {%- set to_text_max = "CAST(MAX(`date`) AS STRING)" -%}
   {%- else -%}
     {%- set d, t, mw, price = 'date', 'time', 'mw', 'price' -%}
+    {%- set dbl = 'DOUBLE' -%}
     {%- set to_text = "CAST(MIN(date) AS VARCHAR)" -%}
     {%- set to_text_max = "CAST(MAX(date) AS VARCHAR)" -%}
   {%- endif -%}
@@ -47,8 +54,8 @@
       COUNT(DISTINCT {{ d }})          AS days,
       {{ to_text }}                    AS date_min,
       {{ to_text_max }}                AS date_max,
-      SUM(CAST({{ mw }} AS DOUBLE PRECISION))    AS mw_sum,
-      SUM(CAST({{ price }} AS DOUBLE PRECISION)) AS price_sum
+      SUM(CAST({{ mw }} AS {{ dbl }}))    AS mw_sum,
+      SUM(CAST({{ price }} AS {{ dbl }})) AS price_sum
     FROM {{ rel }}
   {%- endset -%}
 
