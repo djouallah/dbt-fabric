@@ -32,6 +32,8 @@ jobs:
           # target, so every adapter has to be importable here.
           python-version: "3.12"
           cache: pip
+          # Default glob is **/requirements.txt, which this repo has not got.
+          cache-dependency-path: requirements/dev.txt
 
       - name: Install all five adapters
         run: pip install -r requirements/dev.txt

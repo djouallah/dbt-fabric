@@ -74,6 +74,8 @@ jobs:
         with:
           python-version: "3.12"
           cache: pip
+          # Default glob is **/requirements.txt, which this repo has not got.
+          cache-dependency-path: requirements/*.txt
 
       - name: Install ${{ inputs.engine }} dependencies
         run: pip install -r requirements/${{ inputs.engine }}.txt
@@ -181,6 +183,8 @@ jobs:
         with:
           python-version: "3.12"
           cache: pip
+          # Default glob is **/requirements.txt, which this repo has not got.
+          cache-dependency-path: requirements/*.txt
       - run: pip install -r requirements/iceberg.txt
       - uses: azure/login@v2
         with:
