@@ -4,9 +4,8 @@
 #
 # dbt-core and dbt-adapters are PINNED to the same set requirements/dwh.txt pins — the
 # strictest of the five legs. Unpinned, pip resolved dbt-core 1.12.5 here while the legs
-# install 1.11.x, so CI was gating a different dbt from the one that actually builds, and
-# 1.12 rejected the spark profile outright ("'database' is a required property"). A gate
-# that does not match the thing it gates is worse than no gate.
+# install 1.11.x, so this gate was validating a different dbt from the one that actually
+# builds. A gate that does not match the thing it gates is worse than no gate.
 dbt-core==1.11.10
 dbt-adapters==1.23.0
 
