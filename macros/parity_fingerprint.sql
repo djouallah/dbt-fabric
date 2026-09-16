@@ -59,6 +59,19 @@
     FROM {{ rel }}
   {%- endset -%}
 
+  {#-- `dbt run-operation` DOES NOT FIRE on-run-start HOOKS. The DuckDB-family targets get
+       their OneLake transport from one of those hooks, so this session would otherwise open
+       on DuckDB's default transport and fail the OneLake TLS handshake -- observed as
+       "could not open file ... Problem with the SSL CA cert (path? access rights?)" on a
+       snapshot avro, AFTER a clean 60/62 build. Set it here, the same way
+       compact_iceberg.py does for the same reason. --#}
+  {#-- 'duckrun' AND 'duckdb': duckrun is its own adapter type, and it reads OneLake
+       Delta here, so leaving it out would break it the same way. Matches the
+       on-run-start hook's own `target.name in ['duckrun', 'iceberg']`. --#}
+  {%- if target.type in ('duckdb', 'duckrun') and env_var('AZURE_TRANSPORT_OPTION_TYPE', 'default') != 'default' -%}
+    {%- do run_query("SET GLOBAL azure_transport_option_type = '" ~ env_var('AZURE_TRANSPORT_OPTION_TYPE') ~ "'") -%}
+  {%- endif -%}
+
   {%- set r = run_query(q).rows[0] -%}
   {%- set out -%}
 {
