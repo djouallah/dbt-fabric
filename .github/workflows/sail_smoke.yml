@@ -40,11 +40,6 @@ on:
         required: false
         default: false
         type: boolean
-      warehouse:
-        description: "OneLake item the catalog points at, as <workspace>/<item>.<type>. Blank uses the shared `dbt` lakehouse in FABRIC_WORKSPACE_ID."
-        required: false
-        default: ""
-        type: string
 
 permissions:
   id-token: write
@@ -58,10 +53,10 @@ jobs:
     continue-on-error: true
     env:
       SAIL_SMOKE_SCHEMA: ${{ inputs.schema }}
-      # ASSUMED TO EXIST, never created here. `dbt` is the shared lakehouse every leg writes
-      # to (provision.py's DATA_LAKEHOUSE), and Sail's OneLake catalog addresses an item as
-      # <workspace>/<item>.<type>. Use the `warehouse` input to point at a different one.
-      WAREHOUSE_PATH: ${{ inputs.warehouse || format('{0}/dbt.Lakehouse', secrets.FABRIC_WORKSPACE_ID) }}
+      # `dbt` is the shared lakehouse every leg writes to (provision.py's DATA_LAKEHOUSE).
+      # It exists; this job never creates it. Sail's OneLake catalog addresses an item as
+      # <workspace>/<item>.<type>.
+      WAREHOUSE_PATH: ${{ secrets.FABRIC_WORKSPACE_ID }}/dbt.Lakehouse
       SAIL_SMOKE_KEEP: ${{ inputs.keep && '1' || '0' }}
       AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
       AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
