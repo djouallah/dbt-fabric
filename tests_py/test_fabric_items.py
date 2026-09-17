@@ -60,11 +60,57 @@ def test_notebook_targets_a_real_engine_from_the_library():
     assert default in ("duckrun", "iceberg", "ducklake"), "remote_dbt.ENGINES: the DuckDB-family legs"
 
 
-def test_pipeline_has_one_notebook_activity_and_no_parameters():
+def test_pipeline_escalates_vcores_through_pipelinecore():
+    """The pipeline runs the notebook at 2 vCores and again at 8 if that fails; the notebook's
+    %%configure cell takes its vCores from that `pipelinecore` parameter (the source repo's
+    mechanism -- it was once deleted here as "dead" because the %%configure cell was missing)."""
     p = json.loads(PIPELINE.read_text(encoding="utf-8"))
     acts = [a for a in p["properties"]["activities"] if a["type"] == "TridentNotebook"]
-    assert len(acts) == 1
-    assert "parameters" not in acts[0]["typeProperties"], "the notebook has no parameters cell"
+    assert [a["typeProperties"]["parameters"]["pipelinecore"]["value"] for a in acts] == [2, 8]
+    assert acts[1]["dependsOn"] == [{"activity": acts[0]["name"], "dependencyConditions": ["Failed"]}]
+    first = "".join(json.loads(NOTEBOOK.read_text(encoding="utf-8"))["cells"][0]["source"])
+    assert first.startswith("%%configure") and '"parameterName": "pipelinecore"' in first
+
+
+def _documented_columns() -> dict[str, set[str]]:
+    import yaml
+
+    cols: dict[str, set[str]] = {}
+    for f in ("_marts.yml", "_dimensions.yml"):
+        doc = yaml.safe_load((REPO / "models" / "aemo" / f).read_text(encoding="utf-8"))
+        for m in doc.get("models", []):
+            cols[m["name"]] = {c["name"] for c in m.get("columns", [])}
+    return cols
+
+
+def test_bim_matches_the_documented_mart():
+    """The source repo's check_bim, offline: a Direct Lake model that binds a missing column does
+    not fail at deploy with a useful message -- Fabric rejects the import naming an object id, or
+    accepts it and fails the REFRESH minutes later. Check the three ways the bim goes stale
+    against the model YML every engine is tested against: a column that does not exist, a
+    relationship endpoint that was never added, DAX naming a dropped column."""
+    model = json.loads(BIM.read_text(encoding="utf-8-sig"))["model"]
+    documented = _documented_columns()
+    bim_cols = {t["name"]: {c["name"] for c in t.get("columns", [])} for t in model["tables"]}
+    measures = {m["name"].lower() for t in model["tables"] for m in t.get("measures", [])}
+    problems = []
+    for t in model["tables"]:
+        assert t["name"] in documented, f"{t['name']} is not a documented model"
+        for c in t.get("columns", []):
+            src = c.get("sourceColumn", c["name"])
+            if src not in documented[t["name"]]:
+                problems.append(f"{t['name']}.{src}: not a documented column of {t['name']}")
+        for m in t.get("measures", []):
+            for table, column in re.findall(r"(\w+)\[([^\]]+)\]", m["expression"]):
+                known = {x.lower() for x in bim_cols.get(table, set())} | measures
+                if column.lower() not in known:
+                    problems.append(f"measure {m['name']}: {table}[{column}] undefined")
+    for r in model.get("relationships", []):
+        for side in ("from", "to"):
+            table, column = r[f"{side}Table"], r[f"{side}Column"]
+            if column not in bim_cols.get(table, set()):
+                problems.append(f"relationship {r.get('name', '?')}: {table}[{column}] undefined")
+    assert not problems, "semantic model is stale against the mart:\n  " + "\n  ".join(problems)
 
 
 @pytest.mark.parametrize("dbt_schema,expected", [(None, "iceberg_mart"), ("mart", "iceberg_mart"),

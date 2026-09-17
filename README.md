@@ -224,7 +224,8 @@ green. `check_gating.py` asserts the prefix offline.
 - `pipeline.yml` — manual only; lands ONCE in a shared `land` job, then runs all five engines
   in parallel, then the **parity** job compares their fingerprints. `process_limit` is a
   dispatch input: files each fact model folds per run, oldest first, on every engine.
-- `deploy.yml` — manual only; the in-Fabric demo (next section), one engine per run.
+  `deploy` (`none` / `no_model` / `full`) deploys the in-Fabric demo after the build (next
+  section).
 
 Manual only because deploying Fabric items and spending capacity is a deliberate act, and
 the parity job commits to `history/parity/`, so a push trigger would make the commit start
@@ -236,23 +237,28 @@ running, and billing.
 ## Scheduling it inside Fabric
 
 ```bash
-gh workflow run deploy.yml -f engine=iceberg -f full=true   # or Actions → deploy → Run workflow
+gh workflow run pipeline.yml -f engines=iceberg -f deploy=full   # or Actions → pipeline → Run workflow
 ```
 
-`deploy.yml` runs `deploy.py` with the same OIDC identity as the build legs — duckrun mints
-the storage, Fabric and Power BI tokens from the GitHub assertion, so there is no login step.
-It copies the git-tracked repo into the `dbt` lakehouse's `Files/dbt`, deploys the
-`fabric_items/` (a notebook, its `deploy_config` variable library, a pipeline) and schedules
-the pipeline every 12 hours. The notebook is the scheduled form of one CI leg: it runs the
-same `provision.py` → `download_aemo.py` → `run_in_fabric.py` from that copy, on the engine
-the variable library names (`dbt_target`, set to the engine you deployed). Do not run it
-alongside `pipeline.yml`; both land into `dbt_landing`.
+`deploy` is a dispatch input of `pipeline.yml` (`none` by default; `no_model` skips the
+semantic models and their reframe, the slow part). The `deploy` job runs `deploy.py` after
+the build legs, with the same OIDC identity — duckrun mints the storage, Fabric and Power BI
+tokens from the GitHub assertion, so there is no login step. It copies the git-tracked repo
+into the `dbt` lakehouse's `Files/dbt`, deploys `fabric_items/` (a notebook, its
+`deploy_config` variable library, a pipeline), one semantic model per engine built, and
+schedules the pipeline every 12 hours.
 
-It also deploys `semantic_model/` as `aemo_<engine>`, bound to `<engine>_mart`. Direct Lake
-has no schema parameter — a partition's schema is a literal in the model — so `deploy.py`
-writes it in per engine, the way duckrun writes the OneLake GUIDs. A Direct Lake model
-reframes on deploy, so build the engine once before deploying its model. dwh's model reads
-the Warehouse item through Direct Lake on OneLake.
+The notebook is the scheduled form of one CI leg: it runs the same `provision.py` →
+`download_aemo.py` → `run_in_fabric.py` from that copy, on the engine `dbt_target` in
+`fabric_items/deploy_config.VariableLibrary/variables.json` names (edit the file to change
+it). The pipeline runs it at 2 vCores and again at 8 if that fails (`pipelinecore`). Do not
+run it alongside `pipeline.yml`; both land into `dbt_landing`.
+
+The semantic model deploys as `aemo_<engine>`, bound to `<engine>_mart`. Direct Lake has no
+schema parameter — a partition's schema is a literal in the model — so `deploy.py` writes it
+in per engine, the way duckrun writes the OneLake GUIDs. A Direct Lake model reframes on
+deploy, which is why it deploys after the build. dwh's model reads the Warehouse item through
+Direct Lake on OneLake.
 
 ## License
 

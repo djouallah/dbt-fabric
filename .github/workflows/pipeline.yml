@@ -35,6 +35,11 @@ on:
         description: Files each fact model folds per run, oldest first (every engine honours it; a backlog converges over runs). The throttle for spark's first build.
         type: string
         default: "1000"
+      deploy:
+        description: Deploy the in-Fabric demo after the build? (the items are always provisioned) none = skip; no_model = everything except the semantic models; full = everything
+        type: choice
+        default: none
+        options: [none, no_model, full]
 
 permissions:
   id-token: write
@@ -168,3 +173,33 @@ jobs:
           git add history/parity
           git diff --quiet --cached || git commit -m "parity: ${{ github.run_id }}"
           git push
+
+  # THE IN-FABRIC DEMO, deployed AFTER the build so the Direct Lake models find their tables
+  # (a model reframes on deploy). Off by default: orchestration is GitHub Actions; the notebook
+  # and pipeline are a demo of in-Fabric scheduling, and redeploying them every run is churn.
+  # No azure/login: duckrun mints the storage, Fabric and Power BI tokens from the OIDC
+  # assertion, exactly as on the duckrun leg.
+  deploy:
+    needs: [plan, build]
+    if: ${{ inputs.deploy != 'none' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+      AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+      FABRIC_WORKSPACE_ID: ${{ secrets.FABRIC_WORKSPACE_ID }}
+      DBT_SCHEMA: ${{ inputs.dbt_schema }}
+      # The engines this run built: one semantic model each, aemo_<engine>.
+      DEPLOY_ENGINES: ${{ join(fromJSON(needs.plan.outputs.engines).*.engine, ',') }}
+      DEPLOY_SEMANTIC_MODEL: ${{ inputs.deploy == 'full' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements/duckrun.txt
+      # duckrun is the whole backend; provision.py's `requests` comes with it.
+      - run: pip install -r requirements/duckrun.txt
+      - name: Deploy (${{ inputs.deploy }})
+        run: python deploy.py

@@ -77,9 +77,9 @@ python download_aemo.py && dbt build --target duckrun --profiles-dir .
   `DUCKLAKE_DATA_PATH` does.
 - **Only `duckrun` is exempt from `azure/login`** in `build.yml`. It mints its own tokens
   from the OIDC assertion; `iceberg` is dbt-duckdb and shells out to `az` for the OneLake
-  token, so exempting it there kills the leg before it provisions anything. `deploy.yml` is
-  duckrun end to end (storage, Fabric and Power BI tokens all from the assertion), so it has
-  no login step either.
+  token, so exempting it there kills the leg before it provisions anything. The `deploy`
+  job in `pipeline.yml` is duckrun end to end (storage, Fabric and Power BI tokens all from
+  the assertion), so it has no login step either.
 
 - **`duckdb__` macros reach BOTH duckdb targets.** `macros/iceberg_adapter_overrides.sql`
   therefore branches on `target.name == 'iceberg'` and reproduces dbt-duckdb's own body
@@ -174,7 +174,12 @@ python download_aemo.py && dbt build --target duckrun --profiles-dir .
   `download_aemo.py`, `run_in_fabric.py` — from the repo copy `deploy.py` puts in the `dbt`
   lakehouse's `Files/dbt`, on the engine the `deploy_config` Variable Library names. Never
   fork dbt logic into it; change the scripts and redeploy. `tests_py/test_fabric_items.py`
-  pins the notebook's variables against `variables.json`.
+  pins the notebook's variables against `variables.json`. The pipeline's `pipelinecore`
+  parameter is LIVE: the notebook's `%%configure` cell takes its vCores from it (2, then 8 on
+  the retry activity) — it was once deleted here as "dead" because that cell had been lost.
+  The notebook mounts the lakehouse and copies `Files/dbt` to the work disk; it does not
+  `fs.cp`. Deploy is a `deploy` input on `pipeline.yml`, after the build, the way the source
+  repo does it — not a separate workflow.
 - `pipeline.yml` being manual. It commits to `history/parity/`, so a push trigger makes the
   commit start the next run.
 - Do not use `NotebookEdit` on `fabric_items/run.Notebook/notebook-content.ipynb` — keep
