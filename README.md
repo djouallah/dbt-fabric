@@ -25,7 +25,7 @@ both `MERGE INTO` shapes dbt-spark emits, `show table extended` (how dbt-spark d
 incremental model exists), and a read-back proving the merges applied rather than merely
 returning.
 
-**Phase B, what the models actually do: one gap, and it bounds the leg.** Sail reads the real
+**Phase B, what the models actually do: everything, bar one design decision.** Sail reads the real
 ragged AEMO CSVs off OneLake — 666k rows across two `PUBLIC_DAILY` files — keeps one record
 type, parses the slash date, counts DUIDs, and does `sequence()`/`explode()`, window
 functions, a 130-column record, a multi-column merge key and a genuinely temporary view.
@@ -41,21 +41,17 @@ Reading a ragged file takes two things **together**, and either alone fails:
 probe keeps a control (probe 24) that is identical but for the option, so the read's success
 is attributable to it rather than to the padding.
 
-**The gap, and it is a real one: no per-row provenance.** Every fact model keys on `file`,
-and there is no way to get it over a single read:
+**The one decision it forces: the merge key.** Neither provenance function exists —
+`input_file_name()` is `UnsupportedOperationException` and `_metadata.file_name` is
+`cannot resolve attribute` ([lakehq/sail#1210](https://github.com/lakehq/sail/issues/1210),
+open) — so a sail leg cannot populate `file`.
 
-| | |
-|---|---|
-| `input_file_name()` | `UnsupportedOperationException` |
-| `_metadata.file_name` — the spelling `macros/parse_filename.sql` documents for Spark | `cannot resolve attribute` |
-
-One view per file with the name as a **literal** does work (probe 23 returns both real
-filenames), because `spark_new_files` already resolves this run's filenames at render time.
-But it is bounded: `process_limit` defaults to **1000**, so a backfill would emit 1000
-`CREATE VIEW`s and a 1000-branch `UNION` where the brace glob is one read. That is a
-steady-state answer for a handful of files, not a substitute. Until
-[lakehq/sail#1210](https://github.com/lakehq/sail/issues/1210) lands — open, blocked on
-DataFusion v55 — a sail leg could keep up with the daily feed but could not backfill.
+That is not a blocker, because `file` is a *choice* of `unique_key` rather than a
+requirement: within a `source_type`, `(DUID|REGIONID, SETTLEMENTDATE, INTERVENTION)` is
+already the natural grain, and a leg that cannot name the file keys on those instead. The
+consequence is cross-engine, not per-engine — the key has to match on all five or the parity
+fingerprints diverge — so it is a decision about the gold layer, taken once, not something
+Sail forecloses.
 
 A direct ``csv.`path`` read also fails, since that form carries no options and so cannot pass
 `allowTruncatedRows` — but the view form is what `spark_read_csv.sql` emits anyway.

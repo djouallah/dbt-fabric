@@ -738,18 +738,21 @@ def read_verdict(results):
                 "10; probe 12: expected 4, got 10), so no schema rescues it. Nothing "
                 "downstream of the read matters until that lands." + shape_note)
 
-    # PER-ROW PROVENANCE HAS NO SCALABLE ANSWER when both of these are missing. Every fact
-    # model keys on `file`, and one view per file is bounded by process_limit, which defaults
-    # to 1000 -- fine for a steady-state run of a few files, not for a backfill.
+    # NO PROVENANCE FUNCTION IS NOT A BLOCKER, and calling it one was a misread. `file` is
+    # one CHOICE of merge key, not a requirement: within a source_type the business columns
+    # (DUID/REGIONID, SETTLEMENTDATE, INTERVENTION) are already the natural grain, so a leg
+    # that cannot populate `file` keys on those instead. That is a DESIGN decision with a
+    # parity consequence -- the key has to match on all five engines or the fingerprints
+    # diverge -- which is the user's call, not a capability this probe gets to veto on.
     provenance = (by_n.get(13, "").startswith("PASS")
                   or by_n.get(26, "").startswith("PASS"))
     if merge_ok and verified and csv_ok and not provenance:
-        return ("VERDICT: viable for a STEADY-STATE leg only -- the adapter contract, the "
-                "ragged CSV read and every model shape work, but per-row provenance does "
-                "not: input_file_name() is unimplemented AND _metadata.file_name does not "
-                "resolve, so the `file` column every fact keys on can only come from one "
-                "view per file. process_limit defaults to 1000, so a backfill is not on "
-                "until lakehq/sail#1210 lands." + shape_note)
+        return ("VERDICT: viable, with one design decision -- everything works except the "
+                "provenance functions: input_file_name() is unimplemented and "
+                "_metadata.file_name does not resolve (lakehq/sail#1210). So a sail leg "
+                "cannot populate `file`, and its facts would key on the business columns "
+                "instead. That key has to match the other four or parity diverges, so it is "
+                "a cross-engine decision rather than a Sail limitation." + shape_note)
 
     if merge_ok and verified:
         return ("VERDICT: viable — merge and relation listing both work and the writes "
