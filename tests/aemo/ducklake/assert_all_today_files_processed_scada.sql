@@ -1,4 +1,3 @@
-{{ config(tags=['heavy']) }}
 -- Every landed scada_today file must appear in fct_scada_today. Rows returned = files the
 -- downloader recorded but the model never ingested.
 SELECT

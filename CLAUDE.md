@@ -144,6 +144,12 @@ python download_aemo.py && dbt build --target duckrun --profiles-dir .
 - **`DOUBLE → DECIMAL` tie-breaking differs** (HALF_UP on Spark, HALF_EVEN on DuckDB, a third
   thing in T-SQL), which is why `parity.py` gives the money columns a relative tolerance and
   exact-matches everything else.
+- **Direct Lake has no schema parameter.** A partition's `schemaName` is a literal in the
+  model definition, so `semantic_model/.../model.bim` carries placeholders (`mart`, Desktop's
+  GUIDs) and `deploy.py` rewrites the schema to `<engine>_mart` per engine; duckrun rewrites
+  the GUIDs. dwh's model is Direct Lake on OneLake over the Warehouse item
+  (`mode="direct_lake"`). A model reframes on deploy, so the engine must have built once
+  before its model can be deployed.
 
 ## Things not to "fix"
 
@@ -160,11 +166,17 @@ python download_aemo.py && dbt build --target duckrun --profiles-dir .
   layout — lives in `macros/aemo_columns.sql` and must stay there.
 - `fabric_items/` vs `semantic_model/` being separate directories. duckrun's `deploy()`
   takes no exclude filter, and `_scan_item_folders` validates every item folder before
-  deploying any, so one stray folder makes the whole deploy ship nothing.
+  deploying any, so one stray folder makes the whole deploy ship nothing. The model is
+  deployed as a FILE, once per engine, as `aemo_<engine>`.
+- **The demo notebook (`fabric_items/run.Notebook`) runs the CI scripts** — `provision.py`,
+  `download_aemo.py`, `run_in_fabric.py` — from the repo copy `deploy.py` puts in the `dbt`
+  lakehouse's `Files/dbt`, on the engine the `deploy_config` Variable Library names. Never
+  fork dbt logic into it; change the scripts and redeploy. `tests_py/test_fabric_items.py`
+  pins the notebook's variables against `variables.json`.
 - `pipeline.yml` being manual. It commits to `history/parity/`, so a push trigger makes the
   commit start the next run.
 - Do not use `NotebookEdit` on `fabric_items/run.Notebook/notebook-content.ipynb` — keep
-  each cell's `source` as an array of lines.
+  each cell's `source` as an array of lines (the test above checks it).
 
 ## Domain facts worth keeping
 

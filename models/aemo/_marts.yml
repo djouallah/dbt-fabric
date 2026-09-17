@@ -114,35 +114,25 @@ models:
       - name: date
         description: Calendar date of the dispatch interval
         tests:
-          - not_null:
-              config:
-                tags: [heavy]
+          - not_null
       - name: time
         description: Time of day as an HHMM integer, 5-minute grain
       - name: DUID
         description: Dispatchable Unit Identifier of the generating unit
         tests:
-          - not_null:
-              config:
-                tags: [heavy]
+          - not_null
           - relationships:
               arguments:
                 to: ref('dim_duid')
                 field: DUID
-              config:
-                tags: [heavy]
       - name: mw
         description: Generation for the interval (MW), DECIMAL(18,4)
         tests:
-          - not_null:
-              config:
-                tags: [heavy]
+          - not_null
       - name: price
         description: Regional Reference Price matched via the unit's region ($/MWh), DECIMAL(18,4)
         tests:
-          - not_null:
-              config:
-                tags: [heavy]
+          - not_null
       - name: cutoff
         description: >
           High-water mark (max SETTLEMENTDATE seen when the batch was written), used by the

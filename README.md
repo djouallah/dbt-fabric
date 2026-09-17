@@ -80,6 +80,9 @@ download_aemo.py                           one downloader, one landing zone, pla
 .github/scripts/check_gating.py            proves the gating, offline
 .github/scripts/parity.py                  proves the engines agree
 .github/scripts/remote_dbt.py              runs a DuckDB leg inside Fabric (8 vCores)
+deploy.py                                  the in-Fabric demo: repo copy, notebook + pipeline, semantic model
+fabric_items/                              the scheduled notebook, its variable library, the pipeline
+semantic_model/                            one Direct Lake model, deployed once per engine
 ```
 
 Five copies of each model is the design, not an accident. They are gated so exactly one is
@@ -228,6 +231,25 @@ the next run.
 
 Note: cancelling a GitHub job does **not** stop Fabric — the notebook or Livy session keeps
 running, and billing.
+
+## Scheduling it inside Fabric
+
+```bash
+python deploy.py --engine iceberg --full     # needs FABRIC_WORKSPACE_ID and a Fabric login
+```
+
+That copies the git-tracked repo into the `dbt` lakehouse's `Files/dbt`, deploys the
+`fabric_items/` (a notebook, its `deploy_config` variable library, a pipeline) and schedules
+the pipeline every 12 hours. The notebook is the scheduled form of one CI leg: it runs the
+same `provision.py` → `download_aemo.py` → `run_in_fabric.py` from that copy, on the engine
+the variable library names (`dbt_target`, set to the engine you deployed). Do not run it
+alongside `pipeline.yml`; both land into `dbt_landing`.
+
+It also deploys `semantic_model/` as `aemo_<engine>`, bound to `<engine>_mart`. Direct Lake
+has no schema parameter — a partition's schema is a literal in the model — so `deploy.py`
+writes it in per engine, the way duckrun writes the OneLake GUIDs. A Direct Lake model
+reframes on deploy, so build the engine once before deploying its model. dwh's model reads
+the Warehouse item through Direct Lake on OneLake.
 
 ## License
 

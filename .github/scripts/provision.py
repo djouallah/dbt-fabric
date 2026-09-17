@@ -38,6 +38,7 @@ comparison was quietly comparing different inputs.
 from __future__ import annotations
 
 import os
+import subprocess
 import sys
 import time
 
@@ -80,8 +81,14 @@ def token(resource: str = FABRIC_RESOURCE) -> str:
             return duckrun.auth.get_fabric_token()
         except Exception:
             pass
-    import subprocess
+    # Inside a Fabric notebook (the demo notebook runs this script there) notebookutils mints
+    # any audience, and `az` does not exist.
+    try:
+        import notebookutils  # type: ignore
 
+        return notebookutils.credentials.getToken(resource)
+    except ImportError:
+        pass
     return subprocess.run(
         ["az", "account", "get-access-token", "--resource", resource,
          "--query", "accessToken", "-o", "tsv"],
@@ -311,7 +318,11 @@ def main() -> int:
         # remote_dbt.py's setup hook mints this from notebookutils; a runner-side copy would
         # land unmasked in $GITHUB_ENV and never be read.
         if not os.environ.get("GITHUB_ACTIONS"):
-            emit("DBT_ENV_SECRET_SQL_TOKEN", token("https://database.windows.net/"))
+            try:
+                emit("DBT_ENV_SECRET_SQL_TOKEN", token("https://database.windows.net/"))
+            except (FileNotFoundError, subprocess.CalledProcessError):
+                log("  ! no `az` to mint the SQL DB token; export DBT_ENV_SECRET_SQL_TOKEN "
+                    "yourself for a local ducklake run")
 
     elif engine == "dwh":
         wh_id = ensure("warehouses", DWH_WAREHOUSE, None, folder_id)

@@ -10,10 +10,6 @@ __pycache__/
 .pytest_cache/
 *.db
 
-# Fabric CLI scratch — deploy.py writes this and removes it in a finally, but a crashed
-# run leaves it behind.
-_fab_deploy_tmp.yml
-
 # Local landing zone for `python download_aemo.py` with FILES_PATH=./landing
 landing/
 warehouse/

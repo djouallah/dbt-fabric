@@ -1,8 +1,6 @@
-{{ config(tags=['heavy']) }}
 -- The summary should hold at least as many distinct days as fct_scada.
--- Tagged heavy: with a small process_limit some ingested files are all INTERVENTION=1 or
--- carry unmapped DUIDs and produce zero summary rows for that date, so the assertion only
--- holds at full data volume.
+-- With a small process_limit a date whose ingested files are all INTERVENTION=1 or carry
+-- unmapped DUIDs produces zero summary rows and trips this until the backlog has converged.
 SELECT scada_days, summary_days
 FROM (
   SELECT
