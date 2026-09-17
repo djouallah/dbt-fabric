@@ -10,6 +10,22 @@ One dbt project that builds the **same AEMO gold layer** on five adapters:
 | `dwh` | `dbt-fabric` | Fabric Warehouse | distributed | Delta tables in the Warehouse, written with T-SQL |
 | `spark` | `dbt-fabricspark` | Fabric Spark | distributed | Delta in a Fabric Lakehouse |
 
+### Candidate engines
+
+**Sail** ([LakeSail](https://github.com/lakehq/sail)) is the live candidate for a sixth. Its
+`dbt-sail` is a thin wrapper around `dbt-spark` talking Spark Connect to a Rust engine with no
+JVM, and Sail has a native OneLake catalog that takes the same bearer token the `iceberg` leg
+mints — so it would be a second Iceberg writer against the same gold layer. `CREATE TABLE`
+through that catalog works. Whether `MERGE INTO` does is the open question, and every fact
+model here is an incremental merge, so it decides whether the spark tree ports as-is or the
+leg forks. `.github/workflows/sail_smoke.yml` measures it — `workflow_dispatch` only, gates
+nothing, and its log is meant to be pasted upstream when something does not work.
+
+**dbt-polars** is not a candidate. Its SQL runs through `pl.SQLContext` rather than a
+database — no `dateadd`/`datediff`/`current_timestamp`/`hash`, `date_trunc` limited to
+day/hour/minute/month/year — so the gold layer would have to become Python models. That is
+the one-gold-layer rule breaking, which is the thing this repo exists to prevent.
+
 ## The thesis, and what the repo actually found
 
 **In theory the engine is abstract.** dbt's promise is that a model is a `SELECT` and the

@@ -1,0 +1,102 @@
+name: sail smoke (candidate engine)
+
+# A FEASIBILITY PROBE, NOT A LEG. It builds nothing this repo depends on, it is not in
+# pipeline.yml, and it never gates anything — `continue-on-error: true` and the script exits 0
+# whatever it finds, because a red result is the point: it becomes the upstream bug report.
+#
+# THE QUESTION. LakeSail's `dbt-sail` is a thin wrapper around dbt-spark talking Spark Connect
+# to Sail, a Rust Spark replacement with no JVM, and Sail has a native OneLake catalog that
+# takes the same Entra bearer token the iceberg leg already mints. That would make a sixth
+# engine: a second Iceberg writer against the same gold layer, on an engine that is neither
+# DuckDB nor JVM Spark. CREATE TABLE through that catalog is confirmed working by hand; MERGE
+# INTO is not, and every fact model here is an incremental merge on a unique key. This job
+# measures that, plus whether `show table extended` lists anything — which is how dbt-spark
+# decides an incremental model already exists, and an empty answer there is worse than an
+# error.
+#
+# workflow_dispatch ONLY. No push trigger, no call from pipeline.yml: it touches Fabric, so it
+# costs capacity, and it should cost it only when somebody asks.
+#
+# NOTHING IN THE FIVE-ENGINE LAYOUT IS TOUCHED by this job. It reuses `provision.py iceberg`
+# rather than introducing a `sail` key — that script's ENGINES set is the five-engine contract
+# check_gating.py and deploy.py key off, and a sixth name in it would be a claim this probe
+# has not earned yet. The iceberg branch provisions the same shared `dbt` lakehouse and emits
+# the WAREHOUSE_PATH the catalog needs, which is all this wants.
+
+on:
+  workflow_dispatch:
+    inputs:
+      schema:
+        description: Schema to build the probe tables in. Deliberately outside the <engine>_landing / <engine>_mart namespace the five engines share.
+        required: false
+        default: sail_smoke
+        type: string
+      keep:
+        description: Leave the probe tables behind for inspection in Fabric instead of dropping them.
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    # The whole job is best-effort. A failure here is a finding about Sail, not a broken repo.
+    continue-on-error: true
+    env:
+      SAIL_SMOKE_SCHEMA: ${{ inputs.schema }}
+      SAIL_SMOKE_KEEP: ${{ inputs.keep && '1' || '0' }}
+      AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+      AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+      FABRIC_WORKSPACE_ID: ${{ secrets.FABRIC_WORKSPACE_ID }}
+      PYTHONUNBUFFERED: "1"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          # pysail publishes for 3.10-3.14; 3.12 keeps this on the same interpreter as every
+          # other job in the repo.
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements/sail_smoke.txt
+
+      - run: pip install -r requirements/sail_smoke.txt
+
+      # Not duckrun, so it needs a real Azure session — provision.py falls back to `az` for
+      # the audiences duckrun cannot mint, and the token below comes from `az` too.
+      - uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          allow-no-subscriptions: true
+
+      - name: Mint OneLake token
+        # storage.azure.com, the same audience dbt2/profiles.yml hands the Iceberg REST
+        # catalog and the same one build.yml's compact job mints. Sail's OneLake catalog takes
+        # a bearer token and explicitly will NOT take an account key or a SAS.
+        run: |
+          TOKEN=$(az account get-access-token --resource https://storage.azure.com/ --query accessToken -o tsv)
+          echo "::add-mask::$TOKEN"
+          echo "ONELAKE_TOKEN=$TOKEN" >> "$GITHUB_ENV"
+
+      - name: Provision the shared lakehouse
+        # `iceberg`, not `sail`: see the header. Emits WAREHOUSE_PATH as "<workspace>/<item>",
+        # which is the shape Sail's OneLake catalog url wants.
+        run: python .github/scripts/provision.py iceberg >> "$GITHUB_ENV"
+
+      - name: Probe Sail
+        run: python .github/scripts/sail_smoke.py 2>&1 | tee sail_smoke.log
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          # This log IS the deliverable — it is the body of the issue for lakehq/sail or
+          # lakehq/dbt-sail if something did not work.
+          name: sail-smoke-log
+          path: sail_smoke.log
+          if-no-files-found: warn

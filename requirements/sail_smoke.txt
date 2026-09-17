@@ -1,0 +1,20 @@
+# The Sail SMOKE TEST, not an engine.
+#
+# DELIBERATELY NOT NAMED requirements/sail.txt. That stem is how build.yml resolves an
+# ENGINE's dependencies (`requirements/${ENGINE}.txt`), and how ci.yml's gating matrix names
+# its jobs. Sail is a candidate sixth engine, not a sixth engine — giving it an engine-shaped
+# requirements file is the first step toward something picking it up as one.
+#
+# Standalone environment, so none of the console-script collisions in CLAUDE.md apply: no
+# duckrun (pins dbt-core<2), no dbt-oss, no adapter of any kind. .github/scripts/sail_smoke.py
+# issues raw SQL over Spark Connect — dbt is not involved, because the question it answers
+# (does MERGE INTO work through the OneLake Iceberg REST catalog) is about the ENGINE. If the
+# answer is yes, dbt-sail goes in a follow-up.
+#
+# Unpinned on purpose. The point of the probe is to measure whatever LakeSail has shipped
+# most recently; pinning would freeze the answer at the moment it was written, which is
+# exactly the thing being tested. The log records the resolved versions.
+pysail
+# The Spark Connect CLIENT. Plain `pyspark` is the JVM package and does not bring the connect
+# extras; without them SparkSession.builder.remote() fails on the grpc import.
+pyspark[connect]
