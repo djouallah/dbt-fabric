@@ -23,6 +23,14 @@
    "runs": 2,
    "since": "2026-09-17T16:00:00",
    "timed": 10
+  },
+  {
+   "at": "2026-09-17T13:33:14Z",
+   "changed": 6,
+   "pending": 0,
+   "runs": 3,
+   "since": "2026-09-17T16:00:00",
+   "timed": 15
   }
  ],
  "runs": {
@@ -159,8 +167,75 @@
     }
    },
    "started": "2026-09-17T12:31:36Z"
+  },
+  "35225482718": {
+   "engines": {
+    "ducklake": {
+     "cu": {
+      "Jupyter Notebook Scheduled Run": 1294.562,
+      "Sql Usage": 677.549
+     },
+     "seconds": {
+      "Jupyter Notebook Scheduled Run": 323.638,
+      "Sql Usage": 420.0
+     },
+     "window": [
+      "2026-09-17T13:15:16Z",
+      "2026-09-17T13:22:47Z"
+     ]
+    },
+    "duckrun": {
+     "cu": {
+      "Jupyter Notebook Scheduled Run": 1332.014
+     },
+     "seconds": {
+      "Jupyter Notebook Scheduled Run": 333.001
+     },
+     "window": [
+      "2026-09-17T13:14:48Z",
+      "2026-09-17T13:22:31Z"
+     ]
+    },
+    "dwh": {
+     "cu": {
+      "Warehouse Query": 6620.72
+     },
+     "seconds": {
+      "Warehouse Query": 601.689
+     },
+     "window": [
+      "2026-09-17T13:15:01Z",
+      "2026-09-17T13:21:42Z"
+     ]
+    },
+    "iceberg": {
+     "cu": {
+      "Jupyter Notebook Scheduled Run": 690.596
+     },
+     "seconds": {
+      "Jupyter Notebook Scheduled Run": 172.647
+     },
+     "window": [
+      "2026-09-17T13:14:54Z",
+      "2026-09-17T13:19:56Z"
+     ]
+    },
+    "spark": {
+     "cu": {
+      "High Concurrency Session Livy Run": 7437.071
+     },
+     "seconds": {
+      "High Concurrency Session Livy Run": 733.956
+     },
+     "window": [
+      "2026-09-17T13:14:52Z",
+      "2026-09-17T13:25:16Z"
+     ]
+    }
+   },
+   "started": "2026-09-17T13:12:17Z"
   }
  },
  "schema": 1,
- "updated": "2026-09-17T13:27:58Z"
+ "updated": "2026-09-17T13:33:14Z"
 }
