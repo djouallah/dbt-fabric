@@ -17,11 +17,15 @@ name: sail smoke (candidate engine)
 # workflow_dispatch ONLY. No push trigger, no call from pipeline.yml: it touches Fabric, so it
 # costs capacity, and it should cost it only when somebody asks.
 #
-# NOTHING IN THE FIVE-ENGINE LAYOUT IS TOUCHED by this job. It reuses `provision.py iceberg`
-# rather than introducing a `sail` key — that script's ENGINES set is the five-engine contract
-# check_gating.py and deploy.py key off, and a sixth name in it would be a claim this probe
-# has not earned yet. The iceberg branch provisions the same shared `dbt` lakehouse and emits
-# the WAREHOUSE_PATH the catalog needs, which is all this wants.
+# NOTHING IN THE FIVE-ENGINE LAYOUT IS TOUCHED by this job, and it PROVISIONS NOTHING. The
+# shared `dbt` lakehouse is assumed to be there already — every real leg creates it, and a
+# probe has no business creating Fabric items to answer a question about SQL support. So the
+# catalog url is composed from the workspace secret and the lakehouse's known name rather
+# than resolved through the Fabric API: no provision.py, no `requests`, no item lookups,
+# one `az` token and nothing else.
+#
+# That also keeps a `sail` key out of provision.py's ENGINES, which is the five-engine
+# contract check_gating.py and deploy.py key off.
 
 on:
   workflow_dispatch:
@@ -36,6 +40,11 @@ on:
         required: false
         default: false
         type: boolean
+      warehouse:
+        description: "OneLake item the catalog points at, as <workspace>/<item>.<type>. Blank uses the shared `dbt` lakehouse in FABRIC_WORKSPACE_ID."
+        required: false
+        default: ""
+        type: string
 
 permissions:
   id-token: write
@@ -49,6 +58,10 @@ jobs:
     continue-on-error: true
     env:
       SAIL_SMOKE_SCHEMA: ${{ inputs.schema }}
+      # ASSUMED TO EXIST, never created here. `dbt` is the shared lakehouse every leg writes
+      # to (provision.py's DATA_LAKEHOUSE), and Sail's OneLake catalog addresses an item as
+      # <workspace>/<item>.<type>. Use the `warehouse` input to point at a different one.
+      WAREHOUSE_PATH: ${{ inputs.warehouse || format('{0}/dbt.Lakehouse', secrets.FABRIC_WORKSPACE_ID) }}
       SAIL_SMOKE_KEEP: ${{ inputs.keep && '1' || '0' }}
       AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
       AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
@@ -67,8 +80,9 @@ jobs:
 
       - run: pip install -r requirements/sail_smoke.txt
 
-      # Not duckrun, so it needs a real Azure session — provision.py falls back to `az` for
-      # the audiences duckrun cannot mint, and the token below comes from `az` too.
+      # The ONLY thing this job asks Azure for. Not duckrun, so it cannot mint its own
+      # OneLake token off the OIDC assertion the way that leg does — it needs a real `az`
+      # session for the step below, and for nothing else.
       - uses: azure/login@v2
         with:
           client-id: ${{ secrets.AZURE_CLIENT_ID }}
@@ -83,11 +97,6 @@ jobs:
           TOKEN=$(az account get-access-token --resource https://storage.azure.com/ --query accessToken -o tsv)
           echo "::add-mask::$TOKEN"
           echo "ONELAKE_TOKEN=$TOKEN" >> "$GITHUB_ENV"
-
-      - name: Provision the shared lakehouse
-        # `iceberg`, not `sail`: see the header. Emits WAREHOUSE_PATH as "<workspace>/<item>",
-        # which is the shape Sail's OneLake catalog url wants.
-        run: python .github/scripts/provision.py iceberg >> "$GITHUB_ENV"
 
       - name: Probe Sail
         run: python .github/scripts/sail_smoke.py 2>&1 | tee sail_smoke.log

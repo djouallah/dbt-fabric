@@ -73,9 +73,9 @@ def test_check_gating_does_not_know_about_sail():
 def test_ci_scripts_do_not_know_about_sail(script):
     src = (REPO / ".github" / "scripts" / script).read_text(encoding="utf-8")
     assert not re.search(r"""["']sail["']""", src), (
-        f"{script} names 'sail' as an engine. The smoke job reuses `provision.py iceberg` on "
-        f"purpose -- it wants the shared lakehouse and WAREHOUSE_PATH, not a sixth engine's "
-        f"worth of wiring."
+        f"{script} names 'sail' as an engine. The smoke job runs none of these -- it assumes "
+        f"the shared lakehouse and composes its own catalog url -- so a 'sail' key here means "
+        f"the probe has quietly become a leg."
     )
 
 
@@ -123,6 +123,27 @@ def test_no_other_workflow_calls_it():
             f"{wf.name} references sail_smoke. Wiring the probe into the pipeline makes it a "
             f"leg by accident."
         )
+
+
+def test_workflow_provisions_nothing():
+    """A probe must not create Fabric items to answer a question about SQL support.
+
+    It ran `provision.py iceberg` once, to resolve the warehouse path. That failed on a
+    missing `requests` (the smoke env installs neither provision.py's dependencies nor
+    duckrun), but the real objection is the other one: the shared `dbt` lakehouse is created
+    by every real leg, so a probe should assume it and compose the catalog url from the
+    workspace secret and the item's known name.
+    """
+    body = SMOKE_YML.read_text(encoding="utf-8")
+    # An INVOCATION, not a mention -- the header comment explains at length why there is no
+    # provisioning here, and a bare substring check trips over its own explanation.
+    called = [ln for ln in body.splitlines()
+              if "provision.py" in ln and not ln.lstrip().startswith("#")]
+    assert not called, (
+        f"sail_smoke.yml calls provision.py again: {called}. The lakehouse is assumed to "
+        f"exist; the catalog url is composed, not resolved."
+    )
+    assert "WAREHOUSE_PATH:" in body, "the composed catalog url went missing"
 
 
 def test_script_always_exits_zero():
