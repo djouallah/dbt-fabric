@@ -25,21 +25,34 @@ both `MERGE INTO` shapes dbt-spark emits, `show table extended` (how dbt-spark d
 incremental model exists), and a read-back proving the merges applied rather than merely
 returning.
 
-**Phase B, what the models actually do: blocked.** Sail does `sequence()`/`explode()`,
-window functions, a 130-column record, a multi-column merge key and `to_timestamp` with an
-explicit format. It cannot read the source data:
+**Phase B, what the models actually do: one gap, worked around.** Sail reads the real
+ragged AEMO CSVs off OneLake — 666k rows across two `PUBLIC_DAILY` files — keeps one record
+type, parses the slash date, counts DUIDs, and does `sequence()`/`explode()`, window
+functions, a 130-column record, a multi-column merge key and a genuinely temporary view.
+
+Reading a ragged file takes two things **together**, and either alone fails:
+
+| | |
+|---|---|
+| a schema **padded to at least the widest record** in the file | a `PUBLIC_DAILY` holds many record types — DUNIT is 53 columns, DREGION 130 — so a narrower schema is `expected 4, got 10` |
+| **`allowTruncatedRows`** for every row narrower than that | without it the padded schema fails the other way: `expected 131, got 14` |
+
+`mode 'PERMISSIVE'`, which is how the spark leg says this, does **not** do it on Sail. The
+probe keeps a control (probe 24) that is identical but for the option, so the read's success
+is attributable to it rather than to the padding.
+
+The one real gap:
 
 | gap | what it costs the leg |
 |---|---|
-| **`mode 'PERMISSIVE'` is not honoured** — a ragged row is an error at *any* declared width (`expected 200, got 10` with a 200-column schema; `expected 4, got 10` with a narrow one) | **this is the blocker.** AEMO files are ragged by construction — a `PUBLIC_DAILY` holds many record types of different widths in one file — so no schema rescues it. Nothing downstream of the read matters until it lands |
-| `input_file_name()` is `UnsupportedOperationException` | the models' `file` column is parsed from it and the provenance exists nowhere else. Recoverable in principle — `spark_new_files` already resolves the names at render time, so one view per file with a literal name would do it — but moot while the read itself fails. [lakehq/sail#1210](https://github.com/lakehq/sail/issues/1210), open, blocked on DataFusion v55 |
-| a `TEMPORARY VIEW` is listed in the schema, i.e. persistent | the same trap that forces the spark leg to stage through a `__stage` Delta table, so sail would inherit that machinery rather than avoid it |
-| a direct ``csv.`path`` read parses | it parses — unlike Fabric Spark, whose catalog base32hex-decodes multipart names — but it hits the same PERMISSIVE wall |
+| `input_file_name()` is `UnsupportedOperationException` | the models' `file` column is parsed from it. **Worked around:** `spark_new_files` already resolves this run's filenames at render time, so one view per file with the name as a literal recovers provenance exactly — probe 23 does it and returns both real filenames. It costs a read per file instead of one brace glob. [lakehq/sail#1210](https://github.com/lakehq/sail/issues/1210), open, blocked on DataFusion v55 |
+
+A direct ``csv.`path`` read also fails, since that form carries no options and so cannot pass
+`allowTruncatedRows` — but the view form is what `spark_read_csv.sql` emits anyway.
 
 Two dialect facts fell out as well: Sail rounds `DOUBLE` → `DECIMAL` **HALF_UP** (like Spark,
 unlike DuckDB), and a bare `CAST` of AEMO's `yyyy/MM/dd` is a hard parse error rather than
-Spark's silent `NULL` — which is strictly better, since it cannot reach the gold layer
-unnoticed.
+Spark's silent `NULL` — strictly better, since it cannot reach the gold layer unnoticed.
 
 Three things the probe had to get right before any of the above was measurable, each
 found by a failed run and each a cost a real leg would carry:
