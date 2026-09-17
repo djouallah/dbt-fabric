@@ -67,6 +67,12 @@ jobs:
   build:
     runs-on: ubuntu-latest
     timeout-minutes: 120
+    # What the compact job needs from this one. $GITHUB_ENV does not cross jobs; a job output
+    # does, and it saves the compact job re-running provision.py (three Fabric REST calls and
+    # a duckrun install) to look up a GUID this job already resolved.
+    outputs:
+      warehouse_path: ${{ steps.lakehouse.outputs.warehouse_path }}
+      onelake_endpoint: ${{ steps.lakehouse.outputs.onelake_endpoint }}
     env:
       ENGINE: ${{ inputs.engine }}
       # The three legs whose dbt runs inside Fabric. Exact match on the list, not a substring.
@@ -107,9 +113,10 @@ jobs:
         # `<engine>_runner.txt` when there is one, else `<engine>.txt`. Only iceberg has the
         # split, and it has to: that leg's dbt is dbt OSS 2, which cannot share an
         # environment with duckrun (duckrun pins dbt-core<2 and would lay a 1.x `dbt` script
-        # over v2's). The runner here never runs dbt for iceberg -- it provisions, launches
-        # the notebook and compacts -- so it installs duckrun + duckdb, while
+        # over v2's). The runner here never runs dbt for iceberg -- it provisions and
+        # launches the notebook -- so it installs duckrun alone, while
         # requirements/iceberg.txt (dbt-oss alone) goes to the notebook and the gating job.
+        # The compact job below installs its own `--pre duckdb`.
         run: |
           REQ="requirements/${ENGINE}_runner.txt"
           [ -f "$REQ" ] || REQ="requirements/${ENGINE}.txt"
@@ -140,6 +147,13 @@ jobs:
       # ---- provision ---------------------------------------------------------------
       - name: Provision Fabric items
         run: python .github/scripts/provision.py "$ENGINE" >> "$GITHUB_ENV"
+
+      # Empty for every engine but iceberg (provision.py emits these two only there).
+      - name: Expose the catalog location to the compact job
+        id: lakehouse
+        run: |
+          echo "warehouse_path=$WAREHOUSE_PATH" >> "$GITHUB_OUTPUT"
+          echo "onelake_endpoint=$ONELAKE_ENDPOINT" >> "$GITHUB_OUTPUT"
 
       - name: Capture Warehouse SQL token
         if: inputs.engine == 'dwh'
@@ -242,34 +256,38 @@ jobs:
       # test_iceberg_landing/test_iceberg_mart, and report a tidy catalog having compacted
       # nothing.
       DBT_SCHEMA: ${{ inputs.dbt_schema }}
+      # Where the catalog is, from the build job's provisioning (job outputs above).
+      WAREHOUSE_PATH: ${{ needs.build.outputs.warehouse_path }}
+      ONELAKE_ENDPOINT: ${{ needs.build.outputs.onelake_endpoint }}
       AZURE_TRANSPORT_OPTION_TYPE: curl
       CURL_CA_INFO: /etc/ssl/certs/ca-certificates.crt
-      AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
-      AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
-      FABRIC_WORKSPACE_ID: ${{ secrets.FABRIC_WORKSPACE_ID }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-          cache: pip
-          # Default glob is **/requirements.txt, which this repo has not got.
-          cache-dependency-path: requirements/*.txt
-      # The RUNNER list (duckdb + duckrun), not requirements/iceberg.txt. This job is a
-      # metadata rewrite against the catalog and never invokes dbt, so it wants the same
-      # environment the build job's runner had -- and dbt-oss must stay out of it.
-      - run: pip install -r requirements/iceberg_runner.txt
+      # Just the engine. iceberg_rewrite_data_files() exists on the pre-release line only,
+      # and this job never invokes dbt, duckrun or the Fabric API -- it is a metadata rewrite
+      # against the catalog on the token below.
+      - run: pip install --pre duckdb
+      # For the token only. The OneLake token is the REST catalog's bearer; storage
+      # credentials are vended by the catalog per table (compact_iceberg.py).
       - uses: azure/login@v2
         with:
           client-id: ${{ secrets.AZURE_CLIENT_ID }}
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           allow-no-subscriptions: true
       - name: Mint OneLake token
-        # $GITHUB_ENV does not cross jobs, so this job mints its own token and re-resolves
-        # the warehouse path. This one runs on the runner: it is a metadata rewrite, not a fold.
         run: |
           TOKEN=$(az account get-access-token --resource https://storage.azure.com/ --query accessToken -o tsv)
           echo "::add-mask::$TOKEN"
           echo "ONELAKE_TOKEN=$TOKEN" >> "$GITHUB_ENV"
-      - run: python .github/scripts/provision.py iceberg >> "$GITHUB_ENV"
-      - run: python .github/scripts/compact_iceberg.py
+      - name: Compact
+        # A build that died before provisioning has no catalog location to hand over; there
+        # is nothing to compact then either. Say so instead of failing on a missing env var.
+        run: |
+          if [ -z "$WAREHOUSE_PATH" ]; then
+            echo "::warning::the build job did not resolve the lakehouse (failed before provisioning); nothing compacted"
+            exit 0
+          fi
+          python .github/scripts/compact_iceberg.py

@@ -6,9 +6,10 @@ small data file per table and nothing ever folds them back together. This runs
 iceberg_rewrite_data_files() over each table, consolidating files below the target size.
 
 iceberg_rewrite_data_files landed in duckdb/iceberg#1035 and is not in a stable
-duckdb release yet, so requirements/iceberg_runner.txt installs the latest PRE-release duckdb
-(`--pre duckdb`, unpinned) rather than a hand-bumped build. The iceberg extension binary is
-keyed to the duckdb build, so whatever pip resolves brings its own matching extension.
+duckdb release yet, so the compact job (build.yml) installs the latest PRE-release duckdb
+(`--pre duckdb`, unpinned) and nothing else. The iceberg extension binary is keyed to the
+duckdb build, so whatever pip resolves brings its own matching extension; connect() prints
+both shas.
 has_rewrite_function() checks for the function rather than assuming it, so a resolution
 that happens to lack it degrades to "nothing to compact" instead of failing the job.
 

@@ -112,8 +112,9 @@ cd dbt1 && dbt build --target duckrun --profiles-dir .
   `dbt-core<2` and `dbt-duckdb<2`, which lay a dbt 1.x `dbt` console script over v2's — and
   the job then silently parses the wrong project with the wrong engine. That is why the
   iceberg leg has TWO requirement files: `requirements/iceberg.txt` (just `dbt-oss`) goes to
-  the Fabric notebook and the gating job, `requirements/iceberg_runner.txt` (duckdb +
-  duckrun) goes to the runner, which only provisions, launches and compacts.
+  the Fabric notebook and the gating job, `requirements/iceberg_runner.txt` (duckrun alone)
+  goes to the runner, which only provisions and launches. The `compact` job installs
+  `--pre duckdb` and nothing else.
 - **dbt 2 needs `persistent: true` on its profile secrets.** It applies `secrets:` on a
   THROWAWAY connection, so a session-scoped secret never reaches the model and the write dies
   "could not open file ... the credentials used were wrong". The ATTACH survives that
@@ -164,8 +165,10 @@ cd dbt1 && dbt build --target duckrun --profiles-dir .
   extensions, `mssql_ducklake` and `delta_export`, publish for that line); duckrun tracks the
   latest PRE-RELEASE (`--pre duckdb`). Never pin `deltalake` for duckrun: the adapter pins it
   itself. **iceberg's dbt no longer uses the pip `duckdb` at all** — dbt OSS 2 bundles its own
-  engine. The `--pre duckdb` in `requirements/iceberg_runner.txt` is for `compact_iceberg.py`
-  only, which needs `iceberg_rewrite_data_files()` off the 1.6.0 dev line.
+  engine. `requirements/iceberg_runner.txt` is duckrun alone; the compact job installs
+  `--pre duckdb` by itself, since `iceberg_rewrite_data_files()` exists only on the
+  pre-release line, and takes the catalog location from the build job's outputs instead of
+  re-running `provision.py`.
 - **duckrun: `insert` and `merge_clauses={'when_matched':[{'action':'do_nothing'}]}` are the
   same operation** — a DuckDB anti-join plus a plain append, no delta-rs merge pool, no file
   rewritten. Prefer it to `merge` wherever the model only ever adds rows; a delta-rs merge

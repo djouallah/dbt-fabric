@@ -9,11 +9,8 @@
 # The runner never runs dbt for this engine. It:
 #   * provisions the Fabric items          (.github/scripts/provision.py, needs duckrun auth)
 #   * launches the notebook                (.github/scripts/remote_dbt.py -> run_python)
-#   * compacts afterwards                  (.github/scripts/compact_iceberg.py, needs duckdb)
 #
-# --pre duckdb for compaction only: iceberg_rewrite_data_files() exists on the 1.6.0 dev
-# line and nowhere else, and compact_iceberg.py degrades gracefully without it
-# (has_rewrite_function). It floats rather than sitting on one hand-bumped build.
---pre
-duckdb
+# Compaction is NOT here: the compact job installs `--pre duckdb` on its own and nothing
+# else -- iceberg_rewrite_data_files() exists on the pre-release line only, and that job never
+# touches duckrun or the Fabric API (build.yml).
 duckrun
