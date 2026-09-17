@@ -738,6 +738,19 @@ def read_verdict(results):
                 "10; probe 12: expected 4, got 10), so no schema rescues it. Nothing "
                 "downstream of the read matters until that lands." + shape_note)
 
+    # PER-ROW PROVENANCE HAS NO SCALABLE ANSWER when both of these are missing. Every fact
+    # model keys on `file`, and one view per file is bounded by process_limit, which defaults
+    # to 1000 -- fine for a steady-state run of a few files, not for a backfill.
+    provenance = (by_n.get(13, "").startswith("PASS")
+                  or by_n.get(26, "").startswith("PASS"))
+    if merge_ok and verified and csv_ok and not provenance:
+        return ("VERDICT: viable for a STEADY-STATE leg only -- the adapter contract, the "
+                "ragged CSV read and every model shape work, but per-row provenance does "
+                "not: input_file_name() is unimplemented AND _metadata.file_name does not "
+                "resolve, so the `file` column every fact keys on can only come from one "
+                "view per file. process_limit defaults to 1000, so a backfill is not on "
+                "until lakehq/sail#1210 lands." + shape_note)
+
     if merge_ok and verified:
         return ("VERDICT: viable — merge and relation listing both work and the writes "
                 "verified. The spark model tree ports nearly as-is; next step is the full "

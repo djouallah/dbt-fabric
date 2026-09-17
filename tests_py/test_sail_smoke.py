@@ -397,6 +397,24 @@ def test_temp_view_check_reads_the_flag_not_the_listing(smoke):
     assert smoke.interpret(14, persistent).startswith("PERSISTENT")
 
 
+def test_no_provenance_is_not_plain_viable(smoke):
+    """`file` is in every fact's unique key, and one view per file is capped by process_limit.
+
+    With input_file_name() unimplemented AND _metadata.file_name unresolvable, there is no
+    per-row provenance over a single read -- so "viable, the spark tree ports nearly as-is"
+    is not the honest headline for a repo whose backfill folds up to 1000 files at a time.
+    """
+    no_prov = [(1, "x", "PASS"), (3, "x", "PASS"), (6, "x", "PASS"), (8, "x", "PASS"),
+               (10, "x", "PASS - every write applied"), (12, "x", "PASS"),
+               (13, "x", "FAIL - unimplemented"), (26, "x", "FAIL - cannot resolve")]
+    v = smoke.read_verdict(no_prov)
+    assert "STEADY-STATE" in v
+
+    # _metadata working is enough on its own -- it is per-row over one read.
+    with_meta = [x for x in no_prov if x[0] != 26] + [(26, "x", "PASS (2 row(s))")]
+    assert "STEADY-STATE" not in smoke.read_verdict(with_meta)
+
+
 def test_a_failed_csv_read_cannot_be_called_viable(smoke):
     """Phase B has to be able to veto phase A.
 
