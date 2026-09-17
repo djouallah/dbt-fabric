@@ -170,7 +170,13 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add history/parity
+          # -f IS REQUIRED. .gitignore carries `history/parity/*.json` so that a laptop run
+          # cannot commit a fingerprint and poison the comparison, and `git add <dir>` SKIPS
+          # ignored files silently -- it stages only the README, `git diff --cached` then
+          # reports nothing to commit, and the run goes green having recorded NOTHING. That is
+          # why history/parity/ held no fingerprints at all. CI is the one writer allowed to
+          # override the ignore. tests_py/test_parity_record.py pins this.
+          git add -f history/parity
           git diff --quiet --cached || git commit -m "parity: ${{ github.run_id }}"
           git push
 
