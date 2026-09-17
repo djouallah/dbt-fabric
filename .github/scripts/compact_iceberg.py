@@ -21,8 +21,9 @@ an R2-backed catalog. Two things differ here:
     "non-trailing parts must be equal length" rule; OneLake writes go through the azure
     extension over abfss:// and never touch the S3 uploader.
 
-Exactly one iceberg_metadata() call, in prime(). Do not add more — it enumerates every
-manifest, which on a fragmented table is the whole problem we're here to fix.
+At most one iceberg_metadata() call per table, in prime(), and only as a FALLBACK: the rewrite
+is tried cold first (see compact()). Do not add more — it enumerates every manifest, which on
+a fragmented table is the whole problem we're here to fix.
 
 Known limitations of the upstream function:
   - manifest-level column statistics are not populated for rewritten files
@@ -183,47 +184,82 @@ def prime(con, fq):
     return con.execute(f"SELECT count(*) FROM iceberg_metadata('{fq}')").fetchone()[0]
 
 
+def looks_like_credentials(e):
+    """The duckdb/iceberg#1349 signature: an auth failure on the data-file store."""
+    s = str(e)
+    return "403" in s or "credential" in s.lower() or "Authentication" in s
+
+
+def rewrite(con, fq):
+    return con.execute(
+        f"SELECT rewritten_data_files, added_data_files, rewritten_bytes "
+        f"FROM iceberg_rewrite_data_files('{fq}', "
+        f"target_file_size_bytes => '{TARGET_FILE_SIZE}', "
+        f"min_input_files => {MIN_INPUT_FILES})"
+    ).fetchone()
+
+
 def compact(con, table, say):
-    """Compact one table. Returns (table, status) for the report."""
+    """Compact one table. Returns (table, status) for the report.
+
+    COLD FIRST. The rewrite is called with no prior read of the table; prime() runs only if
+    that call fails with a credentials-shaped error, and the report says which path was
+    taken. That is the measurement: duckdb/iceberg#1349 is open upstream (PR #1362 unmerged)
+    but the maintainer could not reproduce it after the 2026-09-16 credential-handling
+    commits, and on OneLake the catalog never vended credentials in the first place
+    (ACCESS_DELEGATION_MODE 'none', our own azure secret) -- so whether the priming scan is
+    still needed HERE is only knowable from a cold call. "(cold)" in every line means the
+    workaround can go; "(primed after ...)" means it is still load-bearing.
+    """
     fq = f"onelake.{table}"
+    files = None
+    how = "cold"
 
-    say("priming credentials")
+    say("rewriting (cold)")
     try:
-        files = prime(con, fq)
-    except Exception as e:
-        # Keep it to one line — the full multi-line duckdb error is already on stdout above.
-        return (table, f"ERROR priming: {type(e).__name__}: {oneline(e)}")
-    say(f"{files} data files")
-
-    say("rewriting")
-    try:
-        row = con.execute(
-            f"SELECT rewritten_data_files, added_data_files, rewritten_bytes "
-            f"FROM iceberg_rewrite_data_files('{fq}', "
-            f"target_file_size_bytes => '{TARGET_FILE_SIZE}', "
-            f"min_input_files => {MIN_INPUT_FILES})"
-        ).fetchone()
-    except Exception as e:
-        return (table, f"ERROR: {type(e).__name__}: {oneline(e)}")
+        row = rewrite(con, fq)
+    except Exception as cold_err:
+        if not looks_like_credentials(cold_err):
+            return (table, f"ERROR: {type(cold_err).__name__}: {oneline(cold_err)}")
+        say(f"cold rewrite failed on credentials ({oneline(cold_err)}) -- priming and retrying")
+        try:
+            files = prime(con, fq)
+        except Exception as e:
+            # Keep it to one line — the full multi-line duckdb error is already on stdout above.
+            return (table, f"ERROR priming: {type(e).__name__}: {oneline(e)}")
+        say(f"{files} data files")
+        how = f"primed after: {oneline(cold_err)[:80]}"
+        try:
+            row = rewrite(con, fq)
+        except Exception as e:
+            return (table, f"ERROR after priming: {type(e).__name__}: {oneline(e)}")
 
     # Report what the function actually returned. "No row at all" and "a row of zeros" are
     # different failure modes and both look like a tidy table if you collapse them into one
     # "skipped" — which is exactly how the first run hid that nothing was happening.
+    # The data-file count only exists when prime() ran: it is iceberg_metadata()'s row count,
+    # and the cold path is precisely the one that does not pay for that scan.
+    count = f", {files} data files" if files is not None else ""
     if row is None:
-        return (table, f"NO ROW returned ({files} data files)")
+        return (table, f"NO ROW returned ({how}{count})")
 
     rewritten, added, rewritten_bytes = row
     if not rewritten:
-        # Two different innocent reasons, worth telling apart. Under the file threshold means
-        # we declined to look; at or over it means we looked and every file was already at or
-        # above the target size, so folding them would buy nothing. Neither is a problem —
-        # observed on fct_scada, whose files are individually larger than the target.
-        note = (f"under the {MIN_INPUT_FILES}-file threshold" if files < MIN_INPUT_FILES
-                else f"nothing below the {TARGET_FILE_SIZE} target")
-        return (table, f"0 rewritten ({files} data files) — {note}")
+        # Two different innocent reasons, worth telling apart when the count is known. Under
+        # the file threshold means we declined to look; at or over it means we looked and
+        # every file was already at or above the target size, so folding them would buy
+        # nothing. Neither is a problem — observed on fct_scada, whose files are individually
+        # larger than the target.
+        if files is None:
+            note = f"under the {MIN_INPUT_FILES}-file threshold or nothing below {TARGET_FILE_SIZE}"
+        elif files < MIN_INPUT_FILES:
+            note = f"under the {MIN_INPUT_FILES}-file threshold"
+        else:
+            note = f"nothing below the {TARGET_FILE_SIZE} target"
+        return (table, f"0 rewritten ({how}{count}) — {note}")
 
     mb = (rewritten_bytes or 0) / 1048576.0
-    return (table, f"OK ({rewritten} -> {added} files, {mb:.1f} MB, {files} data files)")
+    return (table, f"OK ({rewritten} -> {added} files, {mb:.1f} MB, {how}{count})")
 
 
 def report(lines, duckdb_version):
