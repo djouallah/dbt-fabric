@@ -77,7 +77,9 @@ python download_aemo.py && dbt build --target duckrun --profiles-dir .
   `DUCKLAKE_DATA_PATH` does.
 - **Only `duckrun` is exempt from `azure/login`** in `build.yml`. It mints its own tokens
   from the OIDC assertion; `iceberg` is dbt-duckdb and shells out to `az` for the OneLake
-  token, so exempting it there kills the leg before it provisions anything.
+  token, so exempting it there kills the leg before it provisions anything. `deploy.yml` is
+  duckrun end to end (storage, Fabric and Power BI tokens all from the assertion), so it has
+  no login step either.
 
 - **`duckdb__` macros reach BOTH duckdb targets.** `macros/iceberg_adapter_overrides.sql`
   therefore branches on `target.name == 'iceberg'` and reproduces dbt-duckdb's own body

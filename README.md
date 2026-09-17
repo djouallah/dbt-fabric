@@ -224,6 +224,7 @@ green. `check_gating.py` asserts the prefix offline.
 - `pipeline.yml` — manual only; lands ONCE in a shared `land` job, then runs all five engines
   in parallel, then the **parity** job compares their fingerprints. `process_limit` is a
   dispatch input: files each fact model folds per run, oldest first, on every engine.
+- `deploy.yml` — manual only; the in-Fabric demo (next section), one engine per run.
 
 Manual only because deploying Fabric items and spending capacity is a deliberate act, and
 the parity job commits to `history/parity/`, so a push trigger would make the commit start
@@ -235,10 +236,12 @@ running, and billing.
 ## Scheduling it inside Fabric
 
 ```bash
-python deploy.py --engine iceberg --full     # needs FABRIC_WORKSPACE_ID and a Fabric login
+gh workflow run deploy.yml -f engine=iceberg -f full=true   # or Actions → deploy → Run workflow
 ```
 
-That copies the git-tracked repo into the `dbt` lakehouse's `Files/dbt`, deploys the
+`deploy.yml` runs `deploy.py` with the same OIDC identity as the build legs — duckrun mints
+the storage, Fabric and Power BI tokens from the GitHub assertion, so there is no login step.
+It copies the git-tracked repo into the `dbt` lakehouse's `Files/dbt`, deploys the
 `fabric_items/` (a notebook, its `deploy_config` variable library, a pipeline) and schedules
 the pipeline every 12 hours. The notebook is the scheduled form of one CI leg: it runs the
 same `provision.py` → `download_aemo.py` → `run_in_fabric.py` from that copy, on the engine

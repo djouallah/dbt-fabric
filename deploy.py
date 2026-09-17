@@ -29,8 +29,11 @@ separated by schema, so their models differ in that one string only.
 
 One backend, duckrun, for all five engines. There used to be a `fab` CLI backend for dwh and
 ducklake because duckrun could not create a Warehouse or a SQL DB; provision.py creates both
-through the REST API now, so it is gone. Not run by any workflow: deploying items and spending
-capacity is a deliberate act.
+through the REST API now, so it is gone.
+
+Run by .github/workflows/deploy.yml (manual) with the CI legs' OIDC identity: duckrun mints the
+storage, Fabric and Power BI tokens from the GitHub assertion, so there is no login step. On a
+laptop, set FABRIC_WORKSPACE_ID and let duckrun sign you in (or `az login`).
 """
 from __future__ import annotations
 
