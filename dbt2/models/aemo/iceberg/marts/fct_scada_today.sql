@@ -12,7 +12,10 @@
 {{ config(
     materialized='incremental',
     incremental_strategy='merge',
-    merge_clauses={'when_matched': [{'action': 'do_nothing'}]},
+    {#-- Insert-only merge; see dim_duid.sql for why dbt 2 cannot spell this
+       merge_clauses={'when_matched': [{'action': 'do_nothing'}]} the way the other
+       four engines do. Same semantics: matched rows are never touched. --#}
+    merge_update_condition='false',
     unique_key=spec['unique_key'],
     pre_hook="SET VARIABLE scada_today_paths = (SELECT COALESCE(NULLIF(list('{{ get_csv_archive_path() }}' || archive_path), []), ['']) FROM (SELECT DISTINCT archive_path FROM {{ ref('stg_csv_archive_log') }} WHERE source_type = '" ~ spec['source_type'] ~ "'{% if is_incremental() %} AND csv_filename NOT IN (SELECT DISTINCT file FROM {{ this }}){% endif %} LIMIT {{ env_var('process_limit', '1000') }}))"
 ) }}

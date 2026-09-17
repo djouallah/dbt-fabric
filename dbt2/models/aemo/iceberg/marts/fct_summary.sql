@@ -29,7 +29,10 @@
     materialized='incremental',
     incremental_strategy='merge',
     unique_key=['date', 'time', 'DUID'],
-    merge_clauses={'when_matched': [{'action': 'do_nothing'}]},
+    {#-- Insert-only merge; see dim_duid.sql for why dbt 2 cannot spell this
+       merge_clauses={'when_matched': [{'action': 'do_nothing'}]} the way the other
+       four engines do. Same semantics: matched rows are never touched. --#}
+    merge_update_condition='false',
     schema='mart'
 ) }}
 
