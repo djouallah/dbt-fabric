@@ -34,11 +34,6 @@ def _norm(sql: str) -> list[str]:
 
 
 @pytest.mark.parametrize("macro", ["duckdb__get_columns_in_relation", "duckdb__drop_relation"])
-def test_override_exists(macro):
-    assert macro in OVERRIDES.read_text(encoding="utf-8")
-
-
-@pytest.mark.parametrize("macro", ["duckdb__get_columns_in_relation", "duckdb__drop_relation"])
 def test_override_is_guarded_by_target_name(macro):
     """Every override must branch on target.name, or it leaks onto ducklake."""
     body = _macro_body(OVERRIDES.read_text(encoding="utf-8"), macro)

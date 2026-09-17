@@ -6,7 +6,7 @@
     ducklake target too. (The direct-lake-parquet-layout repo this scheme is copied from had
     only ONE duckdb-type target, so it could override freely; we cannot.) Every macro here
     therefore branches on `target.name` and reproduces dbt-duckdb's own body verbatim for
-    everyone else — and `tests/test_adapter_overrides.py` pins those fallback bodies against
+    everyone else — and `tests_py/test_adapter_overrides.py` pins those fallback bodies against
     the INSTALLED adapter, so an upstream change fails loudly instead of leaving ducklake
     silently running a stale copy of dbt-duckdb's SQL.
 

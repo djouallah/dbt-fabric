@@ -4,7 +4,7 @@ One dbt project that builds the **same AEMO gold layer** on five adapters:
 
 | target | adapter | engine | shape | writes |
 |---|---|---|---|---|
-| `duckrun` | `dbt-duckrun` | DuckDB | single node | Delta Lake on OneLake, via delta-rs |
+| `duckrun` | `duckrun` | DuckDB | single node | Delta Lake on OneLake, via delta-rs |
 | `iceberg` | `dbt-duckdb` | DuckDB | single node | Iceberg, through the OneLake Iceberg REST catalog |
 | `ducklake` | `dbt-duckdb` | DuckDB | single node | DuckLake parquet + a Delta export, catalog in a Fabric SQL DB |
 | `dwh` | `dbt-fabric` | Fabric Warehouse | distributed | Delta tables in the Warehouse, written with T-SQL |
@@ -212,7 +212,7 @@ green. `check_gating.py` asserts the prefix offline.
 
 - `ci.yml` — free and credential-less: pytest, plus `check_gating.py` as a five-way matrix
   (one environment per engine). Runs on every push.
-- `build.yml` — the reusable per-engine leg: `dbt build` → test → fingerprint (it lands
+- `build.yml` — the reusable per-engine leg: `dbt build` (models and tests) → fingerprint (it lands
   only when the caller passes `land: true`). **duckrun, ducklake and iceberg run dbt on
   Fabric compute** — a throwaway Python notebook of 8 vCores through duckrun's `run_python`
   (`.github/scripts/remote_dbt.py`); tokens are minted inside Fabric by `notebookutils` and

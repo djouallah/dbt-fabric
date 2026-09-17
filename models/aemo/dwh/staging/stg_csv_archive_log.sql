@@ -1,8 +1,6 @@
--- View over the EXISTING archive log the (unchanged) file-landing pipeline writes to the
--- lakehouse: Files/csv_archive_log.parquet. This dbt-fabric project does not download or
--- land anything — it reads the files the existing pipeline already put in OneLake. Keeping
--- this as stg_csv_archive_log preserves every ref('stg_csv_archive_log') (models, tests)
--- unchanged from the duckrun version, where it was a Python model.
+-- View over the archive log download_aemo.py writes to the landing lakehouse
+-- (csv_raw_archive_log.parquet), read through the shortcut with OPENROWSET. The name is the
+-- same on every engine, so every ref('stg_csv_archive_log') (models, tests) is shared.
 {{ config(materialized='view', schema='landing') }}
 
 SELECT

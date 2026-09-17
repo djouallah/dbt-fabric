@@ -135,8 +135,8 @@ aemo_electricity:
             # Not mssql-specific — the sqlite backend fails the same way.
             metadata_catalog: "__ducklake_metadata_ducklake"
             # Any option prefixed `meta_` is forwarded to the CATALOG connection. The
-            # DBT_ENV_SECRET_ prefix keeps it out of the dbt logs. Empty on the CI leg,
-            # which authenticates with the sa password inside the DSN instead.
+            # DBT_ENV_SECRET_ prefix keeps it out of the dbt logs. On the CI leg it is minted
+            # inside Fabric by remote_dbt.py's setup hook; for a local run provision.py emits it.
             meta_access_token: "{{ env_var('DBT_ENV_SECRET_SQL_TOKEN', '') }}"
 
     # ---------------------------------------------------------------- dwh (T-SQL) --------

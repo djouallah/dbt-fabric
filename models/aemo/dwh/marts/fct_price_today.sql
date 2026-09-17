@@ -1,7 +1,6 @@
 {{ config(
     materialized='incremental',
-    incremental_strategy='append',
-    schema='landing'
+    incremental_strategy='append'
 ) }}
 
 {#-- Intraday price — reads the new price_today files. The file set comes from the archive log
@@ -10,8 +9,7 @@
      {{ this }}, so the append stays idempotent at file grain. --#}
 
 {#-- Column layout comes from macros/aemo_columns.sql, the single source of truth shared
-     by all five engines. It used to be a copy of the list in this file; the four copies
-     were verified byte-identical as data before they were collapsed. --#}
+     by all five engines. --#}
 {%- set read_cols = aemo_columns('price_today') -%}
 {%- set num_cols = aemo_cast_columns('price_today') -%}
 

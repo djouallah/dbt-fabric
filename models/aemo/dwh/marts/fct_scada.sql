@@ -1,7 +1,6 @@
 {{ config(
     materialized='incremental',
-    incremental_strategy='append',
-    schema='landing'
+    incremental_strategy='append'
 ) }}
 
 {#-- Reads the new AEMO daily files, filtering to the DUNIT SCADA records. The set of files is
@@ -12,8 +11,7 @@
      in Fabric; month_key kept as a plain column. --#}
 
 {#-- Column layout comes from macros/aemo_columns.sql, the single source of truth shared
-     by all five engines. It used to be a copy of the list in this file; the four copies
-     were verified byte-identical as data before they were collapsed. --#}
+     by all five engines. --#}
 {%- set read_cols = aemo_columns('scada') -%}
 {%- set num_cols = aemo_cast_columns('scada') -%}
 

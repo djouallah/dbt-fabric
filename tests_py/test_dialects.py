@@ -73,8 +73,11 @@ def test_no_wrong_dialect_idioms(path, dialect):
             assert not bare, f"bare `{col}` in Spark SQL must be backticked: {bare.group(0)!r}"
 
 
-@pytest.mark.parametrize("path,dialect", [c for c in cases() if c.values[1] == "tsql"])
-def test_tsql_singular_tests_have_no_top_level_with(path, dialect):
+@pytest.mark.parametrize(
+    "path",
+    [pytest.param(p, id=f"dwh/{p.stem}") for p in sorted((REPO / "tests" / "aemo" / "dwh").glob("*.sql"))],
+)
+def test_tsql_singular_tests_have_no_top_level_with(path):
     """dbt-fabric nests a singular test's SQL inside a CTE of its own, and T-SQL does not
     allow a WITH clause in a CTE body. A test written with a leading `WITH` therefore fails
     at run time with "Invalid object name '<first cte>'" -- which reads like a missing

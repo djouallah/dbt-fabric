@@ -22,7 +22,7 @@
      We deliberately do NOT use --full-refresh on this engine: on dbt-fabric that DROPs +
      recreates the table (a Sch-M DDL swap that deadlocks Fabric's background stats
      maintenance, loses grants, and rebinds Direct Lake every run). The full-history rebuild
-     lever is REBUILD_SUMMARY=1 (the dispatch input) or --vars 'rebuild_summary: true', which
+     lever is REBUILD_SUMMARY=1 in the environment or --vars 'rebuild_summary: true', which
      keeps the same merge write path and just emits every date.
 
      The intraday branch is gated on dispatch_duids because the two branches read AEMO

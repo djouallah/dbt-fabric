@@ -159,15 +159,10 @@ jobs:
           dbt build --target "$ENGINE" --profiles-dir . \
             || dbt retry --target "$ENGINE" --profiles-dir .
 
-      - name: dbt docs
-        if: always() && env.REMOTE != 'true'
-        run: dbt docs generate --target "$ENGINE" --profiles-dir . || true
-
       # ---- fingerprint -------------------------------------------------------------
       - name: Fingerprint gold layer
         if: env.REMOTE != 'true'
         run: |
-          mkdir -p history/parity
           dbt run-operation parity_fingerprint --target "$ENGINE" --profiles-dir . \
             | python .github/scripts/parity.py capture history/parity
 
@@ -177,12 +172,6 @@ jobs:
           name: parity-${{ inputs.engine }}
           path: history/parity/${{ inputs.engine }}.json
           if-no-files-found: warn
-
-      - name: Summary
-        if: always()
-        env:
-          JOB_STATUS: ${{ job.status }}
-        run: python .github/scripts/summary.py >> "$GITHUB_STEP_SUMMARY" || true
 
   # Iceberg accumulates small files and has no snapshot expiry, so compaction is a separate
   # job. `needs` is for ORDERING only — never overlap a rewrite with a load — and it must

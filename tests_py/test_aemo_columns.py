@@ -122,9 +122,10 @@ def test_every_engine_has_the_canonical_models():
 
 
 def test_every_engine_has_the_same_singular_tests():
-    base = None
-    for engine in ENGINES:
-        got = {p.name for p in (REPO / "tests" / "aemo" / engine).glob("*.sql")}
-        if base is None:
-            base = got
-        assert got == base, f"{engine} singular tests differ: {sorted(got ^ base)}"
+    def names(engine: str) -> set[str]:
+        return {p.name for p in (REPO / "tests" / "aemo" / engine).glob("*.sql")}
+
+    base = names(ENGINES[0])
+    for engine in ENGINES[1:]:
+        got = names(engine)
+        assert got == base, f"{engine} singular tests differ from {ENGINES[0]}: {sorted(got ^ base)}"

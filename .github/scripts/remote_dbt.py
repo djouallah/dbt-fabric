@@ -40,17 +40,18 @@ ENGINES = ("duckrun", "ducklake", "iceberg")
 REPO = Path(__file__).resolve().parents[2]
 CORES = int(os.environ.get("FABRIC_CORES", "8"))
 
-# Config the profile and macros read at run time -- every value provision.py or the workflow
-# emitted, and NOTHING token-shaped. Not forwarded on purpose: AZURE_TRANSPORT_OPTION_TYPE /
+# Config the profile and macros read at run time, and NOTHING token-shaped. LANDING_PATH and
+# the download limits stay behind: only download_aemo.py reads them, and it never runs here.
+# Also not forwarded, on purpose: AZURE_TRANSPORT_OPTION_TYPE /
 # CURL_CA_INFO (inside Fabric DuckDB's default OneLake transport is the one that works, and the
 # on-run-start hook renders to nothing when the variable is unset) and DUCKDB_TEMP_DIR
 # (run_in_fabric.py points it at the notebook's 135 GiB work disk, not the 19 GiB /tmp overlay).
 FORWARD = (
-    "FILES_PATH", "LANDING_PATH", "ONELAKE_TABLES_PATH",
+    "FILES_PATH", "ONELAKE_TABLES_PATH",
     "WAREHOUSE_PATH", "ONELAKE_ENDPOINT",
     "DUCKLAKE_CATALOG_DSN", "DUCKLAKE_DATA_PATH",
     "DBT_SCHEMA", "DBT_THREADS",
-    "process_limit", "download_limit", "daily_download_limit",
+    "process_limit",
 )
 
 # exec'd in the notebook KERNEL before the script starts, where notebookutils is guaranteed.

@@ -67,7 +67,6 @@ def compare(in_dir: Path) -> int:
         return 0
 
     engines = sorted(fps)
-    width = max(len(e) for e in engines)
     print(f"comparing {len(engines)} engines: {', '.join(engines)}\n")
     header = "field".ljust(14) + "".join(e.rjust(20) for e in engines)
     print(header)

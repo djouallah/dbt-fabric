@@ -19,7 +19,7 @@ the README table; do not quietly let the engines diverge.
 
 ```bash
 python -m pytest tests_py/ -q            # seconds, no credentials
-python .github/scripts/check_gating.py   # all five targets through dbt parse
+python .github/scripts/check_gating.py   # every engine whose adapter is installed; CI does all five
 ```
 
 `check_gating.py` is not optional. **The default failure mode of this layout is a run that
@@ -29,7 +29,7 @@ every model, and `dbt build` reports "Nothing to do" and goes green. Nothing els
 For a real end-to-end check, the `duckrun` target runs entirely locally:
 
 ```bash
-export FILES_PATH=./landing ONELAKE_TABLES_PATH=./warehouse DBT_SCHEMA=dbt
+export FILES_PATH=./landing ONELAKE_TABLES_PATH=./warehouse
 python download_aemo.py && dbt build --target duckrun --profiles-dir .
 ```
 

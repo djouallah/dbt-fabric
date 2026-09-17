@@ -106,14 +106,3 @@
   {%- if spec['nonzero'] %}{% do parts.append(prefix ~ spec['nonzero'] ~ ' != 0') %}{% endif -%}
   {{ parts | join(' AND ') }}
 {% endmacro %}
-
-
-{#-- The T-SQL predicate, bracket quoting. Kept beside the others so the three renderings of
-     one rule are read together; dwh models call this one. --#}
-{% macro tsql_record_filter(record, prefix='') %}
-  {%- set spec = aemo_spec(record) -%}
-  {%- set parts = [] -%}
-  {%- for col, val in spec['equals'] %}{% do parts.append(prefix ~ '[' ~ col ~ "] = '" ~ val ~ "'") %}{% endfor -%}
-  {%- if spec['nonzero'] %}{% do parts.append(prefix ~ '[' ~ spec['nonzero'] ~ '] != 0') %}{% endif -%}
-  {{ parts | join(' AND ') }}
-{% endmacro %}

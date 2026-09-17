@@ -1,7 +1,6 @@
 {{ config(
     materialized='incremental',
-    incremental_strategy='append',
-    schema='landing'
+    incremental_strategy='append'
 ) }}
 
 {#-- Reads the new AEMO daily files, filtering to the DREGION price records. The file set comes
@@ -14,8 +13,7 @@
      table partitioning; month_key is kept as a plain column. --#}
 
 {#-- Column layout comes from macros/aemo_columns.sql, the single source of truth shared
-     by all five engines. It used to be a copy of the list in this file; the four copies
-     were verified byte-identical as data before they were collapsed. --#}
+     by all five engines. --#}
 {%- set read_cols = aemo_columns('price') -%}
 {%- set num_cols = aemo_cast_columns('price') -%}
 

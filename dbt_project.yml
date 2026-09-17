@@ -5,7 +5,6 @@ profile: 'aemo_electricity'
 model-paths: ["models"]
 macro-paths: ["macros"]
 test-paths: ["tests"]
-seed-paths: ["seeds"]
 clean-targets: ["target", "dbt_packages"]
 
 # =====================================================================================
@@ -85,31 +84,32 @@ models:
       # one level ABOVE these engine keys, so ONE patch documents and tests whichever tree
       # is enabled. Do not move them to the root of models/ — they would lose the gateable
       # folder segment.
+      #
+      # Only the schema per layer lives here. Materialization is set in every model file,
+      # because it is one of the things the adapters force (the iceberg staging model is
+      # incremental, the spark one a table) — a folder-level value would never be the
+      # effective one and would misdescribe two engines. The staging models set their own
+      # schema too.
       duckrun:
         +enabled: "{{ target.name == 'duckrun' }}"
-        staging:    {+materialized: view,       +schema: landing}
-        dimensions: {+materialized: table,      +schema: mart}
-        marts:      {+materialized: incremental, +schema: landing}
+        dimensions: {+schema: mart}
+        marts:      {+schema: landing}
       iceberg:
         +enabled: "{{ target.name == 'iceberg' }}"
-        staging:    {+materialized: view,       +schema: landing}
-        dimensions: {+materialized: table,      +schema: mart}
-        marts:      {+materialized: incremental, +schema: landing}
+        dimensions: {+schema: mart}
+        marts:      {+schema: landing}
       ducklake:
         +enabled: "{{ target.name == 'ducklake' }}"
-        staging:    {+materialized: view,       +schema: landing}
-        dimensions: {+materialized: table,      +schema: mart}
-        marts:      {+materialized: incremental, +schema: landing}
+        dimensions: {+schema: mart}
+        marts:      {+schema: landing}
       dwh:
         +enabled: "{{ target.name == 'dwh' }}"
-        staging:    {+materialized: view,       +schema: landing}
-        dimensions: {+materialized: table,      +schema: mart}
-        marts:      {+materialized: incremental, +schema: landing}
+        dimensions: {+schema: mart}
+        marts:      {+schema: landing}
       spark:
         +enabled: "{{ target.name == 'spark' }}"
-        staging:    {+materialized: view,       +schema: landing}
-        dimensions: {+materialized: table,      +schema: mart}
-        marts:      {+materialized: incremental, +schema: landing}
+        dimensions: {+schema: mart}
+        marts:      {+schema: landing}
 
 data_tests:
   aemo_electricity:

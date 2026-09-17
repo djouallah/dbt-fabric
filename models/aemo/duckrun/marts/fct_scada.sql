@@ -8,6 +8,12 @@
      then silently reads from {{ this }} instead of the archive log, and the run fails with
      "Table with name <this model> does not exist". Verified the hard way. Only
      `source_type`, a parse-time constant, is concatenated in. --#}
+{#-- partition_by + incremental_predicates below are duckrun-ONLY, and stay so: its do-nothing
+     merge is a DuckDB anti-join that builds LITERAL probe filters from the batch (an exact
+     month_key IN (...) for the declared partition equality), which is what makes the probe
+     prune -- and `target`/`source` are duckrun's own aliases. dbt-duckdb's merge knows only
+     DBT_INTERNAL_DEST/SOURCE and a column-to-column predicate prunes nothing there, so iceberg
+     and ducklake carry neither. --#}
 {{ config(
     materialized='incremental',
     incremental_strategy='merge',

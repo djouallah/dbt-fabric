@@ -10,8 +10,8 @@ through the `fab` CLI instead. Everything the two share is in Deployer; each bac
 in the parts only it can do.
 
 Where the two source implementations overlapped, the dwh one is kept: it is strictly better
-(remote-bim cache skip, stale-binding recovery, schedule reconciliation, and consuming the
-thread-pool iterator so a failed copy re-raises instead of being silently swallowed).
+(stale-binding recovery, schedule reconciliation, and consuming the thread-pool iterator so
+a failed copy re-raises instead of being silently swallowed).
 
 --full is off by default. The real orchestration is GitHub Actions; the Fabric notebook and
 pipeline are a demo of in-Fabric scheduling, and redeploying them on every run is churn.
@@ -22,17 +22,14 @@ login`; no CI leg installs it, because provision.py creates every item through t
 from __future__ import annotations
 
 import argparse
-import json
 import os
 import re
 import subprocess
-import sys
 import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent
-ITEMS_DIR = REPO / "fabric_items"
 SEMANTIC_DIR = REPO / "semantic_model"
 SEMANTIC_MODEL = "aemo_electricity.SemanticModel"
 

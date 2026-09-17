@@ -6,8 +6,8 @@
 
     Run per engine, and capture stdout:
         dbt run-operation parity_fingerprint --target <engine> --profiles-dir . \
-            | tee history/parity/<engine>.json
-    then compare with .github/scripts/parity.py.
+            | python .github/scripts/parity.py capture history/parity
+    then compare with `parity.py compare history/parity`.
 
     Aggregates rather than a row-by-row diff on purpose: the engines write to five
     different stores (Delta on OneLake, an Iceberg REST catalog, DuckLake parquet, a Fabric
@@ -66,8 +66,8 @@
        snapshot avro, AFTER a clean 60/62 build. Set it here, the same way
        compact_iceberg.py does for the same reason. --#}
   {#-- 'duckrun' AND 'duckdb': duckrun is its own adapter type, and it reads OneLake
-       Delta here, so leaving it out would break it the same way. Matches the
-       on-run-start hook's own `target.name in ['duckrun', 'iceberg']`. --#}
+       Delta here, so leaving it out would break it the same way. Same condition as the
+       on-run-start hook in dbt_project.yml: `target.type in ['duckdb', 'duckrun']`. --#}
   {%- if target.type in ('duckdb', 'duckrun') and env_var('AZURE_TRANSPORT_OPTION_TYPE', 'default') != 'default' -%}
     {%- do run_query("SET GLOBAL azure_transport_option_type = '" ~ env_var('AZURE_TRANSPORT_OPTION_TYPE') ~ "'") -%}
   {%- endif -%}

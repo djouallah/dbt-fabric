@@ -307,8 +307,11 @@ def main() -> int:
         # override of FILES_PATH: overriding that is what used to send this leg's downloader
         # off to a private copy of the CSVs.
         emit("DUCKLAKE_DATA_PATH", abfss(data_id, "Tables"))
-        # For a LOCAL run of the ducklake target. The remote leg mints its own inside Fabric.
-        emit("DBT_ENV_SECRET_SQL_TOKEN", token("https://database.windows.net/"))
+        # For a LOCAL run of the ducklake target only. On CI the leg runs inside Fabric, where
+        # remote_dbt.py's setup hook mints this from notebookutils; a runner-side copy would
+        # land unmasked in $GITHUB_ENV and never be read.
+        if not os.environ.get("GITHUB_ACTIONS"):
+            emit("DBT_ENV_SECRET_SQL_TOKEN", token("https://database.windows.net/"))
 
     elif engine == "dwh":
         wh_id = ensure("warehouses", DWH_WAREHOUSE, None, folder_id)

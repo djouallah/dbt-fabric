@@ -9,8 +9,7 @@
      extra fields are ignored, and the model's WHERE on [I]/[UNIT]/record-type columns keeps
      only the rows of interest.
 
-     Two entry points:
-       openrowset_csv(path_glob, columns)        -- single path / wildcard (e.g. dim file)
+     Entry point:
        openrowset_csv_files(paths, columns)       -- EXPLICIT list of files -> BULK ('a','b',..)
 
      We prefer the explicit file list for incremental fact ingestion: a folder wildcard re-reads
@@ -46,11 +45,6 @@ WITH (
 {%- endfor %}
 )
 {%- endmacro -%}
-
-{% macro openrowset_csv(path_glob, columns) -%}
-{{ _openrowset_bulk("'" ~ path_glob ~ "'") }}
-{{ _openrowset_with(columns) }}
-{%- endmacro %}
 
 {% macro openrowset_csv_files(paths, columns) -%}
 {%- set quoted = [] -%}
