@@ -69,9 +69,11 @@ jobs:
     timeout-minutes: 120
     # What the compact job needs from this one. $GITHUB_ENV does not cross jobs; a job output
     # does, and it saves the compact job re-running provision.py (three Fabric REST calls and
-    # a duckrun install) to look up a GUID this job already resolved.
+    # a duckrun install) to look up a GUID this job already resolved. The lakehouse GUID
+    # ALONE: GitHub drops any output that contains a secret ("Skip output ... since it may
+    # contain secret"), and the full warehouse path starts with FABRIC_WORKSPACE_ID.
     outputs:
-      warehouse_path: ${{ steps.lakehouse.outputs.warehouse_path }}
+      data_lakehouse_id: ${{ steps.lakehouse.outputs.data_lakehouse_id }}
     env:
       ENGINE: ${{ inputs.engine }}
       # The three legs whose dbt runs inside Fabric. Exact match on the list, not a substring.
@@ -147,10 +149,9 @@ jobs:
       - name: Provision Fabric items
         run: python .github/scripts/provision.py "$ENGINE" >> "$GITHUB_ENV"
 
-      # Empty for every engine but iceberg (provision.py emits it only there).
-      - name: Expose the catalog location to the compact job
+      - name: Expose the shared lakehouse to the compact job
         id: lakehouse
-        run: echo "warehouse_path=$WAREHOUSE_PATH" >> "$GITHUB_OUTPUT"
+        run: echo "data_lakehouse_id=$DATA_LAKEHOUSE_ID" >> "$GITHUB_OUTPUT"
 
       - name: Capture Warehouse SQL token
         if: inputs.engine == 'dwh'
@@ -253,8 +254,10 @@ jobs:
       # test_iceberg_landing/test_iceberg_mart, and report a tidy catalog having compacted
       # nothing.
       DBT_SCHEMA: ${{ inputs.dbt_schema }}
-      # Which lakehouse, from the build job's provisioning (job output above).
-      WAREHOUSE_PATH: ${{ needs.build.outputs.warehouse_path }}
+      # Which lakehouse, from the build job's provisioning (job output above); the script
+      # composes the catalog's warehouse path as <workspace>/<lakehouse>.
+      FABRIC_WORKSPACE_ID: ${{ secrets.FABRIC_WORKSPACE_ID }}
+      DATA_LAKEHOUSE_ID: ${{ needs.build.outputs.data_lakehouse_id }}
       AZURE_TRANSPORT_OPTION_TYPE: curl
       CURL_CA_INFO: /etc/ssl/certs/ca-certificates.crt
     steps:
@@ -282,7 +285,7 @@ jobs:
         # A build that died before provisioning has no catalog location to hand over; there
         # is nothing to compact then either. Say so instead of failing on a missing env var.
         run: |
-          if [ -z "$WAREHOUSE_PATH" ]; then
+          if [ -z "$DATA_LAKEHOUSE_ID" ]; then
             echo "::warning::the build job did not resolve the lakehouse (failed before provisioning); nothing compacted"
             exit 0
           fi

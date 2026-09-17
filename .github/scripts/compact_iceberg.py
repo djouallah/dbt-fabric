@@ -60,7 +60,10 @@ import duckdb
 # warehouse path below is what picks the lakehouse.
 ENDPOINT = "https://onelake.table.fabric.microsoft.com/iceberg"
 TOKEN = os.environ["ONELAKE_TOKEN"]
-WAREHOUSE = os.environ["WAREHOUSE_PATH"]      # "{workspace_id}/{lakehouse_id}"
+# The catalog's warehouse is "<workspace id>/<lakehouse id>". Composed here from the two
+# parts rather than handed over whole: the build job passes the lakehouse GUID as a job
+# output, and GitHub drops an output that contains a secret -- the workspace id is one.
+WAREHOUSE = f"{os.environ['FABRIC_WORKSPACE_ID']}/{os.environ['DATA_LAKEHOUSE_ID']}"
 
 # Files smaller than this get folded together; the rest are left alone.
 TARGET_FILE_SIZE = "64MiB"
