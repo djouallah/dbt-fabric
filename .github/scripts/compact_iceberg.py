@@ -6,24 +6,35 @@ small data file per table and nothing ever folds them back together. This runs
 iceberg_rewrite_data_files() over each table, consolidating files below the target size.
 
 iceberg_rewrite_data_files landed in duckdb/iceberg#1035 and is not in a stable
-duckdb release yet, so requirements/iceberg.txt installs the latest PRE-release duckdb
+duckdb release yet, so requirements/iceberg_runner.txt installs the latest PRE-release duckdb
 (`--pre duckdb`, unpinned) rather than a hand-bumped build. The iceberg extension binary is
 keyed to the duckdb build, so whatever pip resolves brings its own matching extension.
 has_rewrite_function() checks for the function rather than assuming it, so a resolution
 that happens to lack it degrades to "nothing to compact" instead of failing the job.
 
 Ported from djouallah/analytics-as-code scripts/compact_iceberg.py, which runs this against
-an R2-backed catalog. Two things differ here:
-  - Credentials. That catalog vends storage credentials (CREATE SECRET TYPE ICEBERG).
-    OneLake is attached with access_delegation_mode 'none', so the client brings its own
-    Azure token — the same azure secret + attach options dbt/profiles.yml uses.
+an R2-backed catalog. What differs here:
   - No S3 uploader tuning. The reference sets s3_uploader_max_parts_per_file for R2's
     "non-trailing parts must be equal length" rule; OneLake writes go through the azure
     extension over abfss:// and never touch the S3 uploader.
 
-At most one iceberg_metadata() call per table, in prime(), and only as a FALLBACK: the rewrite
-is tried cold first (see compact()). Do not add more — it enumerates every manifest, which on
-a fragmented table is the whole problem we're here to fix.
+CREDENTIALS ARE VENDED BY THE CATALOG. The only token this script holds goes to the ATTACH,
+for the REST catalog; every data-file read and write runs on the storage credentials the
+catalog hands back per table (OneLake IRC vends `adls.sas-token.onelake.dfs.fabric.microsoft.com`,
+usable since duckdb/duckdb-iceberg#1331, merged 2026-08-19, which stopped dropping the
+endpoint suffix). This is deliberately NOT what dbt2/catalogs.yml does: dbt 2 bundles duckdb
+1.5.3, which cannot take those, so it attaches with access_delegation_mode NONE and its own
+azure secret. This job runs the 2.0 nightly and does not need that.
+
+Two earlier workarounds were removed on 2026-09-17, each after a run proved it unneeded:
+  - a priming iceberg_metadata() scan before every rewrite, for duckdb/iceberg#1349
+    (iceberg_rewrite_data_files not loading catalog credentials). Run 35234519405 rewrote
+    fct_scada 62 -> 3, fct_summary 7 -> 1 and stg_csv_archive_log 5 -> 1 cold, with no scan
+    and no credential error.
+  - ACCESS_DELEGATION_MODE 'none' plus an explicit azure secret, inherited from the dbt 2
+    profile (see above).
+If a credential error ever comes back, the report line names it; do not put either back
+without a failing run to point at.
 
 Known limitations of the upstream function:
   - manifest-level column statistics are not populated for rewritten files
@@ -102,6 +113,11 @@ TABLES = [
 ]
 
 
+def oneline(e):
+    """Collapse a duckdb error to its first line — they carry a SQL echo and a caret ruler."""
+    return " ".join(str(e).split("\n")[0].split())
+
+
 def connect():
     con = duckdb.connect(":memory:")
     # Plain install first. The 1.6.0/2.0.0 dev line self-identifies as v2.0.0-alpha*, and
@@ -132,24 +148,13 @@ def connect():
     con.execute(f"SET GLOBAL azure_transport_option_type = '{AZURE_TRANSPORT}'")
     con.execute("SET GLOBAL temp_directory = '/tmp/duckdb_spill'")
 
-    # Mirrors dbt/profiles.yml. OneLake is attached with access_delegation_mode 'none' — the
-    # catalog does not vend storage credentials, so the azure secret below is what authorises
-    # the actual data-file reads and writes.
-    con.execute(
-        f"CREATE SECRET onelake_storage "
-        f"(TYPE azure, PROVIDER access_token, ACCESS_TOKEN '{TOKEN}')"
-    )
+    # The token authenticates to the REST catalog only. Storage credentials are vended by
+    # the catalog per table (the default access delegation mode) -- no azure secret here.
     con.execute(
         f"ATTACH '{WAREHOUSE}' AS onelake "
-        f"(TYPE iceberg, ENDPOINT '{ENDPOINT}', TOKEN '{TOKEN}', "
-        f"ACCESS_DELEGATION_MODE 'none')"
+        f"(TYPE iceberg, ENDPOINT '{ENDPOINT}', TOKEN '{TOKEN}')"
     )
     return con
-
-
-def oneline(e):
-    """Collapse a duckdb error to its first line — they carry a SQL echo and a caret ruler."""
-    return " ".join(str(e).split("\n")[0].split())
 
 
 def catalog_tables(con):
@@ -181,103 +186,43 @@ def has_rewrite_function(con):
     )
 
 
-def prime(con, fq):
-    """Make the table's storage credentials available to the rewrite, and count its files.
-
-    iceberg_rewrite_data_files doesn't fetch credentials itself — called cold it can die with
-    403 "No credentials are provided" (duckdb/iceberg#1349). The reference
-    implementation tried the cheaper options (LIMIT 0, LIMIT 1) against a real catalog and
-    both still 403'd: the 403 is on the manifest avro, and iceberg_metadata() is what reads
-    those.
-
-    It is expensive — it enumerates every manifest — so it is the one and only metadata call
-    here. Don't add more, and don't "optimise" this one away. Since we're paying for it, keep
-    the row count: it is the only independent read on how fragmented the table actually is,
-    and without it a rewrite that does nothing is indistinguishable from a tidy table.
-    """
-    return con.execute(f"SELECT count(*) FROM iceberg_metadata('{fq}')").fetchone()[0]
-
-
-def looks_like_credentials(e):
-    """The duckdb/iceberg#1349 signature: an auth failure on the data-file store."""
-    s = str(e)
-    return "403" in s or "credential" in s.lower() or "Authentication" in s
-
-
-def rewrite(con, fq):
-    return con.execute(
-        f"SELECT rewritten_data_files, added_data_files, rewritten_bytes "
-        f"FROM iceberg_rewrite_data_files('{fq}', "
-        f"target_file_size_bytes => '{TARGET_FILE_SIZE}', "
-        f"min_input_files => {MIN_INPUT_FILES})"
-    ).fetchone()
-
-
 def compact(con, table, say):
     """Compact one table. Returns (table, status) for the report.
 
-    COLD FIRST. The rewrite is called with no prior read of the table; prime() runs only if
-    that call fails with a credentials-shaped error, and the report says which path was
-    taken. That is the measurement: duckdb/iceberg#1349 is open upstream (PR #1362 unmerged)
-    but the maintainer could not reproduce it after the 2026-09-16 credential-handling
-    commits. This script also attaches with ACCESS_DELEGATION_MODE 'none' and brings its own
-    azure secret -- a carry-over from dbt 2's bundled duckdb 1.5.3, which cannot take OneLake's
-    vended credentials; the 2.0 nightly this job runs can, since duckdb/duckdb-iceberg#1331
-    (merged 2026-08-19: OneLake IRC vends `adls.sas-token.onelake.dfs.fabric.microsoft.com`
-    and the endpoint suffix used to be dropped, so every read failed AuthenticationFailed) --
-    so the vended-credential path #1349 is about is not even exercised here. Whether the priming scan is still needed HERE
-    is only knowable from a cold call. "(cold)" in every line means the
-    workaround can go; "(primed after ...)" means it is still load-bearing.
+    One call, cold: no prior read of the table, no metadata scan. The rewrite reads the
+    manifests itself to decide what is below the target, so a "0 rewritten" here still
+    proves the catalog handed over working storage credentials.
     """
     fq = f"onelake.{table}"
-    files = None
-    how = "cold"
 
-    say("rewriting (cold)")
+    say("rewriting")
     try:
-        row = rewrite(con, fq)
-    except Exception as cold_err:
-        if not looks_like_credentials(cold_err):
-            return (table, f"ERROR: {type(cold_err).__name__}: {oneline(cold_err)}")
-        say(f"cold rewrite failed on credentials ({oneline(cold_err)}) -- priming and retrying")
-        try:
-            files = prime(con, fq)
-        except Exception as e:
-            # Keep it to one line — the full multi-line duckdb error is already on stdout above.
-            return (table, f"ERROR priming: {type(e).__name__}: {oneline(e)}")
-        say(f"{files} data files")
-        how = f"primed after: {oneline(cold_err)[:80]}"
-        try:
-            row = rewrite(con, fq)
-        except Exception as e:
-            return (table, f"ERROR after priming: {type(e).__name__}: {oneline(e)}")
+        row = con.execute(
+            f"SELECT rewritten_data_files, added_data_files, rewritten_bytes "
+            f"FROM iceberg_rewrite_data_files('{fq}', "
+            f"target_file_size_bytes => '{TARGET_FILE_SIZE}', "
+            f"min_input_files => {MIN_INPUT_FILES})"
+        ).fetchone()
+    except Exception as e:
+        # Keep it to one line — the full multi-line duckdb error is already on stdout above.
+        return (table, f"ERROR: {type(e).__name__}: {oneline(e)}")
 
     # Report what the function actually returned. "No row at all" and "a row of zeros" are
     # different failure modes and both look like a tidy table if you collapse them into one
     # "skipped" — which is exactly how the first run hid that nothing was happening.
-    # The data-file count only exists when prime() ran: it is iceberg_metadata()'s row count,
-    # and the cold path is precisely the one that does not pay for that scan.
-    count = f", {files} data files" if files is not None else ""
     if row is None:
-        return (table, f"NO ROW returned ({how}{count})")
+        return (table, "NO ROW returned")
 
     rewritten, added, rewritten_bytes = row
     if not rewritten:
-        # Two different innocent reasons, worth telling apart when the count is known. Under
-        # the file threshold means we declined to look; at or over it means we looked and
-        # every file was already at or above the target size, so folding them would buy
-        # nothing. Neither is a problem — observed on fct_scada, whose files are individually
-        # larger than the target.
-        if files is None:
-            note = f"under the {MIN_INPUT_FILES}-file threshold or nothing below {TARGET_FILE_SIZE}"
-        elif files < MIN_INPUT_FILES:
-            note = f"under the {MIN_INPUT_FILES}-file threshold"
-        else:
-            note = f"nothing below the {TARGET_FILE_SIZE} target"
-        return (table, f"0 rewritten ({how}{count}) — {note}")
+        # Either under the file threshold or every file already at/above the target size --
+        # nothing distinguishes the two without a metadata scan, and neither is a problem
+        # (observed on fct_scada, whose files are individually larger than the target).
+        return (table, f"0 rewritten — under the {MIN_INPUT_FILES}-file threshold or nothing "
+                       f"below {TARGET_FILE_SIZE}")
 
     mb = (rewritten_bytes or 0) / 1048576.0
-    return (table, f"OK ({rewritten} -> {added} files, {mb:.1f} MB, {how}{count})")
+    return (table, f"OK ({rewritten} -> {added} files, {mb:.1f} MB)")
 
 
 def report(lines, duckdb_version):
