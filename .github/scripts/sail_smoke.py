@@ -683,6 +683,20 @@ def read_verdict(results):
     else:
         shape_note = " PHASE B: every model shape works too, CSV read included."
 
+    # PHASE B CAN VETO PHASE A, and has to be able to. Phase A green means dbt-sail could
+    # drive Sail; it says nothing about whether the leg can ingest. This verdict claimed
+    # "viable, the spark model tree ports nearly as-is" across three runs in which the CSV
+    # read had never once succeeded -- twice because the probe was hollow, and then once when
+    # it plainly failed. A headline that survives its own evidence is the bug.
+    csv_ok = by_n.get(12, "").startswith("PASS")
+
+    if merge_ok and verified and not csv_ok:
+        return ("VERDICT: adapter contract OK, LEG BLOCKED -- dbt-sail could drive Sail, but "
+                "Sail cannot read the AEMO CSVs. `mode 'PERMISSIVE'` is not honoured and a "
+                "ragged row is an error at ANY declared width (probe 24: expected 200, got "
+                "10; probe 12: expected 4, got 10), so no schema rescues it. Nothing "
+                "downstream of the read matters until that lands." + shape_note)
+
     if merge_ok and verified:
         return ("VERDICT: viable — merge and relation listing both work and the writes "
                 "verified. The spark model tree ports nearly as-is; next step is the full "

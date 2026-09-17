@@ -362,6 +362,26 @@ def test_a_run_that_created_nothing_is_inconclusive(smoke):
     assert "AZURE_STORAGE_TOKEN" in v
 
 
+def test_a_failed_csv_read_cannot_be_called_viable(smoke):
+    """Phase B has to be able to veto phase A.
+
+    Phase A green means dbt-sail could drive Sail. It says nothing about whether the leg can
+    ingest, and this verdict called Sail "viable -- the spark model tree ports nearly as-is"
+    across three runs in which the CSV read had never once succeeded.
+    """
+    green_a_dead_b = [(1, "x", "PASS"), (3, "x", "PASS"), (6, "x", "PASS"),
+                      (8, "x", "PASS (3 row(s))"), (10, "x", "PASS - every write applied"),
+                      (12, "x", "FAIL - Csv error: incorrect number of fields")]
+    v = smoke.read_verdict(green_a_dead_b)
+    assert "LEG BLOCKED" in v
+    assert not v.startswith("VERDICT: viable")
+
+    # ... and with the read working, viable is allowed again.
+    all_green = [(n, "x", "PASS") for n in (1, 3, 6, 8, 12)]
+    all_green.append((10, "x", "PASS - every write applied"))
+    assert "viable" in smoke.read_verdict(all_green)
+
+
 def test_expected_rows_cover_every_key_the_probes_write(smoke):
     """EXPECTED and the probe SQL have to move together, or probe 10 stops meaning anything."""
     sql = " ".join(s for _, _, s, _ in smoke.probes()) + " " + smoke.INSERT_ONLY_SOURCE

@@ -25,19 +25,20 @@ both `MERGE INTO` shapes dbt-spark emits, `show table extended` (how dbt-spark d
 incremental model exists), and a read-back proving the merges applied rather than merely
 returning.
 
-**Phase B, what the models actually do: two real gaps.** Sail reads the real AEMO CSVs off
-OneLake through the exact temp-view-with-explicit-schema-and-brace-glob form
-`spark_read_csv.sql` emits; it does `sequence()`/`explode()`, window functions, a 130-column
-record and a multi-column merge key. What it does not do:
+**Phase B, what the models actually do: blocked.** Sail does `sequence()`/`explode()`,
+window functions, a 130-column record, a multi-column merge key and `to_timestamp` with an
+explicit format. It cannot read the source data:
 
 | gap | what it costs the leg |
 |---|---|
-| `input_file_name()` is `UnsupportedOperationException` | the models' `file` column is parsed from it and the provenance exists **nowhere else**. A sail leg needs another way to know which file a row came from. This is the one that blocks |
+| **`mode 'PERMISSIVE'` is not honoured** — a ragged row is an error at *any* declared width (`expected 200, got 10` with a 200-column schema; `expected 4, got 10` with a narrow one) | **this is the blocker.** AEMO files are ragged by construction — a `PUBLIC_DAILY` holds many record types of different widths in one file — so no schema rescues it. Nothing downstream of the read matters until it lands |
+| `input_file_name()` is `UnsupportedOperationException` | the models' `file` column is parsed from it and the provenance exists nowhere else. Recoverable in principle — `spark_new_files` already resolves the names at render time, so one view per file with a literal name would do it — but moot while the read itself fails. [lakehq/sail#1210](https://github.com/lakehq/sail/issues/1210), open, blocked on DataFusion v55 |
 | a `TEMPORARY VIEW` is listed in the schema, i.e. persistent | the same trap that forces the spark leg to stage through a `__stage` Delta table, so sail would inherit that machinery rather than avoid it |
+| `csv.`path`` reads the file directly | it parses — unlike Fabric Spark, whose catalog base32hex-decodes multipart names — but it hits the same PERMISSIVE wall |
 
-Two dialect facts fell out of it as well: Sail rounds `DOUBLE`—`DECIMAL` **HALF_UP** (like
-Spark, unlike DuckDB), and a bare `CAST` of AEMO's `yyyy/MM/dd` is a hard parse error rather
-than Spark's silent `NULL` — which is strictly better, since it cannot reach the gold layer
+Two dialect facts fell out as well: Sail rounds `DOUBLE`—`DECIMAL` **HALF_UP** (like Spark,
+unlike DuckDB), and a bare `CAST` of AEMO's `yyyy/MM/dd` is a hard parse error rather than
+Spark's silent `NULL` — which is strictly better, since it cannot reach the gold layer
 unnoticed.
 
 Three things it takes to get there, each found by a failed run and each a cost a real leg
