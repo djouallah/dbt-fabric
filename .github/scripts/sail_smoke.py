@@ -268,10 +268,13 @@ def main():
 
     report(results)
 
-    try:
-        server.stop()
-    except Exception:
-        pass
+    # Close the client before the server: an open Spark Connect channel keeps the server's
+    # actors busy, and stop() then waits on them.
+    for what, closer in (("session", conn.stop), ("server", server.stop)):
+        try:
+            closer()
+        except Exception as e:
+            print(f"(could not stop the {what}: {type(e).__name__}: {oneline(e)})", flush=True)
 
 
 def report(results):
@@ -340,4 +343,15 @@ if __name__ == "__main__":
         # exiting 0 keeps `| tee` and the artifact upload honest.
         print(f"\nsail_smoke could not run: {type(e).__name__}: {e}", file=sys.stderr)
         traceback.print_exc()
-    sys.exit(0)
+
+    # os._exit, NOT sys.exit. THE PROBES FINISH AND THE PROCESS DOES NOT EXIT: the embedded
+    # Sail server runs a tokio runtime on non-daemon threads, and normal interpreter shutdown
+    # joins them, so the job printed its entire summary and then sat idle until it was killed
+    # (observed on run 35187028483: the report, then nothing, then the server shutting down
+    # only once the run was cancelled). Every result is printed and flushed by this point, so
+    # skipping interpreter cleanup costs nothing and is the only thing that reliably ends the
+    # process. Flush explicitly first -- os._exit does not, and this goes through `| tee` into
+    # the artifact.
+    sys.stdout.flush()
+    sys.stderr.flush()
+    os._exit(0)

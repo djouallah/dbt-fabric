@@ -167,8 +167,27 @@ def test_workflow_provisions_nothing():
         assert verb not in body, f"sail_smoke.yml issues a {verb} -- it must only read"
 
 
-def test_script_always_exits_zero():
-    assert "sys.exit(0)" in SMOKE_PY.read_text(encoding="utf-8")
+def test_script_always_exits_zero_and_actually_exits():
+    """It must end the PROCESS, not just the interpreter's main function.
+
+    The embedded Sail server runs on non-daemon threads, so a normal sys.exit() waits on them
+    and the job sits idle after printing its whole summary -- burning the runner until the
+    timeout kills it. os._exit is what actually ends it, and the flushes before it are not
+    optional: os._exit skips them, and the output goes through `| tee` into the artifact.
+    """
+    src = SMOKE_PY.read_text(encoding="utf-8")
+    assert "os._exit(0)" in src, (
+        "the probe no longer hard-exits. The Sail server's threads will keep the process "
+        "alive after the report and the job will hang until its timeout."
+    )
+    assert "sys.stdout.flush()" in src and "sys.stderr.flush()" in src
+
+
+def test_probe_step_is_time_bounded(workflow):
+    """Backstop for the same hang, so a regression costs 10 minutes and not the job budget."""
+    step = next(s for s in workflow["jobs"]["smoke"]["steps"]
+                if s.get("name") == "Probe Sail")
+    assert step.get("timeout-minutes"), "the Probe Sail step lost its timeout"
 
 
 # ---- the probes measure what they claim to -----------------------------------------------

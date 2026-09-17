@@ -108,6 +108,11 @@ jobs:
           echo "WAREHOUSE_PATH=$FABRIC_WORKSPACE_ID/$ID" >> "$GITHUB_ENV"
 
       - name: Probe Sail
+        # A BACKSTOP, not the fix. sail_smoke.py ends itself with os._exit because the
+        # embedded Sail server's threads otherwise keep the process alive after the report is
+        # printed. If that ever stops working, this bounds the damage at 10 minutes instead of
+        # the job's 30 -- and the probes themselves take well under a minute.
+        timeout-minutes: 10
         run: python .github/scripts/sail_smoke.py 2>&1 | tee sail_smoke.log
 
       - uses: actions/upload-artifact@v4
