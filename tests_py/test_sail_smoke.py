@@ -303,9 +303,23 @@ def test_phase_b_covers_what_the_models_do(smoke):
 
     # Probe 12 must READ, not just CREATE VIEW. It reported PASS for three runs while
     # reading was broken, because CREATE VIEW never touches the file (run 35206757444).
-    csv_probe = next(sql for name, sql in by_name.items() if "csv view" in name)
+    csv_probe = next(sql for name, sql in by_name.items() if "ragged csv" in name)
     assert "select count(*)" in csv_probe.lower(), (
         "probe 12 creates a view and never reads it, so it cannot fail for its own reason"
+    )
+
+    # Reading a ragged AEMO file needs BOTH: a schema padded past the widest record, and
+    # allowTruncatedRows for every row narrower than that. `mode 'PERMISSIVE'` is not it --
+    # taking that for the same thing is what made the probe call the leg blocked.
+    assert "allowtruncatedrows" in csv_probe.lower()
+    assert smoke.CSV_WIDTH >= 131, "the schema must be at least as wide as the DREGION record"
+    assert csv_probe.count(" STRING") == smoke.CSV_WIDTH
+
+    # ... and the control, identical but for the option, so a pass is attributable to it.
+    control = next(sql for name, sql in by_name.items() if "without allowtruncatedrows" in name)
+    assert "allowtruncatedrows" not in control.lower()
+    assert 24 in smoke.MAY_FAIL, (
+        "probe 24 is expected to fail; counting it against phase B would misreport the leg"
     )
 
     # A multi-column ON clause -- fct_summary keys on (date, time, DUID).
@@ -316,7 +330,7 @@ def test_phase_b_covers_what_the_models_do(smoke):
 def test_csv_probes_skip_rather_than_fail_without_files(smoke):
     """No landing files is a fact about the landing zone, not a finding about Sail."""
     for n, _, sql, _ in smoke.model_shape_probes([]):
-        if n in (12, 13, 14, 22, 23, 24):
+        if n in (12, 13, 14, 22, 23, 24, 25):
             assert sql == "", f"probe {n} would run without a file and report a false FAIL"
 
 
