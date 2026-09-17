@@ -301,6 +301,13 @@ def test_phase_b_covers_what_the_models_do(smoke):
     )
     assert "input_file_name" not in workaround
 
+    # One view per file does not scale -- process_limit defaults to 1000 -- so the probe must
+    # also ask for _metadata.file_name, which is per-row over a SINGLE read of the glob.
+    assert any("_metadata.file_name" in sql for sql in by_name.values()), (
+        "probe 26 went missing. Per-file views are a steady-state answer only; _metadata is "
+        "the one that would let a backfill read the whole glob once."
+    )
+
     # Probe 12 must READ, not just CREATE VIEW. It reported PASS for three runs while
     # reading was broken, because CREATE VIEW never touches the file (run 35206757444).
     csv_probe = next(sql for name, sql in by_name.items() if "ragged csv" in name)
@@ -330,7 +337,7 @@ def test_phase_b_covers_what_the_models_do(smoke):
 def test_csv_probes_skip_rather_than_fail_without_files(smoke):
     """No landing files is a fact about the landing zone, not a finding about Sail."""
     for n, _, sql, _ in smoke.model_shape_probes([]):
-        if n in (12, 13, 14, 22, 23, 24, 25):
+        if n in (12, 13, 14, 22, 23, 24, 25, 26):
             assert sql == "", f"probe {n} would run without a file and report a false FAIL"
 
 

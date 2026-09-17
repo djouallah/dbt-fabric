@@ -339,7 +339,7 @@ def model_shape_probes(files):
                         (13, "read it, with input_file_name()"),
                         (14, "is that view TEMPORARY")):
             out.append((n, name, "", "SKIPPED: no landing files found"))
-        # 22-25 are appended below with empty SQL for the same reason; main() reports an
+        # 22-26 are appended below with empty SQL for the same reason; main() reports an
         # empty statement as SKIP.
 
     out += [
@@ -394,10 +394,11 @@ def model_shape_probes(files):
              f"select '{f.rsplit('/', 1)[1]}' as _fname, count(*) as n from probe_f{i}"
              for i, f in enumerate(files))]
          if files else "",
-         "THE WORKAROUND for input_file_name() being unimplemented. spark_new_files already "
-         "resolves this run's filenames at render time, so the name can be a LITERAL per "
-         "file instead of a function -- one view per file, unioned. If this works the leg is "
-         "not blocked, it just reads per file rather than one brace glob"),
+         "A BOUNDED workaround for input_file_name(), not a fix. spark_new_files resolves "
+         "this run's filenames at render time, so the name can be a LITERAL per file -- but "
+         "one view per file does NOT scale: process_limit defaults to 1000, and a backfill "
+         "would emit 1000 CREATE VIEWs and a 1000-branch UNION where the brace glob is one "
+         "read. Fine for a steady-state run of a few files; not a substitute for probe 26"),
         (24, "same read WITHOUT allowTruncatedRows",
          [f"create or replace temporary view probe_wide_v ({CSV_SCHEMA}) "
           f"using csv options (path '{files[0]}', header 'false', mode 'PERMISSIVE')",
@@ -415,6 +416,14 @@ def model_shape_probes(files):
          "what a fact model's pre_hook really does: read the ragged file, keep ONE record "
          "type, parse the slash date and count the DUIDs. Everything before this is a "
          "capability; this is the capability doing the job"),
+        (26, "_metadata.file_name over the glob",
+         f"select _metadata.file_name as f, count(*) as n from {view} group by 1"
+         if files else "",
+         "THE ONE THAT WOULD ACTUALLY DO IT. macros/parse_filename.sql already documents "
+         "`_metadata.file_name` as the Spark spelling, and it is per-row over a SINGLE read "
+         "of the whole glob. Probe 23's per-file views are not a substitute: process_limit "
+         "defaults to 1000, so that shape is 1000 CREATE VIEWs and a 1000-branch UNION on a "
+         "backfill"),
         (21, "bare CAST of a slash date",
          f"select cast('{SLASH_DATE}' as timestamp) as bare_cast",
          "SEPARATE, and allowed to fail -- see MAY_FAIL. Spark returns NULL here rather than "
@@ -464,8 +473,9 @@ def interpret(n, rows):
         names = {str(r[0]) for r in rows}
         if any(not nm or nm == "None" for nm in names):
             return f"FAIL - a filename came back empty: {sorted(names)}"
-        return (f"PASS - provenance without input_file_name(), {len(rows)} file(s): "
-                f"{sorted(names)}")
+        return (f"PASS (BOUNDED) - provenance without input_file_name() for {len(rows)} "
+                f"file(s): {sorted(names)}. One view per file, so this is a steady-state "
+                f"answer only -- see probe 26 for the one that scales")
 
     if n == 18 and rows:
         return f"PASS - tie_break={rows[0][2]} (0.12 is HALF_EVEN, 0.13 is HALF_UP)"
