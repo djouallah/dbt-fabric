@@ -226,7 +226,7 @@ def test_every_create_names_the_table_format(smoke):
     """
     src = SMOKE_PY.read_text(encoding="utf-8")
     creates = [ln for ln in src.splitlines() if "create table {" in ln]
-    assert len(creates) == 3, f"the create statements moved: {creates}"
+    assert len(creates) >= 4, f"a create statement went missing: {creates}"
     for ln in creates:
         assert "using {FILE_FORMAT}" in ln, f"create without a format: {ln.strip()}"
     assert smoke.FILE_FORMAT == "iceberg"
@@ -257,6 +257,43 @@ def test_merge_target_sets_merge_on_read(smoke):
         "the merge target lost write.merge.mode=merge-on-read, which Sail requires: "
         "'Iceberg MERGE with `write.merge.mode=copy-on-write` is not supported yet'"
     )
+
+
+def test_phase_b_covers_what_the_models_do(smoke):
+    """Phase A can be all green while the gold layer still cannot run.
+
+    Two-column literal tables exercise none of what the AEMO models do, so phase B probes the
+    shapes that have actually broken engines in this repo: a CSV temp view with an explicit
+    all-STRING schema over a brace glob, input_file_name() for provenance, whether a temp view
+    is really temporary (Fabric Spark's is not, which is why the spark leg stages through a
+    Delta table), slash-date parsing, sequence+explode, a 130-column record and a
+    multi-column merge key.
+    """
+    shapes = smoke.model_shape_probes(["abfss://w@h/a/one.CSV", "abfss://w@h/a/two.CSV"])
+    by_name = {name.lower(): sql for _, name, sql, _ in shapes}
+    blob = " ".join(by_name.values()).lower()
+
+    for needed in ("using csv", "input_file_name()", "to_timestamp", "explode(sequence(",
+                   "row_number() over", "decimal(18,6)", "merge into"):
+        assert needed.lower() in blob, f"phase B stopped probing {needed}"
+
+    # The brace glob, not a folder glob: a run folds exactly the files it chose to fold.
+    assert "{one.csv,two.csv}" in blob
+
+    # 130 columns, because fct_price is AEMO's DREGION record in full.
+    wide = next(sql for name, sql in by_name.items() if "wide" in name)
+    assert wide.count(" as c") == 130
+
+    # A multi-column ON clause -- fct_summary keys on (date, time, DUID).
+    keyed = next(sql for name, sql in by_name.items() if "three-column" in name)
+    assert keyed.count("DBT_INTERNAL_SOURCE.c") == 3
+
+
+def test_csv_probes_skip_rather_than_fail_without_files(smoke):
+    """No landing files is a fact about the landing zone, not a finding about Sail."""
+    for n, _, sql, _ in smoke.model_shape_probes([]):
+        if n in (12, 13, 14):
+            assert sql == "", f"probe {n} would run without a file and report a false FAIL"
 
 
 def test_relation_listing_probe_exists(smoke):

@@ -40,6 +40,7 @@ Usage:
     python .github/scripts/sail_smoke.py
 """
 
+import json
 import os
 import sys
 import traceback
@@ -110,6 +111,28 @@ MERGE_MODE = "'write.merge.mode'='merge-on-read'"
 # exists, so it cannot be a probe of its own. Hoisted to a constant anyway so tests_py can
 # check the keys it introduces against EXPECTED.
 INSERT_ONLY_SOURCE = "select 1 as k, 111 as v union all select 5, 50"
+
+
+# ---- phase B: the shapes the MODELS need -------------------------------------------------
+# Phase A proves the catalog accepts SQL. It does not prove this repo's gold layer could run
+# on it: two-column literal tables exercise none of what the models do. The AEMO leg reads
+# ragged quoted CSV off OneLake with an explicit all-STRING schema, captures provenance with
+# input_file_name(), parses slash dates, explodes a generated date range, folds a 130-column
+# record and merges on a multi-column key. Every one of those has broken an engine in this
+# repo before -- Spark CASTs a slash date to NULL instead of erroring, Fabric Spark's catalog
+# base32hex-decodes multipart names so `csv.`path`` is unusable, and its __dbt_tmp is a
+# PERSISTENT view -- so each is probed rather than assumed.
+LANDING_PATH = os.environ.get("LANDING_PATH", "")
+
+# A DREGION-ish slice, not the real 130 columns. What differs by engine is the SHAPE -- all
+# STRING on read, cast afterwards -- and the slash date, not the column count. Probe 19 covers
+# the width separately.
+CSV_SCHEMA = "`I` STRING, `REPORT` STRING, `SETTLEMENTDATE` STRING, `RRP` STRING"
+
+# AEMO ships yyyy/MM/dd. Spark's CAST returns NULL for it rather than erroring, which is why
+# every model parses the format explicitly; a silent NULL reaches the gold layer.
+SLASH_DATE = "2026/09/17 04:30:00"
+DATE_FORMAT = "yyyy/MM/dd HH:mm:ss"
 
 
 def banner(conn):
@@ -199,6 +222,164 @@ def ensure_insert_only_source(conn):
         print(f"    (probe 7's source could not be created: {oneline(e)})", flush=True)
 
 
+def landing_files(limit=2):
+    """Up to `limit` real AEMO CSV paths from the landing zone, newest name first.
+
+    REAL files, not ones this script writes: the question is whether Sail can read what
+    download_aemo.py actually lands -- ragged, quoted, many record types per file. Uses the
+    OneLake DFS list API over urllib (stdlib; the probe env has no `requests` and should not
+    need one) and returns [] on any failure, which the probes report as SKIP rather than
+    FAIL. An empty landing zone is a fact about the landing zone, not about Sail.
+    """
+    if not LANDING_PATH:
+        return []
+    import urllib.error
+    import urllib.parse
+    import urllib.request
+
+    # abfss://<ws>@onelake.dfs.fabric.microsoft.com/<item>/Files  ->  ws, "<item>/Files"
+    try:
+        rest = LANDING_PATH.split("://", 1)[1]
+        ws, rest = rest.split("@", 1)
+        _, path = rest.split("/", 1)
+    except (IndexError, ValueError):
+        print(f"    (could not parse LANDING_PATH: {LANDING_PATH})", flush=True)
+        return []
+
+    q = urllib.parse.urlencode({
+        "resource": "filesystem", "recursive": "true",
+        "directory": f"{path}/csv_raw", "maxResults": "200",
+    })
+    url = f"https://onelake.dfs.fabric.microsoft.com/{ws}?{q}"
+    req = urllib.request.Request(url, headers={"Authorization": f"Bearer {TOKEN}"})
+    try:
+        with urllib.request.urlopen(req, timeout=60) as r:
+            paths = json.load(r).get("paths", [])
+    except (urllib.error.URLError, OSError, ValueError) as e:
+        print(f"    (could not list the landing zone: {type(e).__name__}: {oneline(e)})",
+              flush=True)
+        return []
+
+    names = sorted((e["name"] for e in paths
+                    if not e.get("isDirectory") and e["name"].lower().endswith(".csv")),
+                   reverse=True)
+    if not names:
+        print("    (no CSVs under Files/csv_raw -- has a real leg ever landed?)", flush=True)
+    return [f"abfss://{ws}@onelake.dfs.fabric.microsoft.com/{n}" for n in names[:limit]]
+
+
+def model_shape_probes(files):
+    """(number, name, sql, why) for what this repo's models actually do.
+
+    An empty `files` leaves probes 12-14 with no SQL, which main() reports as SKIP.
+    """
+    view = "raw_probe"
+    wide = f"{SCHEMA}.probe_wide"
+    out = []
+
+    if files:
+        # The brace glob is load-bearing. spark_read_csv.sql names this run's files
+        # explicitly as {a.CSV,b.CSV} rather than globbing the folder, so a run folds exactly
+        # the files it decided to fold and a backlog converges instead of restarting.
+        if len(files) == 1:
+            path = files[0]
+        else:
+            folder = files[0].rsplit("/", 1)[0]
+            path = folder + "/{" + ",".join(f.rsplit("/", 1)[1] for f in files) + "}"
+        out += [
+            (12, "csv temp view over abfss",
+             f"create or replace temporary view {view} ({CSV_SCHEMA}) "
+             f"using csv options (path '{path}', header 'true', mode 'PERMISSIVE')",
+             "the exact shape spark_read_csv.sql emits: explicit all-STRING schema, brace "
+             "glob, PERMISSIVE over ragged AEMO rows"),
+            (13, "read it, with input_file_name()",
+             f"select input_file_name() as _fname, `I`, `REPORT`, `SETTLEMENTDATE` "
+             f"from {view} limit 5",
+             "provenance -- the models' `file` column is parsed from this and exists "
+             "nowhere else"),
+            (14, "is that view TEMPORARY",
+             f"show tables in {SCHEMA}",
+             "Fabric Spark makes dbt's __dbt_tmp PERSISTENT, which is the entire reason the "
+             "spark leg stages through a Delta table. A genuinely temporary view here means "
+             "the sail leg is simpler than spark's"),
+        ]
+    else:
+        for n, name in ((12, "csv temp view over abfss"),
+                        (13, "read it, with input_file_name()"),
+                        (14, "is that view TEMPORARY")):
+            out.append((n, name, "", "SKIPPED: no landing files found"))
+
+    out += [
+        (15, "slash date, explicit format",
+         f"select to_timestamp('{SLASH_DATE}', '{DATE_FORMAT}') as parsed, "
+         f"cast('{SLASH_DATE}' as timestamp) as bare_cast",
+         "AEMO ships yyyy/MM/dd. Spark CASTs it to NULL rather than erroring, so what "
+         "bare_cast returns decides whether that trap exists on Sail too"),
+        (16, "sequence + explode",
+         "select explode(sequence(to_date('2026-01-01'), to_date('2026-01-10'), "
+         "interval 1 day)) as d",
+         "dim_calendar is built this way on every engine"),
+        (17, "window function",
+         f"select k, row_number() over (partition by k % 2 order by v desc) as rn "
+         f"from {SCHEMA}.probe_tgt",
+         "used across the marts"),
+        (18, "double -> decimal",
+         "select cast(2.5 as double) as d, "
+         "cast(cast(2.5 as double) as decimal(18,6)) as dec18_6, "
+         "cast(cast(0.125 as double) as decimal(18,2)) as tie_break",
+         "the money columns. Three engines round DOUBLE->DECIMAL three ways, which is why "
+         "parity.py gives them a relative tolerance -- tie_break says which way Sail goes"),
+        (19, "wide table (130 columns)",
+         f"create table {wide} using {FILE_FORMAT} tblproperties ({MERGE_MODE}) as select "
+         + ", ".join(f"cast({i} as double) as c{i}" for i in range(130)),
+         "fct_price is AEMO's DREGION record -- all 130 columns, and fct_scada all 53"),
+        (20, "merge on a three-column key",
+         f"merge into {wide} as DBT_INTERNAL_DEST\n"
+         f"    using (select cast(0 as double) as c0, cast(1 as double) as c1, "
+         f"cast(99 as double) as c2) as DBT_INTERNAL_SOURCE\n"
+         f"    on DBT_INTERNAL_SOURCE.c0 = DBT_INTERNAL_DEST.c0\n"
+         f"       and DBT_INTERNAL_SOURCE.c1 = DBT_INTERNAL_DEST.c1\n"
+         f"       and DBT_INTERNAL_SOURCE.c2 = DBT_INTERNAL_DEST.c2\n"
+         f"    when not matched then insert *",
+         "fct_summary merges on (date, time, DUID) and fct_price on four columns; a "
+         "single-column key proves nothing about either"),
+    ]
+    return out
+
+
+def interpret(n, rows):
+    """Status for a phase B probe. Three of them mean something other than "it ran".
+
+    Probe 14 SUCCEEDS either way -- the question is what it LISTED. Probe 15 succeeds even
+    when the bare cast silently returns NULL, which is the exact Spark trap the models exist
+    to dodge. Reporting "PASS" for those would be the same mistake probe 10 was added to stop.
+    """
+    if n == 14:
+        listed = [str(r).lower() for r in rows]
+        leaked = [r for r in listed if "raw_probe" in r]
+        if leaked:
+            return ("PERSISTENT - the temp view is listed in the schema, the same trap that "
+                    "forces the spark leg to stage through a Delta table")
+        return f"PASS - temporary, not listed ({len(rows)} table(s) in the schema)"
+
+    if n == 15:
+        if not rows:
+            return "FAIL - no row"
+        parsed, bare = rows[0][0], rows[0][1]
+        if parsed is None:
+            return "FAIL - the EXPLICIT format returned NULL; slash dates are unparseable"
+        if bare is None:
+            return ("PASS - explicit format works, and the bare CAST returns NULL, so Sail "
+                    "has Spark's silent-NULL trap and the models must keep parsing the format")
+        return ("PASS - explicit format works, and the bare CAST also parses, so the trap "
+                "does NOT exist here (DuckDB/T-SQL behaviour)")
+
+    if n == 18 and rows:
+        return f"PASS - tie_break={rows[0][2]} (0.12 is HALF_EVEN, 0.13 is HALF_UP)"
+
+    return f"PASS ({len(rows)} row(s))"
+
+
 def run(conn, sql):
     """Execute and materialise. Returns the rows; Spark Connect is lazy without collect()."""
     return conn.sql(sql).collect()
@@ -281,6 +462,44 @@ def main():
         results.append((10, "verify contents", f"FAIL — {type(e).__name__}: {oneline(e)}"))
     print(flush=True)
 
+    # ---- 12-20: the shapes the MODELS need -------------------------------------------
+    # Phase A said the catalog takes SQL. This says whether it takes THIS repo's SQL.
+    print("=" * 100, flush=True)
+    print("phase B: the shapes the models actually need", flush=True)
+    print("=" * 100 + "\n", flush=True)
+
+    files = landing_files()
+    if files:
+        print(f"landing files: {len(files)}", flush=True)
+        for f in files:
+            print(f"  {f}", flush=True)
+        print(flush=True)
+
+    for n, name, sql, why in model_shape_probes(files):
+        print(f"[{n}] {name} - {why}", flush=True)
+        if not sql:
+            print("    SKIP\n", flush=True)
+            results.append((n, name, "SKIP - no landing files"))
+            continue
+        for line in sql.split("\n"):
+            print(f"    {line[:160]}", flush=True)
+        try:
+            rows = run(conn, sql)
+        except Exception as e:
+            print(f"    FAIL {type(e).__name__}: {oneline(e)}", flush=True)
+            results.append((n, name, f"FAIL - {type(e).__name__}: {oneline(e)}"))
+            print(flush=True)
+            continue
+
+        for r in rows[:5]:
+            print(f"    -> {str(r)[:200]}", flush=True)
+        if len(rows) > 5:
+            print(f"    -> ... {len(rows) - 5} more", flush=True)
+
+        status = interpret(n, rows)
+        print(f"    {status}\n", flush=True)
+        results.append((n, name, status))
+
     # ---- 11: cleanup, itself a probe -------------------------------------------------
     if KEEP:
         print(f"[11] cleanup — SKIPPED (SAIL_SMOKE_KEEP=1); {SCHEMA} left in the lakehouse\n",
@@ -292,6 +511,8 @@ def main():
         for stmt in (f"drop table if exists {SCHEMA}.probe_tgt",
                      f"drop table if exists {SCHEMA}.probe_src",
                      f"drop table if exists {SCHEMA}.probe_src_insert_only",
+                     f"drop table if exists {SCHEMA}.probe_wide",
+                     "drop view if exists raw_probe",
                      f"drop schema if exists {SCHEMA}"):
             try:
                 run(conn, stmt)
@@ -371,10 +592,24 @@ def read_verdict(results):
         return ("VERDICT: not viable yet — `show table extended` did not list the schema, so "
                 "dbt-spark cannot see existing relations and every run would silently "
                 "full-refresh.")
+    # Phase B is reported as its own line: phase A being green says the catalog works,
+    # which is not the same claim as "this repo's models could run on it".
+    shapes = [status for n, _, status in results if n >= 12]
+    bad = [s for s in shapes if s.startswith("FAIL") or s.startswith("PERSISTENT")]
+    skipped = [s for s in shapes if s.startswith("SKIP")]
+    if bad:
+        shape_note = (f" PHASE B: {len(bad)} of {len(shapes)} model shapes did NOT work -- "
+                      f"see 12-20 above; those are the leg's real cost.")
+    elif skipped:
+        shape_note = (f" PHASE B: the rest passed, but {len(skipped)} CSV probe(s) were "
+                      f"SKIPPED for want of landing files, so reading AEMO CSV is UNPROVEN.")
+    else:
+        shape_note = " PHASE B: every model shape works too, CSV read included."
+
     if merge_ok and verified:
         return ("VERDICT: viable — merge and relation listing both work and the writes "
                 "verified. The spark model tree ports nearly as-is; next step is the full "
-                "leg.")
+                "leg." + shape_note)
     if merge_ok and not verified:
         return ("VERDICT: SUSPECT — merge returned without error but the table does not hold "
                 "what it should. This is the worst outcome and the most worth reporting "

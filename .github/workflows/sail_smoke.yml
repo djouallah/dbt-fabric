@@ -106,6 +106,19 @@ jobs:
           fi
           echo "resolved dbt lakehouse: $ID"
           echo "WAREHOUSE_PATH=$FABRIC_WORKSPACE_ID/$ID" >> "$GITHUB_ENV"
+          # And the LANDING zone, for phase B. The AEMO CSVs the probe reads are the ones
+          # download_aemo.py actually landed -- ragged, quoted, many record types per file --
+          # because a CSV this script wrote itself would prove nothing about the real shape.
+          # A missing landing lakehouse is not fatal: the probe reports those three as SKIP.
+          LID=$(curl -sf -H "Authorization: Bearer $T" \
+                  "https://api.fabric.microsoft.com/v1/workspaces/$FABRIC_WORKSPACE_ID/lakehouses" \
+                | jq -r '.value[] | select(.displayName=="dbt_landing") | .id')
+          if [ -n "$LID" ]; then
+            echo "resolved dbt_landing lakehouse: $LID"
+            echo "LANDING_PATH=abfss://$FABRIC_WORKSPACE_ID@onelake.dfs.fabric.microsoft.com/$LID/Files" >> "$GITHUB_ENV"
+          else
+            echo "::warning::no lakehouse named 'dbt_landing' -- the CSV probes will SKIP"
+          fi
 
       - name: Probe Sail
         # A BACKSTOP, not the fix. sail_smoke.py ends itself with os._exit because the
