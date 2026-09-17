@@ -12,10 +12,16 @@ One dbt project that builds the **same AEMO gold layer** on five adapters:
 
 ### Candidate engines
 
-**Sail** ([LakeSail](https://github.com/lakehq/sail)) is the live candidate for a sixth.
-`dbt-sail` is a thin wrapper around `dbt-spark` talking Spark Connect to a Rust engine with no
-JVM, and Sail's native OneLake catalog takes the same bearer token the `iceberg` leg mints, so
-it would be a second Iceberg writer against the same gold layer.
+**Sail** ([LakeSail](https://github.com/lakehq/sail)) was evaluated as a sixth and **is not
+being built**, for a reason that has nothing to do with the engine: `dbt-sail`'s declared
+dependency is `dbt-spark[session]`, which pulls **full PySpark with its jars** (and conflicts
+with `pyspark-client`). Shipping the entire Spark distribution in order to avoid Spark is the
+opposite of the point — a JVM need never run, but it is in the image. That is a packaging
+choice, fixable upstream, so the evaluation below stands for whenever it is.
+
+The engine itself is a Rust Spark replacement with no JVM, and its native OneLake catalog
+takes the same bearer token the `iceberg` leg mints, so a sail leg would be a second Iceberg
+writer against the same gold layer.
 `.github/workflows/sail_smoke.yml` probes it — `workflow_dispatch` only, gates nothing — in
 two phases, because "the catalog accepts SQL" and "this repo's models could run on it" are
 different claims.
