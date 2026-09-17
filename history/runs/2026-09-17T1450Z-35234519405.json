@@ -1,0 +1,288 @@
+{
+ "inputs": {
+  "daily_download_limit": "60",
+  "dbt_schema": "mart",
+  "download_limit": "6",
+  "engines": "iceberg",
+  "process_limit": "1000",
+  "spark_resource_profile": "readHeavyForPBI"
+ },
+ "items": {
+  "72D4661E-7AC6-4EAC-A9A7-DDED3E1BCF31": {
+   "engine": "iceberg",
+   "kind": "Notebook",
+   "name": "dbt-iceberg-35234519405",
+   "role": "compute"
+  },
+  "935C5EB7-1965-4DAC-BF1A-1B6406945F9A": {
+   "kind": "Lakehouse",
+   "name": "dbt_landing",
+   "role": "landing"
+  },
+  "DE547464-B202-4D47-9D52-BE09EF8DF3D5": {
+   "kind": "Lakehouse",
+   "name": "dbt",
+   "role": "data"
+  },
+  "ECCEF667-B6FB-47FE-8E8F-CE8FDDE0D8D0": {
+   "kind": "Folder",
+   "name": "dbt",
+   "role": "folder"
+  }
+ },
+ "layout": {
+  "config": {
+   "vcores": "8"
+  },
+  "detail_keys": [
+   "schema",
+   "total_rows",
+   "num_files",
+   "num_row_groups",
+   "avg_row_group",
+   "size_mb",
+   "vorder",
+   "compression"
+  ],
+  "encodings": {
+   "iceberg": {
+    "DUID": {
+     "chunks": 46,
+     "dict_pages": 46,
+     "encodings": [
+      "PLAIN_DICTIONARY"
+     ],
+     "mb": 59.83,
+     "type": "BYTE_ARRAY"
+    },
+    "cutoff": {
+     "chunks": 46,
+     "dict_pages": 46,
+     "encodings": [
+      "PLAIN_DICTIONARY"
+     ],
+     "mb": 0.0,
+     "type": "INT64"
+    },
+    "date": {
+     "chunks": 46,
+     "dict_pages": 46,
+     "encodings": [
+      "PLAIN_DICTIONARY"
+     ],
+     "mb": 0.06,
+     "type": "INT32"
+    },
+    "mw": {
+     "chunks": 46,
+     "dict_pages": 10,
+     "encodings": [
+      "PLAIN",
+      "PLAIN_DICTIONARY"
+     ],
+     "mb": 240.62,
+     "type": "INT64"
+    },
+    "price": {
+     "chunks": 46,
+     "dict_pages": 46,
+     "encodings": [
+      "PLAIN_DICTIONARY"
+     ],
+     "mb": 104.39,
+     "type": "INT64"
+    },
+    "time": {
+     "chunks": 46,
+     "dict_pages": 46,
+     "encodings": [
+      "PLAIN_DICTIONARY"
+     ],
+     "mb": 8.05,
+     "type": "INT32"
+    }
+   }
+  },
+  "engines": {
+   "iceberg": {
+    "guid": "de547464-b202-4d47-9d52-be09ef8df3d5",
+    "item": "dbt",
+    "kind": "Lakehouse",
+    "schema_prefix": "iceberg",
+    "writer": "duckdb (iceberg)"
+   }
+  },
+  "ordering": {
+   "iceberg": {
+    "columns": {
+     "DUID": {
+      "rg_overlap_pct": 100.0,
+      "rgs": 46,
+      "runs": 3999658
+     },
+     "cutoff": {
+      "rg_overlap_pct": 13.3,
+      "rgs": 46,
+      "runs": 1
+     },
+     "date": {
+      "rg_overlap_pct": 97.8,
+      "rgs": 46,
+      "runs": 157
+     },
+     "mw": {
+      "rg_overlap_pct": 100.0,
+      "rgs": 46,
+      "runs": 3993725
+     },
+     "price": {
+      "rg_overlap_pct": 100.0,
+      "rgs": 46,
+      "runs": 3055338
+     },
+     "time": {
+      "rg_overlap_pct": 100.0,
+      "rgs": 46,
+      "runs": 35383
+     }
+    },
+    "sample": {
+     "file": "01a0ac6d-4896-7929-8212-490fa72c09e6.parquet",
+     "rows": 4000000
+    },
+    "table": "iceberg_mart.fct_summary"
+   }
+  },
+  "run": {
+   "id": "35234519405",
+   "sha": "a15567305bdbceefbb338766dab8099e5783922e",
+   "written": "2026-09-17T14:50:13Z"
+  },
+  "stats": {
+   "iceberg": {
+    "dim_calendar": {
+     "avg_row_group": 3197.0,
+     "compression": "SNAPPY",
+     "num_files": 1,
+     "num_row_groups": 1,
+     "schema": "iceberg_mart",
+     "size_mb": 0.01,
+     "total_rows": 3197,
+     "vorder": false
+    },
+    "dim_duid": {
+     "avg_row_group": 689.0,
+     "compression": "SNAPPY",
+     "num_files": 1,
+     "num_row_groups": 1,
+     "schema": "iceberg_mart",
+     "size_mb": 0.02,
+     "total_rows": 689,
+     "vorder": false
+    },
+    "fct_price": {
+     "avg_row_group": 72601.4,
+     "compression": "SNAPPY",
+     "num_files": 7,
+     "num_row_groups": 29,
+     "schema": "iceberg_landing",
+     "size_mb": 267.0,
+     "total_rows": 2105440,
+     "vorder": false
+    },
+    "fct_price_today": {
+     "avg_row_group": 165.0,
+     "compression": "SNAPPY",
+     "num_files": 4,
+     "num_row_groups": 4,
+     "schema": "iceberg_landing",
+     "size_mb": 0.11,
+     "total_rows": 660,
+     "vorder": false
+    },
+    "fct_scada": {
+     "avg_row_group": 146762.9,
+     "compression": "SNAPPY",
+     "num_files": 41,
+     "num_row_groups": 1091,
+     "schema": "iceberg_landing",
+     "size_mb": 2787.33,
+     "total_rows": 160118361,
+     "vorder": false
+    },
+    "fct_scada_today": {
+     "avg_row_group": 17937.5,
+     "compression": "SNAPPY",
+     "num_files": 2,
+     "num_row_groups": 2,
+     "schema": "iceberg_landing",
+     "size_mb": 0.23,
+     "total_rows": 35875,
+     "vorder": false
+    },
+    "fct_summary": {
+     "avg_row_group": 1311861.7,
+     "compression": "SNAPPY",
+     "num_files": 7,
+     "num_row_groups": 46,
+     "schema": "iceberg_mart",
+     "size_mb": 422.57,
+     "total_rows": 60345639,
+     "vorder": false
+    },
+    "stg_csv_archive_log": {
+     "avg_row_group": 1588.0,
+     "compression": "SNAPPY",
+     "num_files": 1,
+     "num_row_groups": 1,
+     "schema": "iceberg_landing",
+     "size_mb": 0.08,
+     "total_rows": 1588,
+     "vorder": false
+    }
+   }
+  },
+  "tables": [
+   "stg_csv_archive_log",
+   "dim_calendar",
+   "dim_duid",
+   "fct_price",
+   "fct_price_today",
+   "fct_scada",
+   "fct_scada_today",
+   "fct_summary"
+  ]
+ },
+ "legs": {
+  "iceberg": {
+   "compute": [
+    "72D4661E-7AC6-4EAC-A9A7-DDED3E1BCF31"
+   ],
+   "finished": "2026-09-17T14:44:21Z",
+   "outcome": "success",
+   "started": "2026-09-17T14:39:19Z"
+  }
+ },
+ "parity": {
+  "iceberg": {
+   "adapter": "duckdb",
+   "date_max": "2026-09-18",
+   "date_min": "2018-04-01",
+   "days": 1328,
+   "duids": 397,
+   "engine": "iceberg",
+   "model": "fct_summary",
+   "mw_sum": 7894643445.186938,
+   "price_sum": 5126539443.647139,
+   "rows_total": 60345639
+  }
+ },
+ "run": {
+  "finished": "2026-09-17T14:50:25Z",
+  "id": "35234519405",
+  "sha": "a15567305bdbceefbb338766dab8099e5783922e",
+  "started": "2026-09-17T14:36:41Z",
+  "url": "https://github.com/djouallah/dbt-fabric/actions/runs/35234519405"
+ },
+ "schema": 1
+}
