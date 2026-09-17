@@ -41,17 +41,16 @@ Reading a ragged file takes two things **together**, and either alone fails:
 probe keeps a control (probe 24) that is identical but for the option, so the read's success
 is attributable to it rather than to the padding.
 
-**The one decision it forces: the merge key.** Neither provenance function exists —
-`input_file_name()` is `UnsupportedOperationException` and `_metadata.file_name` is
-`cannot resolve attribute` ([lakehq/sail#1210](https://github.com/lakehq/sail/issues/1210),
-open) — so a sail leg cannot populate `file`.
+**The one Sail limitation: it cannot name the source file.** `input_file_name()` is
+`UnsupportedOperationException` and `_metadata.file_name` is `cannot resolve attribute`
+([lakehq/sail#1210](https://github.com/lakehq/sail/issues/1210), open). Every other engine
+here has one — DuckDB's `filename`, Fabric's `src.filepath()`, Spark's `input_file_name()`,
+which is why `macros/parse_filename.sql` has a dialect branch at all.
 
-That is not a blocker, because `file` is a *choice* of `unique_key` rather than a
-requirement: within a `source_type`, `(DUID|REGIONID, SETTLEMENTDATE, INTERVENTION)` is
-already the natural grain, and a leg that cannot name the file keys on those instead. The
-consequence is cross-engine, not per-engine — the key has to match on all five or the parity
-fingerprints diverge — so it is a decision about the gold layer, taken once, not something
-Sail forecloses.
+Not a blocker: `file` is a *choice* of `unique_key`, and within a `source_type`
+`(DUID|REGIONID, SETTLEMENTDATE, INTERVENTION)` is already the natural grain, so a sail leg
+keys its facts on those instead. That is the sail leg's own workaround for a Sail gap —
+the same kind of per-engine operational difference this repo already carries five of.
 
 A direct ``csv.`path`` read also fails, since that form carries no options and so cannot pass
 `allowTruncatedRows` — but the view form is what `spark_read_csv.sql` emits anyway.

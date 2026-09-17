@@ -397,27 +397,29 @@ def test_temp_view_check_reads_the_flag_not_the_listing(smoke):
     assert smoke.interpret(14, persistent).startswith("PERSISTENT")
 
 
-def test_missing_provenance_is_a_design_decision_not_a_veto(smoke):
-    """No provenance function does not block the leg -- it changes the merge key.
+def test_missing_provenance_is_named_as_a_sail_limitation(smoke):
+    """No provenance function does not block the leg -- it changes the sail leg's merge key.
 
-    `file` is one CHOICE of unique_key, not a requirement: within a source_type the business
-    columns are already the natural grain. The verdict called this "viable for a STEADY-STATE
-    leg only ... a backfill is not on", which dressed a design decision up as a capability
-    limit. It must say viable, and name the decision.
+    Two things this verdict got wrong in turn. First it called the gap a bound on the leg
+    ("STEADY-STATE only ... a backfill is not on"), which dressed a workaround up as a
+    capability limit. Then it called it a cross-engine decision, which is worse: the other
+    four engines all HAVE a way to name the source file, so this is Sail's gap and the sail
+    leg's workaround, and nothing about it is a question for them.
     """
     no_prov = [(1, "x", "PASS"), (3, "x", "PASS"), (6, "x", "PASS"), (8, "x", "PASS"),
                (10, "x", "PASS - every write applied"), (12, "x", "PASS"),
                (13, "x", "FAIL - unimplemented"), (26, "x", "FAIL - cannot resolve")]
     v = smoke.read_verdict(no_prov)
     assert v.startswith("VERDICT: viable"), v
-    assert "design decision" in v
-    # It must not reappear as a bound on what the leg can do.
-    for overclaim in ("STEADY-STATE", "backfill is not on", "BLOCKED"):
-        assert overclaim not in v
+    assert "Sail limitation" in v
+    # Neither overclaim may come back: not a bound on the leg, not the other engines' problem.
+    for overclaim in ("STEADY-STATE", "backfill is not on", "BLOCKED",
+                      "cross-engine", "design decision"):
+        assert overclaim not in v, f"the verdict is overclaiming again: {overclaim}"
 
-    # With a provenance route available there is no decision to name.
+    # With a provenance route available there is no limitation to name.
     with_meta = [x for x in no_prov if x[0] != 26] + [(26, "x", "PASS (2 row(s))")]
-    assert "design decision" not in smoke.read_verdict(with_meta)
+    assert "Sail limitation" not in smoke.read_verdict(with_meta)
 
 
 def test_a_failed_csv_read_cannot_be_called_viable(smoke):
