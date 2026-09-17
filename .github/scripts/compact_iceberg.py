@@ -220,9 +220,11 @@ def compact(con, table, say):
     that call fails with a credentials-shaped error, and the report says which path was
     taken. That is the measurement: duckdb/iceberg#1349 is open upstream (PR #1362 unmerged)
     but the maintainer could not reproduce it after the 2026-09-16 credential-handling
-    commits, and on OneLake the catalog never vended credentials in the first place
-    (ACCESS_DELEGATION_MODE 'none', our own azure secret) -- so whether the priming scan is
-    still needed HERE is only knowable from a cold call. "(cold)" in every line means the
+    commits. This script also attaches with ACCESS_DELEGATION_MODE 'none' and brings its own
+    azure secret -- a carry-over from dbt 2's bundled duckdb 1.5.3, which cannot take OneLake's
+    vended credentials; the 2.0 nightly this job runs can -- so the vended-credential path
+    #1349 is about is not even exercised here. Whether the priming scan is still needed HERE
+    is only knowable from a cold call. "(cold)" in every line means the
     workaround can go; "(primed after ...)" means it is still load-bearing.
     """
     fq = f"onelake.{table}"
