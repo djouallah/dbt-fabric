@@ -232,6 +232,33 @@ def test_every_create_names_the_table_format(smoke):
     assert smoke.FILE_FORMAT == "iceberg"
 
 
+def test_probe_7_does_not_depend_on_probe_6(smoke):
+    """The two merge shapes are independent questions.
+
+    Probe 7's source table was created in probe 6's success path, so when the full merge
+    failed, probe 7 reported "Table not found" and the insert-only shape -- which is what the
+    wide facts and dim_calendar would actually use -- went unmeasured (run 35188799850).
+    """
+    src = SMOKE_PY.read_text(encoding="utf-8")
+    assert "def ensure_insert_only_source" in src, (
+        "probe 7's source is inline again; it must be created regardless of probe 6."
+    )
+    # It has to run BEFORE the statement, not in any branch that a failure skips.
+    body = src.splitlines()
+    gate = [j for j, ln in enumerate(body) if ln.strip() == "if n == 7:"]
+    assert gate, "the probe-7 gate moved"
+    assert "ensure_insert_only_source(conn)" in body[gate[0] + 1]
+
+
+def test_merge_target_sets_merge_on_read(smoke):
+    """Sail rejects a merge against a copy-on-write Iceberg table."""
+    create = {n: sql for n, _, sql, _ in smoke.probes()}[3]
+    assert "tblproperties" in create and "merge-on-read" in smoke.MERGE_MODE, (
+        "the merge target lost write.merge.mode=merge-on-read, which Sail requires: "
+        "'Iceberg MERGE with `write.merge.mode=copy-on-write` is not supported yet'"
+    )
+
+
 def test_relation_listing_probe_exists(smoke):
     # The quiet one. Empty output here means dbt-spark cannot see existing relations and every
     # run silently full-refreshes -- worse than an error, so it must stay probed.

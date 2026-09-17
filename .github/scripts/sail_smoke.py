@@ -98,6 +98,14 @@ EXPECTED = [(1, 10), (2, 99), (3, 30), (4, 40), (5, 50)]
 # `file_format: iceberg`, so a real leg carries it in config; here it goes in the DDL.
 FILE_FORMAT = "iceberg"
 
+# THE MERGE TARGET NEEDS IT. Sail refuses a merge against an Iceberg table left on the
+# default mode: "Iceberg MERGE with `write.merge.mode=copy-on-write` is not supported
+# yet; set `write.merge.mode=merge-on-read`" (run 35188799850). Set as a property rather
+# than worked around, because a real leg would carry it on every merged model 
+# (dbt-spark spells that `tblproperties` in config) -- that is a finding about what the
+# leg would cost, not a detail of this script.
+MERGE_MODE = "'write.merge.mode'='merge-on-read'"
+
 # Created BETWEEN probes 6 and 7 -- probe 6 has to read its own source before this table
 # exists, so it cannot be a probe of its own. Hoisted to a constant anyway so tests_py can
 # check the keys it introduces against EXPECTED.
@@ -149,7 +157,8 @@ def probes():
          "is the catalog reachable at all"),
         (2, "create schema", f"create schema if not exists {SCHEMA}",
          "dbt creates its own schemas"),
-        (3, "create table as select", f"create table {tgt} using {FILE_FORMAT} as select 1 as k, 10 as v "
+        (3, "create table as select", f"create table {tgt} using {FILE_FORMAT} tblproperties ({MERGE_MODE}) "
+         f"as select 1 as k, 10 as v "
                                       f"union all select 2, 20",
          "known-good by hand; anchors the run"),
         (4, "create merge source",
@@ -178,6 +187,16 @@ def probes():
         (9, "describe table extended", f"describe table extended {tgt}",
          "column and type discovery"),
     ]
+
+
+def ensure_insert_only_source(conn):
+    """Probe 7's source table. Best-effort and loud: if it cannot be made, probe 7's
+    failure is about this, not about the insert-only merge."""
+    try:
+        run(conn, f"create table {SCHEMA}.probe_src_insert_only using {FILE_FORMAT} as "
+                  f"{INSERT_ONLY_SOURCE}")
+    except Exception as e:
+        print(f"    (probe 7's source could not be created: {oneline(e)})", flush=True)
 
 
 def run(conn, sql):
@@ -211,6 +230,14 @@ def main():
     # Everything below is two-part named (<schema>.<table>), which is what dbt-spark emits;
     # the default catalog resolves the first part.
     for n, name, sql, why in probes():
+        # BEFORE the statement, and outside probe 6's outcome entirely. This lived in
+        # probe 6's success path, so a failed merge skipped it and probe 7 reported
+        # "Table not found" instead of answering whether the insert-only shape works
+        # (run 35188799850). The two merges are independent questions and have to be
+        # able to fail independently.
+        if n == 7:
+            ensure_insert_only_source(conn)
+
         print(f"[{n}] {name} — {why}", flush=True)
         for line in sql.split("\n"):
             print(f"    {line}", flush=True)
@@ -235,15 +262,6 @@ def main():
         print(f"    {status}\n", flush=True)
         results.append((n, name, status))
 
-        # The insert-only source has to exist before probe 7 and after probe 6 reads its own
-        # source, so it is created here rather than as a probe of its own.
-        if n == 6:
-            try:
-                run(conn, f"create table {SCHEMA}.probe_src_insert_only using {FILE_FORMAT} as "
-                          f"{INSERT_ONLY_SOURCE}")
-            except Exception as e:
-                print(f"    (could not create the insert-only source: {oneline(e)})",
-                      flush=True)
 
     # ---- 10: did the writes actually land -------------------------------------------
     # "It did not raise" is not "it worked". A merge that silently applies nothing looks
