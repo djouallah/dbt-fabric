@@ -53,10 +53,6 @@ jobs:
     continue-on-error: true
     env:
       SAIL_SMOKE_SCHEMA: ${{ inputs.schema }}
-      # `dbt` is the shared lakehouse every leg writes to (provision.py's DATA_LAKEHOUSE).
-      # It exists; this job never creates it. Sail's OneLake catalog addresses an item as
-      # <workspace>/<item>.<type>.
-      WAREHOUSE_PATH: ${{ secrets.FABRIC_WORKSPACE_ID }}/dbt.Lakehouse
       SAIL_SMOKE_KEEP: ${{ inputs.keep && '1' || '0' }}
       AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
       AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
@@ -92,6 +88,24 @@ jobs:
           TOKEN=$(az account get-access-token --resource https://storage.azure.com/ --query accessToken -o tsv)
           echo "::add-mask::$TOKEN"
           echo "ONELAKE_TOKEN=$TOKEN" >> "$GITHUB_ENV"
+
+      - name: Resolve the dbt lakehouse
+        # GUID/GUID. Sail's OneLake catalog url is documented as <workspace>/<item>.<type>,
+        # but the item resolves by id -- the same "{workspace_id}/{lakehouse_id}" the iceberg
+        # leg hands the REST endpoint. A name there does not resolve.
+        #
+        # ONE GET, AND IT CREATES NOTHING. `dbt` is the shared lakehouse every real leg makes;
+        # a probe about SQL support has no business provisioning Fabric items, so if it is not
+        # there this fails loudly rather than conjuring one.
+        run: |
+          T=$(az account get-access-token --resource https://api.fabric.microsoft.com --query accessToken -o tsv)
+          ID=$(curl -sf -H "Authorization: Bearer $T"                  "https://api.fabric.microsoft.com/v1/workspaces/$FABRIC_WORKSPACE_ID/lakehouses"                | jq -r '.value[] | select(.displayName=="dbt") | .id')
+          if [ -z "$ID" ]; then
+            echo "::error::no lakehouse named 'dbt' in this workspace -- run a real leg first"
+            exit 1
+          fi
+          echo "resolved dbt lakehouse: $ID"
+          echo "WAREHOUSE_PATH=$FABRIC_WORKSPACE_ID/$ID" >> "$GITHUB_ENV"
 
       - name: Probe Sail
         run: python .github/scripts/sail_smoke.py 2>&1 | tee sail_smoke.log

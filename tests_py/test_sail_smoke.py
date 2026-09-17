@@ -161,7 +161,10 @@ def test_workflow_provisions_nothing():
         f"sail_smoke.yml calls provision.py again: {called}. The lakehouse is assumed to "
         f"exist; the catalog url is composed, not resolved."
     )
-    assert "WAREHOUSE_PATH:" in body, "the composed catalog url went missing"
+    assert "WAREHOUSE_PATH=" in body, "the resolved catalog url went missing"
+    # Resolving an existing item is not provisioning, but only if it stays a GET.
+    for verb in ('-X POST', '-X PUT', '-X PATCH', '"POST"', "'POST'"):
+        assert verb not in body, f"sail_smoke.yml issues a {verb} -- it must only read"
 
 
 def test_script_always_exits_zero():
@@ -198,6 +201,23 @@ def test_relation_listing_probe_exists(smoke):
     # run silently full-refreshes -- worse than an error, so it must stay probed.
     sql = {n: sql for n, _, sql, _ in smoke.probes()}[8]
     assert "show table extended" in sql
+
+
+def test_a_run_that_never_connected_is_inconclusive(smoke):
+    """A failed connection must not be reported as a verdict about Sail.
+
+    The first real run failed every probe with `Failed to load config: 400 Bad Request` --
+    the catalog url was wrong -- and the summary announced "not viable yet, dbt-spark cannot
+    see existing relations". That is a conclusion drawn from the probe's own misconfiguration,
+    which is worse than no conclusion.
+    """
+    all_failed = [(n, "x", "FAIL - config") for n in (1, 6, 8, 10)]
+    assert "INCONCLUSIVE" in smoke.read_verdict(all_failed)
+
+    # ... but a reached catalog with a failed merge is still a real finding.
+    reached = [(1, "x", "PASS (3 row(s))"), (6, "x", "FAIL - unsupported"),
+               (8, "x", "PASS (2 row(s))"), (10, "x", "MISMATCH")]
+    assert "INCONCLUSIVE" not in smoke.read_verdict(reached)
 
 
 def test_expected_rows_cover_every_key_the_probes_write(smoke):

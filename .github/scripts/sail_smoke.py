@@ -303,6 +303,17 @@ def read_verdict(results):
     listing = by_n.get(8, "")
     verified = by_n.get(10, "").startswith("PASS")
 
+    # INCONCLUSIVE BEATS A WRONG VERDICT. If probe 1 never reached the catalog, nothing below
+    # is evidence about Sail at all -- the first run said "not viable yet, dbt-spark cannot
+    # see existing relations" when the truth was that the catalog config was rejected with a
+    # 400 before a single statement was planned. A probe that draws conclusions from its own
+    # misconfiguration is worse than one that fails.
+    if not by_n.get(1, "").startswith("PASS"):
+        return ("VERDICT: INCONCLUSIVE -- the catalog was never reached, so nothing here says "
+                "anything about Sail. Check the SAIL_CATALOG__LIST url in the banner above: "
+                "the item resolves by GUID (<workspace-id>/<lakehouse-id>), and a name there "
+                "comes back as `Failed to load config: 400 Bad Request`.")
+
     if not listing.startswith("PASS"):
         return ("VERDICT: not viable yet — `show table extended` did not list the schema, so "
                 "dbt-spark cannot see existing relations and every run would silently "
