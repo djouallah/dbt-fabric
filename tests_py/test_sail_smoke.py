@@ -376,6 +376,20 @@ def test_a_run_that_created_nothing_is_inconclusive(smoke):
     assert "AZURE_STORAGE_TOKEN" in v
 
 
+def test_temp_view_check_reads_the_flag_not_the_listing(smoke):
+    """`show tables` lists temporary views too, with isTemporary=True.
+
+    Probe 14 flagged mere presence and so reported PERSISTENT for four runs against rows that
+    plainly said isTemporary=True. The Fabric Spark trap is a view that is listed and NOT
+    flagged temporary -- a different row.
+    """
+    temp = ["Row(database='', tableName='raw_probe', isTemporary=True)"]
+    assert smoke.interpret(14, temp).startswith("PASS")
+
+    persistent = ["Row(database='s', tableName='raw_probe', isTemporary=False)"]
+    assert smoke.interpret(14, persistent).startswith("PERSISTENT")
+
+
 def test_a_failed_csv_read_cannot_be_called_viable(smoke):
     """Phase B has to be able to veto phase A.
 

@@ -432,12 +432,19 @@ def interpret(n, rows):
     to dodge. Reporting "PASS" for those would be the same mistake probe 10 was added to stop.
     """
     if n == 14:
-        listed = [str(r).lower() for r in rows]
-        leaked = [r for r in listed if "raw_probe" in r]
-        if leaked:
-            return ("PERSISTENT - the temp view is listed in the schema, the same trap that "
-                    "forces the spark leg to stage through a Delta table")
-        return f"PASS - temporary, not listed ({len(rows)} table(s) in the schema)"
+        # THE FLAG, NOT THE PRESENCE. `show tables` lists temporary views too -- with
+        # isTemporary=True -- so "it appears in the listing" is not the trap. This reported
+        # PERSISTENT for four runs against rows that plainly said isTemporary=True
+        # (run 35212292041). The Fabric Spark problem is a view that is listed and NOT
+        # flagged temporary, which is a different row.
+        mine = [str(r) for r in rows if "raw_probe" in str(r)]
+        if not mine:
+            return f"PASS - not listed at all ({len(rows)} table(s) in the schema)"
+        if all("isTemporary=True" in r for r in mine):
+            return ("PASS - listed but flagged isTemporary=True, which is ordinary Spark "
+                    "behaviour and NOT the persistent-__dbt_tmp trap")
+        return ("PERSISTENT - listed WITHOUT isTemporary, the same trap that forces the "
+                "spark leg to stage through a Delta table")
 
     if n == 15:
         if not rows or rows[0][0] is None:
