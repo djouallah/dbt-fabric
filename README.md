@@ -12,17 +12,36 @@ One dbt project that builds the **same AEMO gold layer** on five adapters:
 
 ### Candidate engines
 
-**Sail** ([LakeSail](https://github.com/lakehq/sail)) is the live candidate for a sixth, and
-as of 2026-09-17 it **works**. `dbt-sail` is a thin wrapper around `dbt-spark` talking Spark
-Connect to a Rust engine with no JVM, and Sail's native OneLake catalog takes the same bearer
-token the `iceberg` leg mints, so it would be a second Iceberg writer against the same gold
-layer. `.github/workflows/sail_smoke.yml` probes it — `workflow_dispatch` only, gates
-nothing — and all eleven probes pass on Sail 0.7.1: schema and table creation, insert, both
-`MERGE INTO` shapes dbt-spark emits, `show table extended` (which is how dbt-spark decides an
-incremental model exists), and a read-back proving the merges actually applied rather than
-merely returning.
+**Sail** ([LakeSail](https://github.com/lakehq/sail)) is the live candidate for a sixth.
+`dbt-sail` is a thin wrapper around `dbt-spark` talking Spark Connect to a Rust engine with no
+JVM, and Sail's native OneLake catalog takes the same bearer token the `iceberg` leg mints, so
+it would be a second Iceberg writer against the same gold layer.
+`.github/workflows/sail_smoke.yml` probes it — `workflow_dispatch` only, gates nothing — in
+two phases, because "the catalog accepts SQL" and "this repo's models could run on it" are
+different claims.
 
-Three things it takes, all found by that probe and all costs a real leg would carry:
+**Phase A, the adapter contract: all green** on Sail 0.7.1. Schema and table creation, insert,
+both `MERGE INTO` shapes dbt-spark emits, `show table extended` (how dbt-spark decides an
+incremental model exists), and a read-back proving the merges applied rather than merely
+returning.
+
+**Phase B, what the models actually do: two real gaps.** Sail reads the real AEMO CSVs off
+OneLake through the exact temp-view-with-explicit-schema-and-brace-glob form
+`spark_read_csv.sql` emits; it does `sequence()`/`explode()`, window functions, a 130-column
+record and a multi-column merge key. What it does not do:
+
+| gap | what it costs the leg |
+|---|---|
+| `input_file_name()` is `UnsupportedOperationException` | the models' `file` column is parsed from it and the provenance exists **nowhere else**. A sail leg needs another way to know which file a row came from. This is the one that blocks |
+| a `TEMPORARY VIEW` is listed in the schema, i.e. persistent | the same trap that forces the spark leg to stage through a `__stage` Delta table, so sail would inherit that machinery rather than avoid it |
+
+Two dialect facts fell out of it as well: Sail rounds `DOUBLE`—`DECIMAL` **HALF_UP** (like
+Spark, unlike DuckDB), and a bare `CAST` of AEMO's `yyyy/MM/dd` is a hard parse error rather
+than Spark's silent `NULL` — which is strictly better, since it cannot reach the gold layer
+unnoticed.
+
+Three things it takes to get there, each found by a failed run and each a cost a real leg
+would carry:
 
 | what | why |
 |---|---|
