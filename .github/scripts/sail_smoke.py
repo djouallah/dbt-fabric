@@ -134,6 +134,11 @@ CSV_SCHEMA = "`I` STRING, `REPORT` STRING, `SETTLEMENTDATE` STRING, `RRP` STRING
 SLASH_DATE = "2026/09/17 04:30:00"
 DATE_FORMAT = "yyyy/MM/dd HH:mm:ss"
 
+# Probes where an ERROR is a legitimate -- even preferable -- answer, so they are reported as
+# NOTE and kept out of the phase B failure count. Only probe 21 so far: a bare CAST of a slash
+# date returning NULL is the Spark trap, and refusing to parse is strictly better.
+MAY_FAIL = {21}
+
 
 def banner(conn):
     """Everything an upstream issue needs to reproduce, with the token redacted."""
@@ -311,10 +316,10 @@ def model_shape_probes(files):
 
     out += [
         (15, "slash date, explicit format",
-         f"select to_timestamp('{SLASH_DATE}', '{DATE_FORMAT}') as parsed, "
-         f"cast('{SLASH_DATE}' as timestamp) as bare_cast",
-         "AEMO ships yyyy/MM/dd. Spark CASTs it to NULL rather than erroring, so what "
-         "bare_cast returns decides whether that trap exists on Sail too"),
+         f"select to_timestamp('{SLASH_DATE}', '{DATE_FORMAT}') as parsed",
+         "AEMO ships yyyy/MM/dd, so every model parses the format explicitly. ONE question "
+         "per statement: this used to also select a bare CAST, and the bare cast is a hard "
+         "parse error on Sail, so the whole probe died without answering this one"),
         (16, "sequence + explode",
          "select explode(sequence(to_date('2026-01-01'), to_date('2026-01-10'), "
          "interval 1 day)) as d",
@@ -335,14 +340,24 @@ def model_shape_probes(files):
          "fct_price is AEMO's DREGION record -- all 130 columns, and fct_scada all 53"),
         (20, "merge on a three-column key",
          f"merge into {wide} as DBT_INTERNAL_DEST\n"
-         f"    using (select cast(0 as double) as c0, cast(1 as double) as c1, "
-         f"cast(99 as double) as c2) as DBT_INTERNAL_SOURCE\n"
+         f"    using (select "
+         + ", ".join(f"cast({i if i < 3 else i + 1000} as double) as c{i}"
+                     for i in range(130))
+         + f") as DBT_INTERNAL_SOURCE\n"
          f"    on DBT_INTERNAL_SOURCE.c0 = DBT_INTERNAL_DEST.c0\n"
          f"       and DBT_INTERNAL_SOURCE.c1 = DBT_INTERNAL_DEST.c1\n"
          f"       and DBT_INTERNAL_SOURCE.c2 = DBT_INTERNAL_DEST.c2\n"
          f"    when not matched then insert *",
          "fct_summary merges on (date, time, DUID) and fct_price on four columns; a "
-         "single-column key proves nothing about either"),
+         "single-column key proves nothing about either. The source carries ALL 130 columns "
+         "because `insert *` resolves them positionally by name -- a three-column source is "
+         "'Cannot resolve source column c3 ... without schema evolution', which is a fact "
+         "about the probe, not about Sail"),
+        (21, "bare CAST of a slash date",
+         f"select cast('{SLASH_DATE}' as timestamp) as bare_cast",
+         "SEPARATE, and allowed to fail -- see MAY_FAIL. Spark returns NULL here rather than "
+         "erroring, which is the trap that silently emptied a column on the spark leg. An "
+         "ERROR is the BETTER outcome: it cannot reach the gold layer unnoticed"),
     ]
     return out
 
@@ -363,16 +378,16 @@ def interpret(n, rows):
         return f"PASS - temporary, not listed ({len(rows)} table(s) in the schema)"
 
     if n == 15:
-        if not rows:
-            return "FAIL - no row"
-        parsed, bare = rows[0][0], rows[0][1]
-        if parsed is None:
+        if not rows or rows[0][0] is None:
             return "FAIL - the EXPLICIT format returned NULL; slash dates are unparseable"
-        if bare is None:
-            return ("PASS - explicit format works, and the bare CAST returns NULL, so Sail "
-                    "has Spark's silent-NULL trap and the models must keep parsing the format")
-        return ("PASS - explicit format works, and the bare CAST also parses, so the trap "
-                "does NOT exist here (DuckDB/T-SQL behaviour)")
+        return f"PASS - parsed to {rows[0][0]}"
+
+    if n == 21:
+        # Reached only when the cast SUCCEEDED; the error path is handled as a NOTE.
+        if rows and rows[0][0] is None:
+            return ("SILENT NULL - Spark's trap exists here: a bare cast of a slash date "
+                    "returns NULL instead of failing, so every model must parse the format")
+        return f"PARSES - the bare cast works ({rows[0][0] if rows else '?'})"
 
     if n == 18 and rows:
         return f"PASS - tie_break={rows[0][2]} (0.12 is HALF_EVEN, 0.13 is HALF_UP)"
@@ -486,8 +501,12 @@ def main():
         try:
             rows = run(conn, sql)
         except Exception as e:
-            print(f"    FAIL {type(e).__name__}: {oneline(e)}", flush=True)
-            results.append((n, name, f"FAIL - {type(e).__name__}: {oneline(e)}"))
+            # For a MAY_FAIL probe the error IS the answer, so it is a NOTE and does not
+            # count against phase B. Probe 21 refusing a slash date is better than Spark
+            # quietly returning NULL for one.
+            label = "NOTE" if n in MAY_FAIL else "FAIL"
+            print(f"    {label} {type(e).__name__}: {oneline(e)}", flush=True)
+            results.append((n, name, f"{label} - {type(e).__name__}: {oneline(e)}"))
             print(flush=True)
             continue
 
