@@ -129,6 +129,15 @@ LANDING_PATH = os.environ.get("LANDING_PATH", "")
 # the width separately.
 CSV_SCHEMA = "`I` STRING, `REPORT` STRING, `SETTLEMENTDATE` STRING, `RRP` STRING"
 
+# A schema WIDER than any AEMO row. The narrow one above is narrower than most of them, and
+# the two cases fail differently: if the wide schema reads and the narrow one does not, only
+# OVER-wide rows are rejected and declaring the record's full width (which aemo_columns.sql
+# already knows) is enough. If both fail, `mode 'PERMISSIVE'` is simply not implemented and
+# no schema saves it -- a PUBLIC_DAILY file holds many record types of different widths, so
+# some row is always the wrong shape. That distinction is the difference between a config
+# detail and a blocker, so it gets measured rather than guessed.
+WIDE_SCHEMA = ", ".join(f"`c{i}` STRING" for i in range(200))
+
 # AEMO ships yyyy/MM/dd. Spark's CAST returns NULL for it rather than erroring, which is why
 # every model parses the format explicitly; a silent NULL reaches the gold layer.
 SLASH_DATE = "2026/09/17 04:30:00"
@@ -292,11 +301,14 @@ def model_shape_probes(files):
             folder = files[0].rsplit("/", 1)[0]
             path = folder + "/{" + ",".join(f.rsplit("/", 1)[1] for f in files) + "}"
         out += [
-            (12, "csv temp view over abfss",
-             f"create or replace temporary view {view} ({CSV_SCHEMA}) "
-             f"using csv options (path '{path}', header 'true', mode 'PERMISSIVE')",
-             "the exact shape spark_read_csv.sql emits: explicit all-STRING schema, brace "
-             "glob, PERMISSIVE over ragged AEMO rows"),
+            (12, "csv view over abfss, AND READ IT",
+             [f"create or replace temporary view {view} ({CSV_SCHEMA}) "
+              f"using csv options (path '{path}', header 'true', mode 'PERMISSIVE')",
+              f"select count(*) as n from {view}"],
+             "the exact shape spark_read_csv.sql emits. The SELECT is the point: CREATE VIEW "
+             "does not touch the file, so this probe reported PASS for three runs while "
+             "reading was in fact broken (run 35206757444). A probe that cannot fail for its "
+             "own stated reason measures nothing"),
             (13, "read it, with input_file_name()",
              f"select input_file_name() as _fname, `I`, `REPORT`, `SETTLEMENTDATE` "
              f"from {view} limit 5",
@@ -313,8 +325,8 @@ def model_shape_probes(files):
                         (13, "read it, with input_file_name()"),
                         (14, "is that view TEMPORARY")):
             out.append((n, name, "", "SKIPPED: no landing files found"))
-        # 22 and 23 are appended below with empty SQL for the same reason; main() reports an
-        # empty statement as SKIP.
+        # 22, 23 and 24 are appended below with empty SQL for the same reason; main()
+        # reports an empty statement as SKIP.
 
     out += [
         (15, "slash date, explicit format",
@@ -372,6 +384,14 @@ def model_shape_probes(files):
          "resolves this run's filenames at render time, so the name can be a LITERAL per "
          "file instead of a function -- one view per file, unioned. If this works the leg is "
          "not blocked, it just reads per file rather than one brace glob"),
+        (24, "ragged CSV with a 200-column schema",
+         [f"create or replace temporary view probe_wide_v ({WIDE_SCHEMA}) "
+          f"using csv options (path '{files[0]}', header 'true', mode 'PERMISSIVE')",
+          "select count(*) as n from probe_wide_v"] if files else "",
+         "WIDER than any AEMO row. Reading here while the narrow schema fails means only "
+         "OVER-wide rows are rejected, and declaring the record's full width is enough. "
+         "Failing here too means PERMISSIVE is unimplemented and ragged files are "
+         "unreadable at all -- the difference between a config detail and a blocker"),
         (21, "bare CAST of a slash date",
          f"select cast('{SLASH_DATE}' as timestamp) as bare_cast",
          "SEPARATE, and allowed to fail -- see MAY_FAIL. Spark returns NULL here rather than "
@@ -569,6 +589,7 @@ def main():
                      "drop view if exists raw_probe",
                      "drop view if exists probe_f0",
                      "drop view if exists probe_f1",
+                     "drop view if exists probe_wide_v",
                      f"drop schema if exists {SCHEMA}"):
             try:
                 run(conn, stmt)
