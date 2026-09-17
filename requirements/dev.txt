@@ -10,3 +10,6 @@
 pytest
 pyyaml
 sqlglot
+# tests_py/test_jinja_syntax.py lexes every model and macro with Jinja's own parser --
+# the one check on the dbt2 templates that does not need dbt OSS 2 installed.
+jinja2
