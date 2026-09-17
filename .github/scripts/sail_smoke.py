@@ -313,6 +313,8 @@ def model_shape_probes(files):
                         (13, "read it, with input_file_name()"),
                         (14, "is that view TEMPORARY")):
             out.append((n, name, "", "SKIPPED: no landing files found"))
+        # 22 and 23 are appended below with empty SQL for the same reason; main() reports an
+        # empty statement as SKIP.
 
     out += [
         (15, "slash date, explicit format",
@@ -353,6 +355,23 @@ def model_shape_probes(files):
          "because `insert *` resolves them positionally by name -- a three-column source is "
          "'Cannot resolve source column c3 ... without schema evolution', which is a fact "
          "about the probe, not about Sail"),
+        (22, "direct csv.`path` read",
+         f"select count(*) as n from csv.`{files[0]}`" if files else "",
+         "Fabric Spark CANNOT do this -- its catalog base32hex-decodes every part of a "
+         "multipart name, so `csv.`path`` dies on the 'x'. If Sail can, the read is one "
+         "statement instead of a view plus a stage table"),
+        (23, "provenance WITHOUT input_file_name()",
+         [f"create or replace temporary view probe_f{i} ({CSV_SCHEMA}) "
+          f"using csv options (path '{f}', header 'true', mode 'PERMISSIVE')"
+          for i, f in enumerate(files)]
+         + [" union all ".join(
+             f"select '{f.rsplit('/', 1)[1]}' as _fname, count(*) as n from probe_f{i}"
+             for i, f in enumerate(files))]
+         if files else "",
+         "THE WORKAROUND for input_file_name() being unimplemented. spark_new_files already "
+         "resolves this run's filenames at render time, so the name can be a LITERAL per "
+         "file instead of a function -- one view per file, unioned. If this works the leg is "
+         "not blocked, it just reads per file rather than one brace glob"),
         (21, "bare CAST of a slash date",
          f"select cast('{SLASH_DATE}' as timestamp) as bare_cast",
          "SEPARATE, and allowed to fail -- see MAY_FAIL. Spark returns NULL here rather than "
@@ -388,6 +407,15 @@ def interpret(n, rows):
             return ("SILENT NULL - Spark's trap exists here: a bare cast of a slash date "
                     "returns NULL instead of failing, so every model must parse the format")
         return f"PARSES - the bare cast works ({rows[0][0] if rows else '?'})"
+
+    if n == 23:
+        if not rows:
+            return "FAIL - no rows"
+        names = {str(r[0]) for r in rows}
+        if any(not nm or nm == "None" for nm in names):
+            return f"FAIL - a filename came back empty: {sorted(names)}"
+        return (f"PASS - provenance without input_file_name(), {len(rows)} file(s): "
+                f"{sorted(names)}")
 
     if n == 18 and rows:
         return f"PASS - tie_break={rows[0][2]} (0.12 is HALF_EVEN, 0.13 is HALF_UP)"
@@ -496,10 +524,17 @@ def main():
             print("    SKIP\n", flush=True)
             results.append((n, name, "SKIP - no landing files"))
             continue
-        for line in sql.split("\n"):
-            print(f"    {line[:160]}", flush=True)
+        # A probe may be a LIST of statements. Only the last one's rows are reported; the
+        # earlier ones are setup that has to happen on this same session (probe 23 needs one
+        # view per file before it can union them).
+        stmts = list(sql) if isinstance(sql, (list, tuple)) else [sql]
+        for st in stmts:
+            for line in st.split("\n"):
+                print(f"    {line[:160]}", flush=True)
         try:
-            rows = run(conn, sql)
+            for st in stmts[:-1]:
+                run(conn, st)
+            rows = run(conn, stmts[-1])
         except Exception as e:
             # For a MAY_FAIL probe the error IS the answer, so it is a NOTE and does not
             # count against phase B. Probe 21 refusing a slash date is better than Spark
@@ -532,6 +567,8 @@ def main():
                      f"drop table if exists {SCHEMA}.probe_src_insert_only",
                      f"drop table if exists {SCHEMA}.probe_wide",
                      "drop view if exists raw_probe",
+                     "drop view if exists probe_f0",
+                     "drop view if exists probe_f1",
                      f"drop schema if exists {SCHEMA}"):
             try:
                 run(conn, stmt)

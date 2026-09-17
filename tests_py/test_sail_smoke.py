@@ -270,7 +270,13 @@ def test_phase_b_covers_what_the_models_do(smoke):
     multi-column merge key.
     """
     shapes = smoke.model_shape_probes(["abfss://w@h/a/one.CSV", "abfss://w@h/a/two.CSV"])
-    by_name = {name.lower(): sql for _, name, sql, _ in shapes}
+
+    def flat(sql):
+        # A probe may be a LIST of statements -- probe 23 needs one view per file before it
+        # can union them.
+        return " ".join(sql) if isinstance(sql, (list, tuple)) else sql
+
+    by_name = {name.lower(): flat(sql) for _, name, sql, _ in shapes}
     blob = " ".join(by_name.values()).lower()
 
     for needed in ("using csv", "input_file_name()", "to_timestamp", "explode(sequence(",
@@ -284,6 +290,17 @@ def test_phase_b_covers_what_the_models_do(smoke):
     wide = next(sql for name, sql in by_name.items() if "wide" in name)
     assert wide.count(" as c") == 130
 
+    # input_file_name() is unimplemented in Sail (lakehq/sail#1210, still open), so
+    # provenance has to come from a literal per file. Without probe 23 the leg looks blocked
+    # when it is only inconvenienced.
+    # .lower(): AEMO ships .CSV in capitals and the literal keeps the real name.
+    workaround = next(sql for name, sql in by_name.items()
+                      if "provenance without" in name).lower()
+    assert "one.csv" in workaround and "two.csv" in workaround, (
+        "probe 23 must carry the filename as a LITERAL -- that is the whole workaround"
+    )
+    assert "input_file_name" not in workaround
+
     # A multi-column ON clause -- fct_summary keys on (date, time, DUID).
     keyed = next(sql for name, sql in by_name.items() if "three-column" in name)
     assert keyed.count("DBT_INTERNAL_SOURCE.c") == 3
@@ -292,7 +309,7 @@ def test_phase_b_covers_what_the_models_do(smoke):
 def test_csv_probes_skip_rather_than_fail_without_files(smoke):
     """No landing files is a fact about the landing zone, not a finding about Sail."""
     for n, _, sql, _ in smoke.model_shape_probes([]):
-        if n in (12, 13, 14):
+        if n in (12, 13, 14, 22, 23):
             assert sql == "", f"probe {n} would run without a file and report a false FAIL"
 
 
