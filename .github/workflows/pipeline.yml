@@ -72,7 +72,7 @@ jobs:
         # because "duckrun" and "iceberg" say nothing about what is underneath them.
         run: |
           ALL='[{"engine":"duckrun","label":"duckdb-delta_rs"},
-                {"engine":"iceberg","label":"duckdb-iceberg"},
+                {"engine":"iceberg","label":"dbt2-iceberg"},
                 {"engine":"ducklake","label":"ducklake"},
                 {"engine":"dwh","label":"fabric-warehouse"},
                 {"engine":"spark","label":"fabric-spark"}]'

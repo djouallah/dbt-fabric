@@ -16,7 +16,7 @@ from pathlib import Path
 import pytest
 import sqlglot
 
-REPO = Path(__file__).resolve().parents[1]
+from _layout import REPO, singular_tests_dir
 
 DIALECT = {
     "duckrun": "duckdb",
@@ -41,7 +41,7 @@ def strip_jinja(sql: str) -> str:
 
 def cases():
     for engine, dialect in DIALECT.items():
-        for p in sorted((REPO / "tests" / "aemo" / engine).glob("*.sql")):
+        for p in sorted(singular_tests_dir(engine).glob("*.sql")):
             yield pytest.param(p, dialect, id=f"{engine}/{p.stem}")
 
 
@@ -75,7 +75,7 @@ def test_no_wrong_dialect_idioms(path, dialect):
 
 @pytest.mark.parametrize(
     "path",
-    [pytest.param(p, id=f"dwh/{p.stem}") for p in sorted((REPO / "tests" / "aemo" / "dwh").glob("*.sql"))],
+    [pytest.param(p, id=f"dwh/{p.stem}") for p in sorted(singular_tests_dir("dwh").glob("*.sql"))],
 )
 def test_tsql_singular_tests_have_no_top_level_with(path):
     """dbt-fabric nests a singular test's SQL inside a CTE of its own, and T-SQL does not

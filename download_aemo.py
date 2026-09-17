@@ -337,4 +337,9 @@ if __name__ == "__main__":
     summary, landed = download_aemo(con, LANDING_PATH, DOWNLOAD_LIMIT, DAILY_DOWNLOAD_LIMIT)
     summary.show()
     print("Landed this run: " + ", ".join(f"{k}={v}" for k, v in landed.items()))
-    print("Done. Now run:  dbt build --target <duckrun|iceberg|ducklake|dwh|spark> --profiles-dir .")
+    # The engine trees live in two dbt projects, so the build is run from inside one of
+    # them: dbt1/ is dbt-core 1.x (duckrun, ducklake, dwh, spark) and dbt2/ is dbt OSS 2
+    # (iceberg). See dbt2/dbt_project.yml for why they cannot share a root.
+    print("Done. Now run one of:")
+    print("  cd dbt1 && dbt build --target <duckrun|ducklake|dwh|spark> --profiles-dir .")
+    print("  cd dbt2 && dbt build --target iceberg --profiles-dir .")

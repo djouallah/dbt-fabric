@@ -43,7 +43,12 @@ REL_TOL = 1e-7
 def capture(out_dir: Path) -> int:
     """Read a `dbt run-operation parity_fingerprint` log on stdin, save the JSON object."""
     text = sys.stdin.read()
-    m = re.search(r"\{\s*\"engine\".*?\n\}", text, re.S)
+    # The JSON comes out of a log() call, and dbt 1.x and 2.x do not prefix log lines the
+    # same way -- v2 can put its own text on the line carrying the closing brace. So the
+    # terminator is "a newline, then a closing brace with nothing structural before it",
+    # not "a brace alone at the start of a line". Both shapes are covered by
+    # tests_py/test_parity_capture.py.
+    m = re.search(r"\{\s*\"engine\".*?\n[^\n{}]*\}", text, re.S)
     if not m:
         print("no fingerprint JSON found in the run-operation output", file=sys.stderr)
         print(text[-2000:], file=sys.stderr)
@@ -108,7 +113,10 @@ def compare(in_dir: Path) -> int:
             "  * a string join key with a trailing space (T-SQL pads on comparison; the\n"
             "    others do not), which changes row counts, not just sums\n"
             "  * one engine's model drifting from the shared business logic — diff the\n"
-            "    models/aemo/<engine>/ copies against each other",
+            "    <project>/models/aemo/<engine>/ copies against each other. The trees live in\n"
+            "    TWO projects: dbt1/ holds duckrun, ducklake, dwh and spark; dbt2/ holds\n"
+            "    iceberg. `diff -r dbt1/models/aemo/duckrun dbt2/models/aemo/iceberg` is the\n"
+            "    comparison that catches a drift inside the DuckDB family.",
             file=sys.stderr,
         )
         return 1

@@ -40,12 +40,19 @@ jobs:
 
   # ONE JOB PER ENGINE, each installing only that engine's requirements.
   #
-  # Not one job installing all five: the adapters cannot share an environment. dbt-fabric
-  # and dbt-fabricspark shadow each other under the dbt.adapters namespace, so loading the
-  # spark plugin fails with "has no attribute 'Plugin'"; the dbt-fabric-samdebruyn fork this
-  # replaced instead made the spark profile fail validation with "'database' is a required
-  # property". Both were found here rather than locally. Splitting the matrix is also more
-  # faithful — each engine is validated against exactly the dependencies it builds with.
+  # Not one job installing all five, for two independent reasons:
+  #
+  #   * dbt-fabric and dbt-fabricspark shadow each other under the dbt.adapters namespace,
+  #     so loading the spark plugin fails with "has no attribute 'Plugin'"; the
+  #     dbt-fabric-samdebruyn fork this replaced instead made the spark profile fail
+  #     validation with "'database' is a required property". Both were found here rather
+  #     than locally.
+  #   * iceberg is dbt OSS 2 and the other four are dbt-core 1.x. They install a `dbt`
+  #     console script each; in one environment the last one wins and the other four (or
+  #     the one) get parsed by the wrong engine entirely.
+  #
+  # Splitting the matrix is also more faithful — each engine is validated against exactly
+  # the dependencies it builds with. check_gating.py knows which project each engine is in.
   gating:
     # `label` is cosmetic — the only thing the Actions UI shows. `engine` is the real target
     # name that dbt, the folder layout and every script key on; do not rename those.
@@ -55,7 +62,7 @@ jobs:
       matrix:
         include:
           - {engine: duckrun,  label: duckdb-delta_rs}
-          - {engine: iceberg,  label: duckdb-iceberg}
+          - {engine: iceberg,  label: dbt2-iceberg}
           - {engine: ducklake, label: ducklake}
           - {engine: dwh,      label: fabric-warehouse}
           - {engine: spark,    label: fabric-spark}

@@ -16,7 +16,7 @@ from pathlib import Path
 
 import pytest
 
-REPO = Path(__file__).resolve().parents[1]
+from _layout import REPO, patch_dir
 NOTEBOOK = REPO / "fabric_items" / "run.Notebook" / "notebook-content.ipynb"
 VARIABLES = REPO / "fabric_items" / "deploy_config.VariableLibrary" / "variables.json"
 PIPELINE = REPO / "fabric_items" / "run_pipeline.DataPipeline" / "pipeline-content.json"
@@ -77,7 +77,7 @@ def _documented_columns() -> dict[str, set[str]]:
 
     cols: dict[str, set[str]] = {}
     for f in ("_marts.yml", "_dimensions.yml"):
-        doc = yaml.safe_load((REPO / "models" / "aemo" / f).read_text(encoding="utf-8"))
+        doc = yaml.safe_load((patch_dir("duckrun") / f).read_text(encoding="utf-8"))
         for m in doc.get("models", []):
             cols[m["name"]] = {c["name"] for c in m.get("columns", [])}
     return cols

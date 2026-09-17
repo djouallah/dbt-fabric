@@ -6,7 +6,9 @@ run if you do not know them.
 ## The rule that governs every change
 
 **One gold layer. The same business logic on all five engines.** If you change what a model
-*computes*, change it in all five `models/aemo/<engine>/` copies. The only thing allowed to
+*computes*, change it in all five `<project>/models/aemo/<engine>/` copies. Note *five across
+two projects*: `dbt1/` holds duckrun, ducklake, dwh and spark; `dbt2/` holds iceberg. It is
+easy to edit four and miss the one across the directory boundary. The only thing allowed to
 differ between engines is *operational* — dialect, adapter capability, incremental strategy,
 maintenance — and every such difference is commented at its site with the reason.
 
@@ -18,9 +20,14 @@ the README table; do not quietly let the engines diverge.
 ## Verify before you spend anything
 
 ```bash
-python -m pytest tests_py/ -q            # seconds, no credentials
-python .github/scripts/check_gating.py   # every engine whose adapter is installed; CI does all five
+python -m pytest tests_py/ -q            # seconds, no credentials, no dbt installed
+python .github/scripts/check_gating.py   # every engine whose dbt is installed; CI does all five
 ```
+
+`check_gating.py` knows which project each engine is in and parses it there. Locally it can
+only reach the engines whose dbt is importable — one environment holds either dbt 1.x or dbt
+OSS 2, not both — so the iceberg line usually reads "skipping". `DBT1_BIN` / `DBT2_BIN` point
+it at two interpreters if you want both from one shell.
 
 `check_gating.py` is not optional. **The default failure mode of this layout is a run that
 builds NOTHING and exits 0** — a target name that stops matching a folder name disables
@@ -30,14 +37,22 @@ For a real end-to-end check, the `duckrun` target runs entirely locally:
 
 ```bash
 export FILES_PATH=./landing ONELAKE_TABLES_PATH=./warehouse
-python download_aemo.py && dbt build --target duckrun --profiles-dir .
+python download_aemo.py
+cd dbt1 && dbt build --target duckrun --profiles-dir .
 ```
 
 ## Gating
 
-- Gate on **`target.name`**, never `target.type` — `iceberg` and `ducklake` are both
-  `type: duckdb`. `target.type` is still right inside a macro that is about DIALECT rather
-  than engine (see `parse_filename`).
+- **TWO dbt PROJECTS.** `dbt1/` is dbt-core 1.x (duckrun, ducklake, dwh, spark); `dbt2/` is
+  dbt OSS 2 (iceberg). They are split because `catalogs.yml` lives next to `dbt_project.yml`
+  and dbt 1.x aborts on one — `Adapter 'duckdb' does not support catalogs.yml v2 yet` with
+  `use_catalogs_v2`, a v1-loader error without it. Do not try to merge them back. Every dbt
+  command therefore runs from inside a project dir, and `.github/scripts/check_gating.py`'s
+  `ENGINES` dict is the one place the mapping lives — keep `tests_py/_layout.py` in step.
+- Gate on **`target.name`**, never `target.type`. The four `dbt1` targets have four distinct
+  types today, but that is an accident of the engine list, not a property to lean on.
+  `target.type` is still right inside a macro that is about DIALECT rather than engine (see
+  `parse_filename`).
 - **Never put anything on the `aemo_electricity` project key.** A generic test declared in a
   patch file takes the fqn of the YML *file*, so a gate there disables every generic test —
   silently, with the run still green.
@@ -76,28 +91,46 @@ python download_aemo.py && dbt build --target duckrun --profiles-dir .
   re-emit `FILES_PATH` to move an engine's data somewhere; give it its own key, the way
   `DUCKLAKE_DATA_PATH` does.
 - **Only `duckrun` is exempt from `azure/login`** in `build.yml`. It mints its own tokens
-  from the OIDC assertion; `iceberg` is dbt-duckdb and shells out to `az` for the OneLake
-  token, so exempting it there kills the leg before it provisions anything. The `deploy`
+  from the OIDC assertion; every other leg shells out to `az` for an audience duckrun cannot
+  mint, so exempting one of them kills it before it provisions anything. `iceberg` still
+  needs the login even though its dbt runs on `dbt-oss`: the login is for `provision.py` and
+  for the `compact` job's OneLake token, not for the adapter. The `deploy`
   job in `pipeline.yml` is duckrun end to end (storage, Fabric and Power BI tokens all from
   the assertion), so it has no login step either.
 
-- **`duckdb__` macros reach BOTH duckdb targets.** `macros/iceberg_adapter_overrides.sql`
-  therefore branches on `target.name == 'iceberg'` and reproduces dbt-duckdb's own body
-  otherwise. `tests_py/test_adapter_overrides.py` pins those fallbacks against the INSTALLED
-  adapter — if it fails, dbt-duckdb changed upstream and the fallback needs re-syncing, or
-  ducklake keeps running a stale copy of dbt's SQL.
-- **dbt-duckdb silently drops boolean-false attach options.** Use int `0`/`1`.
+- **dbt OSS 2 and `duckrun` must never share a Python environment.** `duckrun` pins
+  `dbt-core<2` and `dbt-duckdb<2`, which lay a dbt 1.x `dbt` console script over v2's — and
+  the job then silently parses the wrong project with the wrong engine. That is why the
+  iceberg leg has TWO requirement files: `requirements/iceberg.txt` (just `dbt-oss`) goes to
+  the Fabric notebook and the gating job, `requirements/iceberg_runner.txt` (duckdb +
+  duckrun) goes to the runner, which only provisions, launches and compacts.
+- **dbt 2 needs `persistent: true` on its profile secrets.** It applies `secrets:` on a
+  THROWAWAY connection, so a session-scoped secret never reaches the model and the write dies
+  "could not open file ... the credentials used were wrong". The ATTACH survives that
+  connection because attachments are database-scoped; a secret is not. `settings:` has the
+  same problem, so anything that must reach a model is an `on-run-start` hook (or a
+  `+pre_hook`, which runs on the model's own connection), never `settings:`.
+- **Do not port `iceberg_adapter_overrides.sql` into `dbt2/`.** It was deleted with the move.
+  dbt 2's own DuckDB macros already do all of it — `DESCRIBE` for Iceberg column discovery,
+  `DROP` without `CASCADE`, a standalone rename, a direct-create path for Iceberg REST — so
+  an override there would replace v2's better version with a copy of dbt-duckdb 1.x's.
+- **dbt-duckdb silently drops boolean-false attach options.** Use int `0`/`1`. This is a
+  `ducklake` fact now; `dbt2`'s `catalogs.yml` takes real booleans.
 - **duckdb versions per leg (2026-09-17):** ducklake is PINNED to 1.5.5 (its community
-  extensions, `mssql_ducklake` and `delta_export`, publish for that line); duckrun and iceberg
-  track the latest PRE-RELEASE (`--pre duckdb`) so the two OneLake DuckDB legs share one
-  engine build. Never pin `deltalake` for duckrun: the adapter pins it itself.
+  extensions, `mssql_ducklake` and `delta_export`, publish for that line); duckrun tracks the
+  latest PRE-RELEASE (`--pre duckdb`). Never pin `deltalake` for duckrun: the adapter pins it
+  itself. **iceberg's dbt no longer uses the pip `duckdb` at all** — dbt OSS 2 bundles its own
+  engine. The `--pre duckdb` in `requirements/iceberg_runner.txt` is for `compact_iceberg.py`
+  only, which needs `iceberg_rewrite_data_files()` off the 1.6.0 dev line.
 - **duckrun: `insert` and `merge_clauses={'when_matched':[{'action':'do_nothing'}]}` are the
   same operation** — a DuckDB anti-join plus a plain append, no delta-rs merge pool, no file
   rewritten. Prefer it to `merge` wherever the model only ever adds rows; a delta-rs merge
   scales with the target's partition span, not the batch, which is what OOM-kills big facts.
   `partition_by` + `incremental_predicates` on `month_key` is what makes the probe prune.
 - **duckrun, ducklake and iceberg run dbt INSIDE Fabric** (`.github/scripts/remote_dbt.py` →
-  duckrun's `run_python`, 8 vCores; `run_in_fabric.py` is what runs there). Do not move them
+  duckrun's `run_python`, 8 vCores; `run_in_fabric.py` is what runs there — and it picks the
+  project dir and invokes dbt 1.x in-process via `dbtRunner` but dbt 2 as a SUBPROCESS, since
+  v2 is a Rust engine with no `dbtRunner` to import). Do not move them
   back onto the runner: DuckDB folds the archive in memory and the 7 GB hosted runner was shut
   down mid-`fct_scada` twice in one day. Tokens are minted in the notebook by `notebookutils`
   (the `setup` hook); only the `FORWARD` allowlist of config travels, never anything
@@ -116,7 +149,7 @@ python download_aemo.py && dbt build --target duckrun --profiles-dir .
   1.0, which cannot parse the ragged/quoted AEMO rows. Plain CSV + PARSER 2.0 is the only
   working combination, and it is why everything lands uncompressed.
 - **dbt-fabric wraps singular tests in a CTE of its own**, so a test's SQL cannot start with
-  `WITH` — use nested derived tables (`tests/aemo/dwh/*`). Merge models are built as a CTAS
+  `WITH` — use nested derived tables (`dbt1/tests/aemo/dwh/*`). Merge models are built as a CTAS
   temp table and merged FROM it, so `fct_summary` may start with `WITH` (it does). Views are
   wrapped in `EXEC('create view ... as <sql>')`, where a leading `-- {{ ref(...) }}` comment
   collapses onto the SELECT and comments it out.
@@ -130,13 +163,15 @@ python download_aemo.py && dbt build --target duckrun --profiles-dir .
   parity split by up to 63k rows. Do not reintroduce a per-engine variant. A drifted summary
   is reset by DROPPING the table — any engine, a one-off manual drop is fine on dwh too, it is
   the per-run `--full-refresh` that is not — because merge cannot retract rows and
-  `--full-refresh` on iceberg fails (`fct_summary__dbt_tmp does not exist`).
+  `--full-refresh` on iceberg fails (`fct_summary__dbt_tmp does not exist`) — though dbt 2's
+  table materialization has a direct-create path for Iceberg REST, so that may no longer hold;
+  nothing depends on it either way, the reset is still a DROP.
 - **Fabric's Spark catalog base32hex-decodes every part of a multipart name** (alphabet
   `0-9A-V`). `text.\`path\`` fails on the `x` ("Failed to decode multipart name: 'text'");
   `parquet.\`path\`` works only because every letter of `parquet` is inside the alphabet. And
   on a schema-enabled lakehouse dbt-fabricspark's `__dbt_tmp` is a PERSISTENT view, so a model
   body cannot read a TEMPORARY VIEW either. The spark fact models therefore read through a
-  `<model>__stage` Delta table built by two pre_hooks (`macros/spark_read_csv.sql`). Do not
+  `<model>__stage` Delta table built by two pre_hooks (`dbt1/macros/spark_read_csv.sql`). Do not
   "simplify" it back to a direct read.
 - **Spark's `CAST(string AS TIMESTAMP)` returns NULL for `yyyy/MM/dd` instead of erroring.**
   AEMO ships slashes. Parse the format explicitly. DuckDB and T-SQL both accept slashes, so
@@ -165,7 +200,10 @@ python download_aemo.py && dbt build --target duckrun --profiles-dir .
 - The duplicated model files. Five copies of `fct_summary.sql` is the design: they are
   gated so exactly one is live, and the duplication is what lets each engine say what its
   adapter forces without a thicket of conditionals. The shared *data* — the AEMO column
-  layout — lives in `macros/aemo_columns.sql` and must stay there.
+  layout — lives in `macros/aemo_columns.sql`, at the REPO ROOT, and must stay there: both
+  projects reach it through `macro-paths: [..., "../macros"]`. The three model patch files
+  are the one thing that genuinely is duplicated (a patch file must sit in its own project's
+  model-paths); `tests_py/test_patch_files_match.py` pins the two copies byte for byte.
 - `fabric_items/` vs `semantic_model/` being separate directories. duckrun's `deploy()`
   takes no exclude filter, and `_scan_item_folders` validates every item folder before
   deploying any, so one stray folder makes the whole deploy ship nothing. The model is

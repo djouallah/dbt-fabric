@@ -1,14 +1,14 @@
-# iceberg: dbt-duckdb writing through the OneLake Iceberg REST catalog.
+# iceberg: dbt OSS 2, writing through the OneLake Iceberg REST catalog.
 #
-# LATEST PRE-RELEASE, UNPINNED. Compaction (.github/scripts/compact_iceberg.py) needs
-# iceberg_rewrite_data_files(), which exists only on the 1.6.0 dev line — so this needs a
-# pre-release, but it floats rather than sitting on one hand-bumped build. The DuckDB
-# extension binaries (azure/iceberg/avro) are keyed to the duckdb build, so whatever this
-# resolves to pins the iceberg extension with it.
+# THIS IS THE WHOLE LIST. dbt v2 is a self-contained engine -- it bundles its own DuckDB and
+# needs no adapter package, so there is no dbt-duckdb here and no `duckdb` pip either. The
+# project it builds is dbt2/.
 #
-# The `--pre` is what makes pip consider dev builds at all; without it pip resolves the
-# newest STABLE duckdb and compaction silently loses its rewrite function (the script
-# already degrades gracefully via has_rewrite_function()).
---pre
-duckdb
-duckrun
+# WHO INSTALLS THIS: the Fabric notebook (.github/scripts/remote_dbt.py reads this file and
+# pip-installs it there) and the free gating job in ci.yml. The RUNNER installs
+# requirements/iceberg_runner.txt instead -- see that file for why the two cannot be one.
+#
+# PINNED, unlike the duckdb legs. v2 is four days old at time of writing and its
+# catalogs.yml v2 spec still logs "experimental ... liable to change" (dbt1701), so a float
+# here would let the spec move under a leg that has no local reproduction.
+dbt-oss==2.0.4

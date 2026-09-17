@@ -1,0 +1,51 @@
+# The OneLake Iceberg REST catalog, as a dbt v2 catalog integration.
+#
+# THIS FILE IS WHY dbt2 IS A SEPARATE PROJECT. dbt reads catalogs.yml from the directory
+# holding dbt_project.yml. Drop this file next to ../dbt1/dbt_project.yml and all four of
+# those engines die on it — "Adapter 'duckdb' does not support catalogs.yml v2 yet" with
+# use_catalogs_v2 set, or a v1-loader validation error without it.
+#
+# It replaces the whole `attach:` block the dbt-duckdb leg used to carry in profiles.yml.
+# dbt emits the CREATE SECRET and the ATTACH itself now; the four write-compat options
+# below are the same ones that block was passing by hand.
+#
+# `{{ env_var(...) }}` is rendered by dbt's SecretRenderer, the same renderer profiles.yml
+# gets. If a dbt release ever stops rendering Jinja here, the fallback is what
+# direct-lake-parquet-layout's dbt-core2-demo.yml does: write this file from Python with
+# str.replace on placeholders. NEVER from an unquoted shell heredoc — the backticks in
+# these comments get command-substituted, and one such run executed a bare `az login` that
+# fell through to a device-code prompt and blocked until it was cancelled by hand.
+
+catalogs:
+  - name: onelake
+    type: iceberg_rest
+    table_format: iceberg
+    config:
+      duckdb:
+        # provision.py emits both of these. WAREHOUSE_PATH is `<workspaceID>/<itemID>` —
+        # the REST catalog addresses the lakehouse that way, not as an abfss URL.
+        endpoint: "{{ env_var('ONELAKE_ENDPOINT') }}"
+        warehouse: "{{ env_var('WAREHOUSE_PATH') }}"
+        # Names the `type: iceberg` secret in profiles.yml — the catalog bearer token.
+        # The separate `type: azure` secret there is what authorises the DATA files.
+        secret: onelake_cat
+        # OneLake vends no storage credential on a catalog operation, so the client brings
+        # its own (the azure secret). Anything else makes DuckDB wait for a vend that never
+        # comes.
+        access_delegation_mode: NONE
+        # Plain booleans, unlike the dbt-duckdb leg that had to write int 0/1 because that
+        # adapter silently DROPPED boolean-false attach options. dbt v2 passes them through.
+        #
+        # stage_create_tables false: OneLake does not vend credentials on createTable, so a
+        # staged CREATE TABLE AS SELECT cannot write its data files. CTAS is split into
+        # create-then-insert instead.
+        stage_create_tables: false
+        # OneLake rejects the follow-up metadata update as a second update type in one
+        # request ("Only one instance of each update type is allowed per request").
+        skip_create_table_metadata_updates: true
+        # The namespace a relation lands in when nothing else names one. Every model here
+        # sets its own schema through generate_schema_name() (iceberg_landing /
+        # iceberg_mart), so this is only a floor — but it must be a namespace that EXISTS,
+        # because OneLake refuses namespace creation (422 on POST .../namespaces) and `dbo`
+        # is the one a Fabric lakehouse always has.
+        default_schema: dbo

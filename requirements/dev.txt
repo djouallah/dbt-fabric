@@ -1,16 +1,12 @@
-# The unit-test environment only. tests_py/ pins the shared column spec, the iceberg
-# adapter overrides (against the INSTALLED dbt-duckdb) and every singular test against its
-# own SQL dialect. None of that needs the Fabric adapters.
+# The free offline checks: `python -m pytest tests_py/ -q`.
 #
-# THERE IS DELIBERATELY NO "all five adapters" ENVIRONMENT, because they cannot share one:
-#   * dbt-fabric and dbt-fabricspark shadow each other under the dbt.adapters namespace --
-#     loading the spark plugin then fails with "has no attribute 'Plugin'"
-#   * dbt-fabric-samdebruyn (the fork this replaced) instead made the spark profile fail
-#     validation with "'database' is a required property"
-# Both were found by CI, not locally, and neither is a config error to work around in
-# profiles.yml. So check_gating.py takes ONE engine and CI runs it as a five-way matrix,
-# each leg installing only requirements/<engine>.txt -- which is more faithful anyway:
-# every engine is then validated against exactly the dependencies it will build with.
-dbt-duckdb
-sqlglot
+# NO dbt HERE ANY MORE. tests_py used to pin macros/iceberg_adapter_overrides.sql against
+# the INSTALLED dbt-duckdb, which meant the unit job had to install an adapter. That file is
+# gone -- once the iceberg engine moved to dbt2/ its only live branch was dead, and dbt v2
+# ships its own Iceberg-aware DuckDB macros -- so the unit tests are now pure file reading
+# and sqlglot parsing, and install neither dbt nor an adapter.
+#
+# pyyaml is explicit rather than inherited: it used to arrive transitively via dbt-core.
 pytest
+pyyaml
+sqlglot

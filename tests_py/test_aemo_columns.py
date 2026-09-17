@@ -17,8 +17,11 @@ from pathlib import Path
 
 import pytest
 
-REPO = Path(__file__).resolve().parents[1]
-SPEC = REPO / "macros" / "aemo_columns.sql"
+from _layout import REPO, SHARED_MACROS, models_dir, singular_tests_dir
+
+# The SHARED macro dir, read by both dbt1/ and dbt2/. That this file has exactly one
+# home is the point of the whole module.
+SPEC = SHARED_MACROS / "aemo_columns.sql"
 
 # The record layouts, as measured across all four source repos before the merge.
 EXPECTED = {
@@ -98,7 +101,7 @@ def test_no_engine_carries_its_own_column_list():
     """The point of the merge: no model may re-declare the AEMO layout locally."""
     offenders = []
     for engine in ENGINES:
-        for p in (REPO / "models" / "aemo" / engine).rglob("*.sql"):
+        for p in models_dir(engine).rglob("*.sql"):
             txt = p.read_text(encoding="utf-8")
             # A local list is a `set <name> = [ ... ]` holding many quoted UPPERCASE names.
             for m in re.finditer(r"\{%-?\s*set\s+\w+\s*=\s*\[(.*?)\]\s*-?%\}", txt, re.S):
@@ -117,13 +120,13 @@ def test_every_engine_has_the_canonical_models():
         "fct_price_today", "fct_scada", "fct_scada_today", "fct_summary",
     }
     for engine in ENGINES:
-        got = {p.stem for p in (REPO / "models" / "aemo" / engine).rglob("*.sql")}
+        got = {p.stem for p in models_dir(engine).rglob("*.sql")}
         assert got == canonical, f"{engine}: {sorted(got ^ canonical)} differs from the canonical set"
 
 
 def test_every_engine_has_the_same_singular_tests():
     def names(engine: str) -> set[str]:
-        return {p.name for p in (REPO / "tests" / "aemo" / engine).glob("*.sql")}
+        return {p.name for p in singular_tests_dir(engine).glob("*.sql")}
 
     base = names(ENGINES[0])
     for engine in ENGINES[1:]:

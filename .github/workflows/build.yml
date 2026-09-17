@@ -104,7 +104,17 @@ jobs:
           cache-dependency-path: requirements/*.txt
 
       - name: Install ${{ inputs.engine }} dependencies
-        run: pip install -r requirements/${{ inputs.engine }}.txt
+        # `<engine>_runner.txt` when there is one, else `<engine>.txt`. Only iceberg has the
+        # split, and it has to: that leg's dbt is dbt OSS 2, which cannot share an
+        # environment with duckrun (duckrun pins dbt-core<2 and would lay a 1.x `dbt` script
+        # over v2's). The runner here never runs dbt for iceberg -- it provisions, launches
+        # the notebook and compacts -- so it installs duckrun + duckdb, while
+        # requirements/iceberg.txt (dbt-oss alone) goes to the notebook and the gating job.
+        run: |
+          REQ="requirements/${ENGINE}_runner.txt"
+          [ -f "$REQ" ] || REQ="requirements/${ENGINE}.txt"
+          echo "installing $REQ"
+          pip install -r "$REQ"
 
       # ---- auth -------------------------------------------------------------------
       # duckrun — and ONLY duckrun — mints every token it needs (OneLake storage, Fabric
@@ -154,6 +164,10 @@ jobs:
 
       - name: dbt build
         if: env.REMOTE != 'true'
+        # dbt1/, always: the only engines that reach this step are dwh and spark, and both
+        # are dbt-core 1.x. The v2 engine (iceberg) is in the REMOTE list and builds in the
+        # notebook instead, out of dbt2/ -- see .github/scripts/run_in_fabric.py.
+        working-directory: dbt1
         # `dbt retry` needs --target too, or it renders the profile's default target.
         run: |
           dbt build --target "$ENGINE" --profiles-dir . \
@@ -162,9 +176,12 @@ jobs:
       # ---- fingerprint -------------------------------------------------------------
       - name: Fingerprint gold layer
         if: env.REMOTE != 'true'
+        working-directory: dbt1
+        # parity.py is addressed through $GITHUB_WORKSPACE: this step's cwd is the project,
+        # not the repo root, and the artifact path below is repo-relative.
         run: |
           dbt run-operation parity_fingerprint --target "$ENGINE" --profiles-dir . \
-            | python .github/scripts/parity.py capture history/parity
+            | python "$GITHUB_WORKSPACE/.github/scripts/parity.py" capture "$GITHUB_WORKSPACE/history/parity"
 
       - uses: actions/upload-artifact@v4
         if: always()
@@ -204,7 +221,10 @@ jobs:
           cache: pip
           # Default glob is **/requirements.txt, which this repo has not got.
           cache-dependency-path: requirements/*.txt
-      - run: pip install -r requirements/iceberg.txt
+      # The RUNNER list (duckdb + duckrun), not requirements/iceberg.txt. This job is a
+      # metadata rewrite against the catalog and never invokes dbt, so it wants the same
+      # environment the build job's runner had -- and dbt-oss must stay out of it.
+      - run: pip install -r requirements/iceberg_runner.txt
       - uses: azure/login@v2
         with:
           client-id: ${{ secrets.AZURE_CLIENT_ID }}

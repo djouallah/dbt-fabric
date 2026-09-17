@@ -5,7 +5,7 @@ One dbt project that builds the **same AEMO gold layer** on five adapters:
 | target | adapter | engine | shape | writes |
 |---|---|---|---|---|
 | `duckrun` | `duckrun` | DuckDB | single node | Delta Lake on OneLake, via delta-rs |
-| `iceberg` | `dbt-duckdb` | DuckDB | single node | Iceberg, through the OneLake Iceberg REST catalog |
+| `iceberg` | `dbt-oss` 2 | DuckDB | single node | Iceberg, through the OneLake Iceberg REST catalog |
 | `ducklake` | `dbt-duckdb` | DuckDB | single node | DuckLake parquet + a Delta export, catalog in a Fabric SQL DB |
 | `dwh` | `dbt-fabric` | Fabric Warehouse | distributed | Delta tables in the Warehouse, written with T-SQL |
 | `spark` | `dbt-fabricspark` | Fabric Spark | distributed | Delta in a Fabric Lakehouse |
@@ -47,7 +47,7 @@ that three correctness fixes each existed in exactly one of them.
 pip install -r requirements/duckrun.txt
 export FILES_PATH=./landing ONELAKE_TABLES_PATH=./warehouse
 python download_aemo.py
-dbt build --target duckrun --profiles-dir .
+cd dbt1 && dbt build --target duckrun --profiles-dir .
 ```
 
 That works on a laptop with no Fabric account: `duckrun` writes Delta to a local directory.
@@ -71,11 +71,16 @@ it can import.
 ## Layout
 
 ```
-models/aemo/<engine>/<layer>/<model>.sql   the same 8 model names in all five trees
-models/aemo/_staging.yml _dimensions.yml _marts.yml
-                                           ONE patch file per layer, shared by all engines
-macros/aemo_columns.sql                    the AEMO CSV layout — single source of truth
-tests/aemo/<engine>/                       the same 12 assertions, per dialect
+dbt1/                                      dbt-core 1.x: duckrun, ducklake, dwh, spark
+dbt2/                                      dbt OSS 2: iceberg (+ its catalogs.yml)
+<project>/models/aemo/<engine>/<layer>/<model>.sql
+                                           the same 8 model names in all five trees
+<project>/models/aemo/_staging.yml _dimensions.yml _marts.yml
+                                           ONE patch file per layer; the two projects' copies
+                                           are pinned identical by tests_py
+macros/aemo_columns.sql                    the AEMO CSV layout — single source of truth,
+                                           SHARED: both projects read ../macros
+<project>/tests/aemo/<engine>/             the same 12 assertions, per dialect
 download_aemo.py                           one downloader, one landing zone, plain CSV
 .github/scripts/check_gating.py            proves the gating, offline
 .github/scripts/parity.py                  proves the engines agree
@@ -88,19 +93,27 @@ semantic_model/                            one Direct Lake model, deployed once 
 Five copies of each model is the design, not an accident. They are gated so exactly one is
 live, and the duplication is what lets each engine say what its adapter forces in plain SQL,
 without a thicket of `{% if target.type %}` conditionals. The shared *data* — the AEMO
-column layout — lives once, in `macros/aemo_columns.sql`.
+column layout — lives once, in `macros/aemo_columns.sql`, which both projects read.
+
+**Why two projects.** `catalogs.yml` is how dbt 2 declares an Iceberg REST catalog, and dbt
+reads it from the directory holding `dbt_project.yml`. Put one next to a dbt 1.x project and
+every engine in it dies — `Adapter 'duckdb' does not support catalogs.yml v2 yet` with
+`use_catalogs_v2` set, or a v1-loader validation error without it. So the split is by dbt
+major version and nothing else: same models, same patch files, same shared macros, same
+`iceberg_landing` / `iceberg_mart` schemas the dbt-duckdb leg wrote before it.
 
 ### How one run selects one engine
 
-`dbt build --target dwh` sets `target.name == 'dwh'`, so only `models/aemo/dwh/**` is
-`+enabled` and the other four trees parse into `manifest['disabled']`. The model file names
-are *identical* across the five trees — legal only because exactly one tree is enabled per
-run. There is no `--select` anywhere.
+`dbt build --target dwh` in `dbt1/` sets `target.name == 'dwh'`, so only
+`models/aemo/dwh/**` is `+enabled` and its three sibling trees parse into
+`manifest['disabled']`. The model file names are *identical* across all five trees — legal
+only because exactly one tree is enabled per run. There is no `--select` anywhere.
 
-Gating is on **`target.name`, not `target.type`**, because `iceberg` and `ducklake` are both
-`type: duckdb`. Same reason `macros/iceberg_adapter_overrides.sql` guards each `duckdb__`
-override on `target.name`: a `duckdb__` macro dispatches on adapter *type* and so reaches
-both targets.
+Gating is on **`target.name`, not `target.type`**. The four `dbt1` targets happen to have
+four distinct types today, but that is an accident of the engine list — `target.name` is the
+folder name, which is what selection actually means. `dbt2` holds one tree and keeps the same
+gate anyway: without it a run under the wrong target name would build into the wrong schema
+rather than building nothing.
 
 **The default failure mode of this design is a green run that built nothing.** A target name
 that matches no folder disables everything, and `dbt build` then reports "Nothing to do" and
@@ -141,7 +154,8 @@ by *kind*, because the kind is the finding.
 | engine | difference |
 |---|---|
 | iceberg | insert-only merge on every model — the OneLake Iceberg catalog rejects a matched-UPDATE (data files + delete files in one commit) with `BadRequest 400`, "Only one instance of each update type is allowed per request" |
-| iceberg | `duckdb__` overrides for the hidden `__` column and for `DROP` without `CASCADE`; no snapshot expiry, so `compact_iceberg.py` is a real job |
+| iceberg | a whole separate dbt project (`dbt2/`) on dbt OSS 2, because `catalogs.yml` cannot sit in a dbt 1.x project root. In exchange the adapter patches disappear: dbt 2's own DuckDB macros already use `DESCRIBE` for Iceberg column discovery, `DROP` without `CASCADE`, a standalone rename and a direct-create path for Iceberg REST |
+| iceberg | no snapshot expiry, so `compact_iceberg.py` is a real job — and it speeds up reads without shrinking storage |
 | duckrun | `merge` with *do nothing on match* is a DuckDB anti-join plus a plain append — no file rewritten; compaction and vacuum are built into the adapter, so there is no maintenance job |
 | ducklake | community `mssql_ducklake` extension (which *replaces* stock `ducklake`), `threads: 1` for a single-writer catalog, compaction hooks, and `delta_export()` — no arguments, it writes each table's `_delta_log` in place, which is why its `data_path` is the lakehouse `Tables/` section |
 | ducklake | the catalog DB needs `COLLATE Latin1_General_100_BIN2_UTF8`, which cannot be changed after creation |
@@ -214,7 +228,9 @@ green. `check_gating.py` asserts the prefix offline.
 ## CI
 
 - `ci.yml` — free and credential-less: pytest, plus `check_gating.py` as a five-way matrix
-  (one environment per engine). Runs on every push.
+  (one environment per engine). Runs on every push. The matrix cannot be collapsed into one
+  job: `dbt-fabric` and `dbt-fabricspark` shadow each other under `dbt.adapters`, and dbt OSS
+  2 and `duckrun` both want to own the `dbt` console script.
 - `build.yml` — the reusable per-engine leg: `dbt build` (models and tests) → fingerprint (it lands
   only when the caller passes `land: true`). **duckrun, ducklake and iceberg run dbt on
   Fabric compute** — a throwaway Python notebook of 8 vCores through duckrun's `run_python`

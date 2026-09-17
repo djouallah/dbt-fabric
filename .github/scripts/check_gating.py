@@ -1,16 +1,24 @@
 #!/usr/bin/env python3
 """Prove the +enabled gating is correct, offline and without credentials.
 
-WHY THIS EXISTS: the default failure mode of the five-tree layout is a run that builds
+WHY THIS EXISTS: the default failure mode of the engine-tree layout is a run that builds
 NOTHING and exits 0. If a target name stops matching a folder name, every +enabled goes
 false, `dbt build` reports "Nothing to do", and the job goes green having done nothing.
 Nothing else in the repo catches that.
 
-Runs `dbt parse` once per target with dummy env vars and asserts, for each:
+TWO PROJECTS, FIVE ENGINES. dbt1/ is dbt-core 1.x (duckrun, ducklake, dwh, spark); dbt2/ is
+dbt OSS 2 (iceberg). They are separate dbt projects because catalogs.yml lives next to
+dbt_project.yml and dbt 1.x aborts on one -- see dbt2/dbt_project.yml. This script checks
+BOTH, so a change that silently disables a tree in either is caught the same way.
+
+Runs `dbt parse` once per engine with dummy env vars and asserts, for each:
   * the ENABLED model set is exactly the canonical eight
-  * the other four engine trees are in manifest['disabled'] -- not merely ABSENT, because
-    a tree that failed to parse at all would also look empty
+  * every other engine tree IN THE SAME PROJECT is in manifest['disabled'] -- not merely
+    ABSENT, because a tree that failed to parse at all would also look empty. dbt2 holds one
+    tree, so there is nothing for it to disable and the check is a no-op there.
   * every model fqn is [aemo_electricity, aemo, <engine>, <layer>, <name>]
+  * the schema is <engine>_landing / <engine>_mart -- the engine prefix is what keeps five
+    engines from overwriting each other inside one shared lakehouse
   * the enabled singular-test count matches, and no test belongs to another engine
   * the generic tests (declared in models/aemo/_*.yml) run on EVERY engine -- this is the
     one that regressed elsewhere: a gate on the project key silently disabled them,
@@ -18,17 +26,23 @@ Runs `dbt parse` once per target with dummy env vars and asserts, for each:
 
 ONE ENGINE PER INVOCATION, and CI runs it as a five-way matrix. The adapters cannot share
 an environment: dbt-fabric and dbt-fabricspark shadow each other under the dbt.adapters
-namespace ("has no attribute 'Plugin'"), and the samdebruyn fork this replaced instead made
-the spark profile fail validation outright. Running per engine is also more faithful — each
-one is validated against exactly the dependencies it will build with.
+namespace ("has no attribute 'Plugin'"), and dbt OSS 2 and duckrun cannot coexist at all --
+duckrun pins dbt-core<2, which lays a dbt-core 1.x `dbt` console script over v2's. Running
+per engine is also more faithful: each one is validated against exactly the dependencies it
+will build with.
 
 Usage:  python .github/scripts/check_gating.py <engine>
-        python .github/scripts/check_gating.py            # every engine whose adapter is installed
+        python .github/scripts/check_gating.py            # every engine this shell can reach
+
+The no-argument form checks the dbt1 engines whose adapter is importable. It includes
+iceberg only when DBT2_BIN names a dbt OSS 2 executable, because one environment cannot hold
+both dbt majors -- so on a normal laptop that line reads "skipping" and CI is what covers it.
 """
 from __future__ import annotations
 
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -37,7 +51,16 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[2]
 PROJECT = "aemo_electricity"
 DATASET = "aemo"
-ENGINES = ["duckrun", "iceberg", "ducklake", "dwh", "spark"]
+
+# engine -> the dbt project directory it lives in. The KEY is the dbt target name, the
+# models/aemo/<engine>/ folder name and the schema prefix, all at once.
+ENGINES = {
+    "duckrun": "dbt1",
+    "ducklake": "dbt1",
+    "dwh": "dbt1",
+    "spark": "dbt1",
+    "iceberg": "dbt2",
+}
 
 MODELS = {
     "stg_csv_archive_log",
@@ -50,9 +73,9 @@ MODELS = {
     "fct_summary",
 }
 
-# Singular tests live at tests/aemo/<engine>/ and are gated per engine.
+# Singular tests live at <project>/tests/aemo/<engine>/ and are gated per engine.
 SINGULAR = 12
-# Generic tests come from models/aemo/_*.yml and must run on EVERY engine.
+# Generic tests come from <project>/models/aemo/_*.yml and must run on EVERY engine.
 GENERIC = 30
 
 # Enough to satisfy every profile's env_var() calls; none of it is contacted.
@@ -72,17 +95,32 @@ DUMMY_ENV = {
 }
 
 
+def dbt_bin(project: str) -> str:
+    """The dbt executable for one project.
+
+    Both distributions install a console script called `dbt`, so in a single environment
+    only one of the two projects can be parsed. CI gives each engine its own job and the
+    default is right there. Locally, point DBT1_BIN / DBT2_BIN at the two interpreters'
+    scripts if you want to check both from one shell.
+    """
+    return os.environ.get(f"{project.upper()}_BIN", "dbt")
+
+
 def parse(target: str, target_path: Path) -> dict:
+    project = ENGINES[target]
     env = {**os.environ, **DUMMY_ENV}
-    r = subprocess.run(
-        ["dbt", "parse", "--target", target, "--profiles-dir", ".",
-         "--no-partial-parse", "--target-path", str(target_path)],
-        cwd=REPO, env=env, capture_output=True, text=True,
-    )
+    cmd = [dbt_bin(project), "parse", "--target", target, "--profiles-dir", ".",
+           "--target-path", str(target_path)]
+    if project == "dbt1":
+        # dbt v2 removed the flag and warns (dbt1700) if it is passed. It is only ever
+        # belt-and-braces here anyway: every parse gets a fresh temporary --target-path, so
+        # there is no prior manifest to reuse.
+        cmd.insert(-2, "--no-partial-parse")
+    r = subprocess.run(cmd, cwd=REPO / project, env=env, capture_output=True, text=True)
     if r.returncode != 0:
         print(r.stdout[-4000:])
         print(r.stderr[-2000:], file=sys.stderr)
-        raise SystemExit(f"dbt parse failed for target {target}")
+        raise SystemExit(f"dbt parse failed for target {target} in {project}/")
     return json.loads((target_path / "manifest.json").read_text(encoding="utf-8"))
 
 
@@ -90,6 +128,8 @@ def check(target: str, manifest: dict) -> list[str]:
     errs: list[str] = []
     nodes = manifest["nodes"]
     disabled = manifest.get("disabled", {})
+    project = ENGINES[target]
+    siblings = [e for e, p in ENGINES.items() if p == project and e != target]
 
     models = {k: v for k, v in nodes.items() if v["resource_type"] == "model"}
     names = {v["name"] for v in models.values()}
@@ -101,11 +141,12 @@ def check(target: str, manifest: dict) -> list[str]:
         if len(fqn) != 5 or fqn[0] != PROJECT or fqn[1] != DATASET or fqn[2] != target:
             errs.append(f"{uid}: fqn {fqn} is not [{PROJECT}, {DATASET}, {target}, <layer>, <name>]")
 
-        # THE SCHEMA PREFIX IS LOAD-BEARING NOW. All five engines write into one shared
-        # Fabric lakehouse, so the engine name in the schema is the only thing keeping them
-        # apart. Two engines resolving to the same schema would overwrite each other's gold
-        # layer inside one item -- with every test still green, because each run would see a
+        # THE SCHEMA PREFIX IS LOAD-BEARING. All five engines write into one shared Fabric
+        # lakehouse, so the engine name in the schema is the only thing keeping them apart.
+        # Two engines resolving to the same schema would overwrite each other's gold layer
+        # inside one item -- with every test still green, because each run would see a
         # perfectly consistent table. Nothing downstream catches that; this does, offline.
+        # It is also what lets dbt2's iceberg pick up the schemas the dbt-duckdb leg wrote.
         schema = node.get("schema") or node.get("config", {}).get("schema") or ""
         if schema not in (f"{target}_landing", f"{target}_mart"):
             errs.append(
@@ -113,16 +154,15 @@ def check(target: str, manifest: dict) -> list[str]:
                 f"the engine prefix from generate_schema_name() is missing or wrong"
             )
 
-    # The other four trees must be present-and-disabled, not simply missing.
+    # Sibling trees in the SAME project must be present-and-disabled, not simply missing.
+    # dbt2 has no siblings, so this loop does nothing there -- correct, not an oversight.
     disabled_engines = {
         n["fqn"][2]
         for entries in disabled.values()
         for n in entries
         if n.get("resource_type") == "model" and len(n.get("fqn", [])) >= 3
     }
-    for other in ENGINES:
-        if other == target:
-            continue
+    for other in siblings:
         if other not in disabled_engines:
             errs.append(
                 f"engine tree '{other}' is not in manifest['disabled'] -- it may have failed "
@@ -147,12 +187,28 @@ def check(target: str, manifest: dict) -> list[str]:
     return errs
 
 
-def adapter_installed(target: str) -> bool:
+def dbt_installed(target: str) -> bool:
+    """Is the right dbt on PATH for this engine's project?
+
+    dbt1 needs dbt-core 1.x plus that engine's adapter package; dbt2 needs dbt OSS 2, which
+    bundles its DuckDB engine and has no adapter to import.
+    """
+    project = ENGINES[target]
+    if project == "dbt2":
+        # EXPLICIT OPT-IN, no version sniffing. `dbt --version` prints a block listing every
+        # installed adapter's version too, so any regex hunting for a 2.x anywhere in it
+        # matches a 1.x install that merely has an adapter on 2.something -- and then this
+        # script runs dbt 1.x against the v2 project and reports a confusing profile error
+        # as if the project were broken. A false POSITIVE here is worse than a skip.
+        #
+        # So: set DBT2_BIN to a dbt OSS 2 executable to include this engine in the no-arg
+        # run. CI never reaches this code -- it names the engine as an argument.
+        return bool(os.environ.get("DBT2_BIN")) and shutil.which(dbt_bin(project)) is not None
+
     import importlib.util
 
-    mod = {"duckrun": "dbt.adapters.duckrun", "iceberg": "dbt.adapters.duckdb",
-           "ducklake": "dbt.adapters.duckdb", "dwh": "dbt.adapters.fabric",
-           "spark": "dbt.adapters.fabricspark"}[target]
+    mod = {"duckrun": "dbt.adapters.duckrun", "ducklake": "dbt.adapters.duckdb",
+           "dwh": "dbt.adapters.fabric", "spark": "dbt.adapters.fabricspark"}[target]
     try:
         return importlib.util.find_spec(mod) is not None
     except (ImportError, ValueError):
@@ -167,12 +223,12 @@ def main() -> int:
             return 2
         targets = [sys.argv[1]]
     else:
-        targets = [e for e in ENGINES if adapter_installed(e)]
+        targets = [e for e in ENGINES if dbt_installed(e)]
         skipped = [e for e in ENGINES if e not in targets]
         if skipped:
-            print(f"skipping (adapter not installed): {', '.join(skipped)}")
+            print(f"skipping (dbt or adapter not installed): {', '.join(skipped)}")
         if not targets:
-            print("no adapters installed", file=sys.stderr)
+            print("no dbt installation found for any engine", file=sys.stderr)
             return 2
 
     failed = False
@@ -182,11 +238,12 @@ def main() -> int:
         errs = check(target, manifest)
         if errs:
             failed = True
-            print(f"FAIL {target}")
+            print(f"FAIL {target} ({ENGINES[target]}/)")
             for e in errs:
                 print(f"       {e}")
         else:
-            print(f"ok   {target}  {len(MODELS)} models, {SINGULAR} singular + {GENERIC} generic tests")
+            print(f"ok   {target:<9} ({ENGINES[target]}/)  {len(MODELS)} models, "
+                  f"{SINGULAR} singular + {GENERIC} generic tests")
     if failed:
         print("\ngating is WRONG -- do not spend capacity on this build", file=sys.stderr)
         return 1

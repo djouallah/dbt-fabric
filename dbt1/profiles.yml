@@ -1,14 +1,19 @@
-# One profile, five outputs — one per adapter. Always invoked as
+# One profile, four outputs — one per adapter. Always invoked as
 #   dbt build --target <engine> --profiles-dir .
 #
+# THIS IS THE dbt-core 1.x PROJECT. The fifth engine, `iceberg`, is dbt OSS 2 and lives in
+# ../dbt2 with its own profiles.yml — see that project's dbt_project.yml for why the two
+# cannot share a root (catalogs.yml).
+#
 # THE TARGET NAME IS THE ENGINE SELECTOR. dbt_project.yml gates each models/aemo/<engine>/
-# tree on `target.name`, so these five names are load-bearing and must match the folder
-# names exactly: duckrun, iceberg, ducklake, dwh, spark. An output whose name is not one of
-# those enables NOTHING, and `dbt build` then reports "Nothing to do" and exits 0 — a broken
+# tree on `target.name`, so these four names are load-bearing and must match the folder
+# names exactly: duckrun, ducklake, dwh, spark. An output whose name is not one of those
+# enables NOTHING, and `dbt build` then reports "Nothing to do" and exits 0 — a broken
 # selection looks exactly like a clean run. That is what check_gating.py is for.
 #
-# Gating cannot key off `target.type`, the way direct-lake-parquet-layout does, because
-# `iceberg` and `ducklake` are BOTH `type: duckdb` here.
+# Gating keys off `target.name` rather than `target.type` the way
+# direct-lake-parquet-layout does. The four types here are currently all distinct, but that
+# is an accident of the engine list, not a property to rely on.
 
 aemo_electricity:
   target: duckrun
@@ -25,42 +30,6 @@ aemo_electricity:
       # int(4), not a bare int filter: Jinja's bare `int` yields 0 on a non-numeric value and
       # dbt accepts threads: 0.
       threads: "{{ env_var('DBT_THREADS', '4') | int(4) }}"
-
-    # ---------------------------------------------------------------- iceberg -----------
-    # DuckDB compute, written through the OneLake Iceberg REST catalog.
-    iceberg:
-      type: duckdb
-      path: ':memory:'
-      database: onelake
-      schema: "{{ env_var('DBT_SCHEMA', 'mart') }}"
-      threads: "{{ env_var('DBT_THREADS', '4') | int(4) }}"
-      settings:
-        preserve_insertion_order: false
-        # NO temp_directory here. dbt-duckdb re-applies `settings:` on every cursor, and
-        # DuckDB then throws "Cannot switch temporary directory after the current one has
-        # been used" once anything has spilled. It is set once in on-run-start instead.
-      secrets:
-        - type: azure
-          name: onelake_storage
-          provider: access_token
-          access_token: "{{ env_var('ONELAKE_TOKEN') }}"
-      attach:
-        - path: "{{ env_var('WAREHOUSE_PATH') }}"
-          alias: onelake
-          type: iceberg
-          options:
-            endpoint: "{{ env_var('ONELAKE_ENDPOINT') }}"
-            token: "{{ env_var('ONELAKE_TOKEN') }}"
-            access_delegation_mode: 'none'
-            # int 0/1, NOT false/true: dbt-duckdb silently DROPS boolean-false attach
-            # options, so `stage_create_tables: false` would vanish and the catalog would
-            # get the staged-create path it rejects.
-            stage_create_tables: 0
-            skip_create_table_metadata_updates: 1
-            default_schema: dbo
-      # No `extensions:` list: azure / iceberg / avro auto-install and auto-load from the
-      # stable core repo on duckdb >= 1.5.4. The extension binary is keyed to the duckdb
-      # build, so pinning duckdb in requirements/iceberg.txt pins the iceberg extension too.
 
     # ---------------------------------------------------------------- ducklake -----------
     # DuckDB compute over a DuckLake catalog whose metadata lives in a Fabric SQL DB, with
@@ -80,7 +49,7 @@ aemo_electricity:
         mssql_query_timeout: 600
         mssql_metadata_timeout: 600
         mssql_connection_timeout: 120
-      # The same OneLake secret the iceberg output carries. The original ducklake repo ran
+      # The same OneLake secret ../dbt2's iceberg output carries. The original ducklake repo ran
       # dbt INSIDE a Fabric notebook, where DuckDB got no OneLake token from the profile and
       # did not need one; anywhere else that is an unauthenticated abfss:// write. ONELAKE_TOKEN
       # is minted by notebookutils on the remote leg (see .github/scripts/remote_dbt.py) or by
