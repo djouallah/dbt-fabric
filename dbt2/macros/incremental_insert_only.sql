@@ -32,6 +32,26 @@
     `duckdb__merge_join_clause`: that macro is an internal of the bundled adapter, and a
     project macro calling it would bind this leg to a name dbt is free to rename. The shape is
     the same one it produces.
+
+    `WHEN MATCHED THEN DO NOTHING` is spelled out rather than omitted. An absent WHEN MATCHED
+    behaves identically, but this way the intent is legible in the query log and in a Fabric
+    capacity trace, and it reads the same as the merge_clauses the other four engines declare.
+    `INSERT BY NAME`, not BY POSITION: the temp relation is built from the model's own SELECT,
+    so the names line up and the column ORDER does not have to.
+
+    PUT NO JINJA COMMENT BETWEEN THE SQL LINES OF THE STATEMENT BELOW, and none of the
+    trimming kind anywhere near them. This repo's comment style opens and closes with a dash,
+    which is Jinja's whitespace-TRIMMING form: it eats the newline on each side, so a comment
+    between two SQL lines welds the keywords together. One between DO NOTHING and WHEN NOT
+    MATCHED shipped a statement reading NOTHINGWHEN and failed against the live catalog.
+    Two related rules, both already in CLAUDE.md and both met here: a comment must never quote
+    the comment delimiters (it closes itself early and the rest of the prose lands in the SQL),
+    and the last tag before SQL closes without a dash.
+
+    Everything worth saying therefore lives in this header, and
+    tests_py/test_insert_only_strategy.py renders the macro and asserts the keywords come out
+    separated -- `dbt parse` will not do it for you, so without that test the next slip is
+    found by a Fabric notebook.
 --#}
 
 {% macro get_incremental_insert_only_sql(arg_dict) -%}
@@ -62,15 +82,8 @@
   MERGE INTO {{ target }} AS DBT_INTERNAL_DEST
     USING {{ source }} AS DBT_INTERNAL_SOURCE
     ON ({{ (join_predicates + predicates) | join(") AND (") }})
-
-  {#-- Spelled out rather than omitted. An absent WHEN MATCHED behaves identically, but this
-       way the intent is legible in the query log and in a Fabric capacity trace, and it reads
-       the same as the merge_clauses the other four engines declare. --#}
   WHEN MATCHED THEN
     DO NOTHING
-
-  {#-- BY NAME, not BY POSITION: the temp relation is built from the model's own SELECT, so
-       the names line up and the column ORDER does not have to. --#}
   WHEN NOT MATCHED THEN
     INSERT BY NAME
 
