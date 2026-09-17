@@ -234,9 +234,27 @@ def test_a_run_that_never_connected_is_inconclusive(smoke):
     assert "INCONCLUSIVE" in smoke.read_verdict(all_failed)
 
     # ... but a reached catalog with a failed merge is still a real finding.
-    reached = [(1, "x", "PASS (3 row(s))"), (6, "x", "FAIL - unsupported"),
-               (8, "x", "PASS (2 row(s))"), (10, "x", "MISMATCH")]
+    reached = [(1, "x", "PASS (3 row(s))"), (3, "x", "PASS (1 row(s))"),
+               (6, "x", "FAIL - unsupported"), (8, "x", "PASS (2 row(s))"),
+               (10, "x", "MISMATCH")]
     assert "INCONCLUSIVE" not in smoke.read_verdict(reached)
+
+
+def test_a_run_that_created_nothing_is_inconclusive(smoke):
+    """Probes 6-10 can only report a missing table when CREATE TABLE failed.
+
+    Observed on run 35188439628: the catalog was reachable and `create schema` passed, but
+    every write died on the storage credential. Probe 8 then listed nothing -- correctly, the
+    schema was empty -- and the summary announced "not viable yet, dbt-spark cannot see
+    existing relations". Same class of wrong answer as the connection case above.
+    """
+    no_table = [(1, "x", "PASS (9 row(s))"), (3, "x", "FAIL - Identity not found"),
+                (6, "x", "FAIL - Table not found"), (8, "x", "EMPTY - listed NOTHING"),
+                (10, "x", "FAIL - Table not found")]
+    v = smoke.read_verdict(no_table)
+    assert "INCONCLUSIVE" in v
+    # and it should name the actual cause rather than leaving it to be rediscovered
+    assert "AZURE_STORAGE_TOKEN" in v
 
 
 def test_expected_rows_cover_every_key_the_probes_write(smoke):

@@ -71,6 +71,18 @@ def catalog_cfg(token):
 
 os.environ["SAIL_CATALOG__LIST"] = catalog_cfg(TOKEN)
 os.environ.setdefault("SAIL_CATALOG__DEFAULT_CATALOG", CATALOG)
+
+# TWO CREDENTIALS, NOT ONE -- the same split dbt2/profiles.yml spells out for the iceberg leg
+# ("TWO SECRETS, NOT ONE": `azure` authorises the DATA files over abfss, `iceberg` authorises
+# the REST CATALOG). The catalog's bearer_token above covers only the catalog. Without this,
+# `show databases` and `create schema` both pass -- they are pure catalog calls -- and the
+# first statement that touches storage dies with
+#   Generic MicrosoftAzure error: ... GET http://169.254.169.254/metadata/identity/oauth2/token
+#   ... 400 Bad Request: {"error":"invalid_request","error_description":"Identity not found"}
+# because Sail walked its Azure credential chain down to the instance metadata endpoint. A
+# hosted runner has no managed identity, and AZURE_CLIENT_ID being set for azure/login is what
+# sends it there. Assignment, not setdefault: ours is the one that works.
+os.environ["AZURE_STORAGE_TOKEN"] = TOKEN
 os.environ.setdefault("SAIL_OPTIMIZER__ENABLE_JOIN_REORDER", "true")
 os.environ.setdefault("SAIL_EXECUTION__COLLECT_STATISTICS", "true")
 
@@ -316,6 +328,19 @@ def read_verdict(results):
                 "anything about Sail. Check the SAIL_CATALOG__LIST url in the banner above: "
                 "the item resolves by GUID (<workspace-id>/<lakehouse-id>), and a name there "
                 "comes back as `Failed to load config: 400 Bad Request`.")
+
+    # Same rule one step later. With no table created, probes 6-10 can only report that it is
+    # missing, and reading THAT as "merge is unsupported" or "listing is broken" is the same
+    # confident wrong answer. A run where CREATE TABLE failed measures nothing below it.
+    created = by_n.get(3, "")
+    if not created.startswith("PASS"):
+        hint = ""
+        if "Identity not found" in created or "169.254.169.254" in created:
+            hint = (" The error is Sail reaching the instance metadata endpoint for a STORAGE "
+                    "token, which means the data-file credential never arrived -- the "
+                    "catalog's bearer_token covers the catalog only. Set AZURE_STORAGE_TOKEN.")
+        return (f"VERDICT: INCONCLUSIVE -- CREATE TABLE failed, so nothing was written and "
+                f"probes 6-10 only report a missing table.{hint}")
 
     if not listing.startswith("PASS"):
         return ("VERDICT: not viable yet — `show table extended` did not list the schema, so "
