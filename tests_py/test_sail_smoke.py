@@ -215,6 +215,23 @@ def test_merge_probes_use_dbt_spark_shape(smoke):
     )
 
 
+def test_every_create_names_the_table_format(smoke):
+    """A bare CREATE TABLE gets refused by the catalog.
+
+    Sail defaults to parquet, and the OneLake Iceberg REST catalog will not have it: "not
+    supported: Iceberg REST catalog cannot create 'parquet' tables" (run 35188636093). This is
+    dbt-spark's `file_format: iceberg` said in DDL, and forgetting it on one of the three
+    creates fails that probe alone, which reads like a finding about the statement rather than
+    about the missing clause.
+    """
+    src = SMOKE_PY.read_text(encoding="utf-8")
+    creates = [ln for ln in src.splitlines() if "create table {" in ln]
+    assert len(creates) == 3, f"the create statements moved: {creates}"
+    for ln in creates:
+        assert "using {FILE_FORMAT}" in ln, f"create without a format: {ln.strip()}"
+    assert smoke.FILE_FORMAT == "iceberg"
+
+
 def test_relation_listing_probe_exists(smoke):
     # The quiet one. Empty output here means dbt-spark cannot see existing relations and every
     # run silently full-refreshes -- worse than an error, so it must stay probed.

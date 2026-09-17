@@ -92,6 +92,12 @@ os.environ.setdefault("SAIL_EXECUTION__COLLECT_STATISTICS", "true")
 # insert-only merge must LEAVE 1 ALONE and add 5.
 EXPECTED = [(1, 10), (2, 99), (3, 30), (4, 40), (5, 50)]
 
+# EVERY CREATE MUST NAME IT. Sail's CREATE TABLE defaults to parquet and the OneLake
+# Iceberg REST catalog refuses that outright -- "not supported: Iceberg REST catalog
+# cannot create 'parquet' tables" (run 35188636093). This is what dbt-spark expresses as
+# `file_format: iceberg`, so a real leg carries it in config; here it goes in the DDL.
+FILE_FORMAT = "iceberg"
+
 # Created BETWEEN probes 6 and 7 -- probe 6 has to read its own source before this table
 # exists, so it cannot be a probe of its own. Hoisted to a constant anyway so tests_py can
 # check the keys it introduces against EXPECTED.
@@ -143,11 +149,12 @@ def probes():
          "is the catalog reachable at all"),
         (2, "create schema", f"create schema if not exists {SCHEMA}",
          "dbt creates its own schemas"),
-        (3, "create table as select", f"create table {tgt} as select 1 as k, 10 as v "
+        (3, "create table as select", f"create table {tgt} using {FILE_FORMAT} as select 1 as k, 10 as v "
                                       f"union all select 2, 20",
          "known-good by hand; anchors the run"),
         (4, "create merge source",
-         f"create table {src} as select 2 as k, 99 as v union all select 4, 40",
+         f"create table {src} using {FILE_FORMAT} as "
+         f"select 2 as k, 99 as v union all select 4, 40",
          "merge sources, as real tables — dbt merges from a __dbt_tmp relation"),
         (5, "insert into", f"insert into {tgt} values (3, 30)",
          "the append path every insert-only fact would take"),
@@ -232,7 +239,7 @@ def main():
         # source, so it is created here rather than as a probe of its own.
         if n == 6:
             try:
-                run(conn, f"create table {SCHEMA}.probe_src_insert_only as "
+                run(conn, f"create table {SCHEMA}.probe_src_insert_only using {FILE_FORMAT} as "
                           f"{INSERT_ONLY_SOURCE}")
             except Exception as e:
                 print(f"    (could not create the insert-only source: {oneline(e)})",
