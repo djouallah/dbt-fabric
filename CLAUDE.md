@@ -220,6 +220,13 @@ cd dbt1 && dbt build --target duckrun --profiles-dir .
 - **Spark's `CAST(string AS TIMESTAMP)` returns NULL for `yyyy/MM/dd` instead of erroring.**
   AEMO ships slashes. Parse the format explicitly. DuckDB and T-SQL both accept slashes, so
   only the spark leg was ever affected — a good example of why parity is checked.
+- **Spark compares a STRING column to an INT literal by casting the STRING to INT, and that
+  cast truncates** — `'0.5' != 0` is FALSE. The spark csv temp view is all-STRING, so every
+  numeric predicate on it needs an explicit `CAST(... AS DOUBLE)`. A bare `SCADAVALUE != 0` in
+  the stage filter dropped 12-16% of the intraday SCADA rows (everything with 0 < |value| < 1)
+  and left `fct_summary`'s intraday tail 200-1,500 rows short on spark alone, with every dbt
+  test green; only parity saw it (run 35188161001). `tests_py/test_spark_stage_filter.py`
+  pins the cast.
 - **T-SQL pads strings on comparison** (`'ERB01' = 'ERB01 '` is TRUE); DuckDB and Spark do
   not. One trailing space in a join key can split the engines while every test stays green.
 - **`DOUBLE → DECIMAL` tie-breaking differs** (HALF_UP on Spark, HALF_EVEN on DuckDB, a third

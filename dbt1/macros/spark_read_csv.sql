@@ -98,11 +98,21 @@
 {% endmacro %}
 
 
-{#-- The record-selection predicate, Spark quoting. Same rule as every other dialect. --#}
+{#-- The record-selection predicate, Spark quoting. Same rule as every other dialect.
+
+     The `nonzero` column MUST be cast before the comparison. This predicate runs on the csv
+     temp view, where every column is STRING, and Spark resolves `STRING != 0` by casting the
+     STRING to the literal's type -- INT -- and that cast TRUNCATES a decimal fraction
+     (TypeCoercion.findCommonTypeForBinaryComparison + UTF8String.toInt). So `'0.5' != 0` and
+     `'-0.3' != 0` are both FALSE, and a bare `SCADAVALUE != 0` silently dropped every intraday
+     SCADA row with 0 < |value| < 1 -- 12-16% of the non-zero rows (solar and battery aux load,
+     wind at low speed). The DuckDB reader types the column as double and dwh TRY_CASTs to
+     FLOAT, so only this leg lost them: fct_scada_today was 27,757 rows against 31,803 on the
+     other four, and fct_summary's intraday tail ran 200-1,500 rows short on every run. --#}
 {% macro spark_record_filter(record, prefix='') %}
   {%- set spec = aemo_spec(record) -%}
   {%- set parts = [] -%}
   {%- for col, val in spec['equals'] %}{% do parts.append(prefix ~ col ~ " = '" ~ val ~ "'") %}{% endfor -%}
-  {%- if spec['nonzero'] %}{% do parts.append(prefix ~ spec['nonzero'] ~ ' != 0') %}{% endif -%}
+  {%- if spec['nonzero'] %}{% do parts.append('CAST(' ~ prefix ~ spec['nonzero'] ~ ' AS DOUBLE) != 0') %}{% endif -%}
   {{ parts | join(' AND ') }}
 {% endmacro %}
