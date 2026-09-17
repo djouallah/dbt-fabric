@@ -5,13 +5,12 @@
      incremental + merge rather than the folder default (view): the DuckDB Iceberg catalog
      supports neither CREATE VIEW nor the table materialization's temp-table RENAME, but it
      does support CREATE TABLE AS + INSERT. --#}
-{#-- Insert-only merge; see dim_duid.sql for why dbt 2 cannot spell this
-     merge_clauses={'when_matched': [{'action': 'do_nothing'}]} the way the other
-     four engines do. Same semantics: matched rows are never touched. --#}
+{#-- Insert-only merge; the `insert_only` strategy is defined in
+     dbt2/macros/incremental_insert_only.sql, and it is there because dbt 2 has no config key
+     for "MERGE but do not touch matched rows". Same semantics as the other four engines. --#}
 {{ config(
     materialized='incremental',
-    incremental_strategy='merge',
-    merge_update_condition='false',
+    incremental_strategy='insert_only',
     unique_key=['source_type', 'source_filename'],
     schema='landing'
 ) }}

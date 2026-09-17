@@ -110,15 +110,21 @@ cd dbt1 && dbt build --target duckrun --profiles-dir .
   connection because attachments are database-scoped; a secret is not. `settings:` has the
   same problem, so anything that must reach a model is an `on-run-start` hook (or a
   `+pre_hook`, which runs on the model's own connection), never `settings:`.
-- **dbt 2 rejects `merge_clauses`**, so the iceberg tree writes its insert-only merge as
-  `merge_update_condition='false'` instead. `UnusedConfigKey` (dbt1060) is a HARD parse error
-  in v2 and cannot be downgraded through `warn_error_options` — and the key really is absent
-  from the 2.0.4 config schema even though v2's own `duckdb__get_merge_sql` reads
-  `config.get('merge_clauses')` and implements `do_nothing`. The false condition renders
-  `WHEN MATCHED AND false THEN UPDATE BY NAME`, a branch that never fires, so the commit
-  carries appended data files and no delete files — which is what the OneLake catalog needs.
-  Same semantics as the other four engines; if a later dbt release adds the key to the
-  schema, the two spellings can converge again.
+- **dbt 2 has NO config key for an insert-only merge**, so `dbt2` carries a custom
+  incremental strategy — `incremental_strategy='insert_only'`, defined in
+  `dbt2/macros/incremental_insert_only.sql`. It emits the same MERGE the other four engines
+  get from `merge_clauses={'when_matched':[{'action':'do_nothing'}]}`.
+  Do not try to reach it from config again, both spellings have been tried and both are HARD
+  parse errors (`UnusedConfigKey`, dbt1060, which `warn_error_options` cannot downgrade):
+  v2's model-config schema
+  (`crates/dbt-schemas/src/schemas/project/configs/model_config.rs`) accepts only
+  `merge_update_columns`, `merge_exclude_columns` and `merge_with_schema_evolution` — not
+  `merge_clauses`, not `merge_update_condition` — even though v2's own
+  `duckdb__get_merge_sql` reads `config.get('merge_clauses')` and implements `do_nothing`.
+  The macro supports a key the schema forbids. The allowed keys are no way out either: they
+  route to the 'explicit' update mode, where an empty column list renders a bare `UPDATE SET`.
+  **When you add a config to a dbt2 model, check it against that Rust file first** — the
+  error names the key but not the allowed set, and each guess costs a CI round trip.
 - **Do not port `iceberg_adapter_overrides.sql` into `dbt2/`.** It was deleted with the move.
   dbt 2's own DuckDB macros already do all of it — `DESCRIBE` for Iceberg column discovery,
   `DROP` without `CASCADE`, a standalone rename, a direct-create path for Iceberg REST — so

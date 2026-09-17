@@ -20,27 +20,15 @@
   {%- set has_new_duids = true -%}
 {%- endif -%}
 
-{#-- Insert-only merge on DUID, the same pattern as the facts: new DUIDs insert, existing ones
-     are never touched — so a run that sees a stale or empty view of the table can at worst
-     re-insert nothing that survives the merge, instead of the old wipe-and-reload appending a
-     full duplicate copy. Consequence: attribute changes (region / fuel / geo) never update in
-     place; `dbt run --full-refresh -s dim_duid` is the reconciliation lever. --#}
-{#-- INSERT-ONLY MERGE, dbt 2 spelling. The other four engines say this as
-     merge_clauses={'when_matched': [{'action': 'do_nothing'}]}. dbt 2 rejects that key
-     outright at parse -- UnusedConfigKey (dbt1060), which is a HARD error in v2 and
-     cannot be downgraded -- even though its own duckdb merge macro reads
-     config.get('merge_clauses') and handles a do_nothing action. The key is simply
-     absent from the config schema in 2.0.4.
-     An always-false update condition is the documented key that survives validation and
-     renders WHEN MATCHED AND false THEN UPDATE BY NAME -- a branch that never fires, so
-     the commit carries appended data files and no delete files, which is what the
-     OneLake catalog requires. Same semantics, same unique_key: matched rows are left
-     exactly as they are and only new keys insert. --#}
+{#-- INSERT-ONLY MERGE. The other four engines declare this in config as
+     merge_clauses={'when_matched': [{'action': 'do_nothing'}]}; dbt 2 has no config key for
+     it, so the same SQL comes from the `insert_only` custom strategy in
+     dbt2/macros/incremental_insert_only.sql. Same semantics, same unique_key: matched rows
+     are never touched and only new keys insert. --#}
 {{ config(
     materialized='incremental',
-    incremental_strategy='merge',
+    incremental_strategy='insert_only',
     unique_key=['DUID'],
-    merge_update_condition='false',
     on_schema_change='sync_all_columns'
 ) }}
 

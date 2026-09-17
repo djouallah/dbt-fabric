@@ -5,13 +5,19 @@ profile: 'aemo_electricity'
 model-paths: ["models"]
 # `../macros` is the SHARED macro set, the same directory ../dbt1 reads. The AEMO column
 # layout (aemo_columns.sql) lives there and nowhere else, which is what stops the two
-# projects' idea of the CSV drifting apart. There is no local `macros/` here on purpose:
-# everything this engine needs is shared, and dbt v2 ships its own Iceberg-aware DuckDB
-# macros (DESCRIBE for column discovery, DROP without CASCADE, a standalone rename, a
-# direct-create path for Iceberg REST) — which is exactly what the old
-# macros/iceberg_adapter_overrides.sql hand-patched into dbt-duckdb 1.x. Do not port that
-# file here; it would override v2's better version of itself.
-macro-paths: ["../macros"]
+# projects' idea of the CSV drifting apart.
+#
+# The local `macros/` holds exactly one thing: the `insert_only` incremental strategy, which
+# exists because dbt 2's config schema has no way to express "MERGE, but do not touch matched
+# rows" — see that file. It is dbt2-only and must NOT move up to ../macros, where it would be
+# a second, silently diverging definition of what the other four engines get from config.
+#
+# Do NOT add adapter overrides here. dbt v2 ships its own Iceberg-aware DuckDB macros
+# (DESCRIBE for column discovery, DROP without CASCADE, a standalone rename, a direct-create
+# path for Iceberg REST) — exactly what the old macros/iceberg_adapter_overrides.sql
+# hand-patched into dbt-duckdb 1.x. Porting that file here would replace v2's better version
+# of itself with a stale copy.
+macro-paths: ["macros", "../macros"]
 test-paths: ["tests"]
 clean-targets: ["target", "dbt_packages"]
 
