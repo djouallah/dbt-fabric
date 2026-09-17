@@ -222,8 +222,10 @@ def compact(con, table, say):
     but the maintainer could not reproduce it after the 2026-09-16 credential-handling
     commits. This script also attaches with ACCESS_DELEGATION_MODE 'none' and brings its own
     azure secret -- a carry-over from dbt 2's bundled duckdb 1.5.3, which cannot take OneLake's
-    vended credentials; the 2.0 nightly this job runs can -- so the vended-credential path
-    #1349 is about is not even exercised here. Whether the priming scan is still needed HERE
+    vended credentials; the 2.0 nightly this job runs can, since duckdb/duckdb-iceberg#1331
+    (merged 2026-08-19: OneLake IRC vends `adls.sas-token.onelake.dfs.fabric.microsoft.com`
+    and the endpoint suffix used to be dropped, so every read failed AuthenticationFailed) --
+    so the vended-credential path #1349 is about is not even exercised here. Whether the priming scan is still needed HERE
     is only knowable from a cold call. "(cold)" in every line means the
     workaround can go; "(primed after ...)" means it is still load-bearing.
     """
