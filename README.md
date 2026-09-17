@@ -12,14 +12,23 @@ One dbt project that builds the **same AEMO gold layer** on five adapters:
 
 ### Candidate engines
 
-**Sail** ([LakeSail](https://github.com/lakehq/sail)) is the live candidate for a sixth. Its
-`dbt-sail` is a thin wrapper around `dbt-spark` talking Spark Connect to a Rust engine with no
-JVM, and Sail has a native OneLake catalog that takes the same bearer token the `iceberg` leg
-mints — so it would be a second Iceberg writer against the same gold layer. `CREATE TABLE`
-through that catalog works. Whether `MERGE INTO` does is the open question, and every fact
-model here is an incremental merge, so it decides whether the spark tree ports as-is or the
-leg forks. `.github/workflows/sail_smoke.yml` measures it — `workflow_dispatch` only, gates
-nothing, and its log is meant to be pasted upstream when something does not work.
+**Sail** ([LakeSail](https://github.com/lakehq/sail)) is the live candidate for a sixth, and
+as of 2026-09-17 it **works**. `dbt-sail` is a thin wrapper around `dbt-spark` talking Spark
+Connect to a Rust engine with no JVM, and Sail's native OneLake catalog takes the same bearer
+token the `iceberg` leg mints, so it would be a second Iceberg writer against the same gold
+layer. `.github/workflows/sail_smoke.yml` probes it — `workflow_dispatch` only, gates
+nothing — and all eleven probes pass on Sail 0.7.1: schema and table creation, insert, both
+`MERGE INTO` shapes dbt-spark emits, `show table extended` (which is how dbt-spark decides an
+incremental model exists), and a read-back proving the merges actually applied rather than
+merely returning.
+
+Three things it takes, all found by that probe and all costs a real leg would carry:
+
+| what | why |
+|---|---|
+| the catalog url as `<workspace-id>/<lakehouse-id>` | a name comes back `Failed to load config: 400 Bad Request` |
+| `AZURE_STORAGE_TOKEN` as well as the catalog's `bearer_token` | the catalog token authorises the CATALOG; the data files are a separate credential, the same split `dbt2/profiles.yml` documents. Without it Sail falls through to the instance metadata endpoint |
+| `USING iceberg` + `tblproperties('write.merge.mode'='merge-on-read')` | Sail's `CREATE TABLE` defaults to parquet, which the REST catalog refuses; and it will not merge a copy-on-write table. dbt-spark spells both in config, on every merged model |
 
 **dbt-polars** is not a candidate. Its SQL runs through `pl.SQLContext` rather than a
 database — no `dateadd`/`datediff`/`current_timestamp`/`hash`, `date_trunc` limited to
