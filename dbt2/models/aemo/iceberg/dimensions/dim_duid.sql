@@ -25,11 +25,26 @@
      it, so the same SQL comes from the `insert_only` custom strategy in
      dbt2/macros/incremental_insert_only.sql. Same semantics, same unique_key: matched rows
      are never touched and only new keys insert. --#}
+{#-- append_new_columns, NOT the sync_all_columns the other four engines use, and this is
+     an adapter limitation rather than a preference.
+
+     sync_all_columns also changes the TYPE of a column whose type has drifted, and dbt
+     does that as add-copy-rename: `alter table add column <col>__dbt_alter`, copy, then
+     rename over the original. On the OneLake Iceberg catalog that sequence is not atomic.
+     It got as far as adding the temp column and then failed, leaving a permanent
+     `latitude__dbt_alter` in iceberg_mart.dim_duid that broke every subsequent run with
+     "Column with name latitude__dbt_alter already exists!" -- a table that has to be
+     dropped by hand to recover.
+
+     append_new_columns keeps the part that matters here (a new geo/fuel attribute in the
+     reference CSVs still lands) and gives up only in-place type changes, which this model
+     has never actually needed -- the types come from a fixed CAST list. If a type ever
+     does have to change, drop the table and let it rebuild. --#}
 {{ config(
     materialized='incremental',
     incremental_strategy='insert_only',
     unique_key=['DUID'],
-    on_schema_change='sync_all_columns'
+    on_schema_change='append_new_columns'
 ) }}
 
 -- The reference CSVs are landed by download_aemo.py, which the log model stands for in the DAG.

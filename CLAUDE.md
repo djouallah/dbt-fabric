@@ -24,10 +24,20 @@ python -m pytest tests_py/ -q            # seconds, no credentials, no dbt insta
 python .github/scripts/check_gating.py   # every engine whose dbt is installed; CI does all five
 ```
 
-`check_gating.py` knows which project each engine is in and parses it there. Locally it can
-only reach the engines whose dbt is importable — one environment holds either dbt 1.x or dbt
-OSS 2, not both — so the iceberg line usually reads "skipping". `DBT1_BIN` / `DBT2_BIN` point
-it at two interpreters if you want both from one shell.
+`check_gating.py` knows which project each engine is in and parses it there. One environment
+holds either dbt 1.x or dbt OSS 2, never both, so out of the box the iceberg line reads
+"skipping". To cover all five from one shell, put dbt 2 in its own venv and point `DBT2_BIN`
+at it:
+
+```bash
+python -m venv /tmp/v2env && /tmp/v2env/Scripts/pip install dbt-oss     # or bin/pip on POSIX
+DBT2_BIN=/tmp/v2env/Scripts/dbt.exe python .github/scripts/check_gating.py
+```
+
+Worth doing: a dbt2 mistake otherwise costs a Fabric notebook to find. Note that on a machine
+behind a package proxy the newest `dbt-oss` may not be carried — the proxy index served only
+up to `2.0.0rc2` here, which is fine for gating. Never install `dbt-oss` into the environment
+that has `duckrun`; it pins `dbt-core<2` and the two fight over the `dbt` console script.
 
 `check_gating.py` is not optional. **The default failure mode of this layout is a run that
 builds NOTHING and exits 0** — a target name that stops matching a folder name disables
@@ -110,6 +120,25 @@ cd dbt1 && dbt build --target duckrun --profiles-dir .
   connection because attachments are database-scoped; a secret is not. `settings:` has the
   same problem, so anything that must reach a model is an `on-run-start` hook (or a
   `+pre_hook`, which runs on the model's own connection), never `settings:`.
+- **On dbt 2 a `pre_hook` does NOT share a DuckDB session with the model body.** The other
+  DuckDB engines set a session variable in a pre_hook and read it back with `getvariable()`;
+  on dbt 2 that reads NULL. `dbt2` therefore resolves its file list with a render-time
+  `run_query` and inlines it as a literal list (`dbt2/macros/duckdb_source_files.sql`).
+  **It fails SILENTLY** — `getvariable()` on an unset variable is NULL, not an error, so the
+  model still succeeds. It only surfaced because `read_csv` refuses a NULL list. Never put
+  session state between a hook and a model body on this engine. (Reproduced offline on
+  dbt-core 2.0.0-rc.2 at threads 1 and 4; `settings:` has the same problem, and attachments
+  survive only because they are database-scoped.)
+- **dbt 2 infers dependencies statically and rejects a `ref()` it can only see inside a
+  conditional** — "dbt was unable to infer all dependencies for the model ... This typically
+  happens when ref() is placed within a conditional block." Any model whose `ref()` lives in
+  an `{% if %}` or a `{% set %}` block needs an explicit `-- depends_on: {{ ref(...) }}` line
+  at the top. Every dbt2 fact model has one.
+- **`on_schema_change='sync_all_columns'` is unsafe on the Iceberg catalog.** It performs a
+  type change as add-copy-rename (`<col>__dbt_alter`), which is not atomic there: it added
+  `latitude__dbt_alter` to `iceberg_mart.dim_duid`, failed the rename, and every later run
+  died on "Column with name latitude__dbt_alter already exists!" until the table was dropped.
+  `dbt2` uses `append_new_columns`; a type change there means dropping the table.
 - **dbt 2 has NO config key for an insert-only merge**, so `dbt2` carries a custom
   incremental strategy — `incremental_strategy='insert_only'`, defined in
   `dbt2/macros/incremental_insert_only.sql`. It emits the same MERGE the other four engines
