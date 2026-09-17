@@ -114,6 +114,20 @@ def connect():
         print(f"  (core install failed, trying core_nightly: {e})", flush=True)
         con.execute("FORCE INSTALL iceberg FROM core_nightly")
     con.load_extension("iceberg")
+    # Say exactly what was loaded. `duckdb.__version__` is the wheel; the iceberg binary is
+    # fetched at runtime from the extension repo and can be newer (or older) than the wheel,
+    # and its extension_version is the duckdb-iceberg git sha it was built from -- the one
+    # fact that says whether an upstream fix is in this job or not.
+    try:
+        ver = con.execute("PRAGMA version").fetchone()
+        ext = con.execute(
+            "SELECT extension_version, installed_from, install_mode FROM duckdb_extensions() "
+            "WHERE extension_name = 'iceberg'"
+        ).fetchone()
+        print(f"engine {ver[0]} ({ver[1]}); iceberg extension {ext[0]} from {ext[1] or 'core'} "
+              f"({ext[2]})", flush=True)
+    except Exception as e:  # noqa: BLE001 -- diagnostics only
+        print(f"(could not read engine/extension versions: {oneline(e)})", flush=True)
 
     con.execute(f"SET GLOBAL azure_transport_option_type = '{AZURE_TRANSPORT}'")
     con.execute("SET GLOBAL temp_directory = '/tmp/duckdb_spill'")
