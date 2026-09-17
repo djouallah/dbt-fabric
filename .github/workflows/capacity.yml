@@ -1,0 +1,148 @@
+name: Capacity units
+
+# WHAT THE WORK COST. Reads capacity units -- and duration -- per run and engine from the Fabric
+# Capacity Metrics app's own semantic model, by DAX over the Power BI `executeQueries` endpoint,
+# and commits `history/cu.json`. Fabric exposes no per-operation CU REST API; that model is the
+# only authoritative source. Ported from djouallah/direct-lake-parquet-layout's capacity.yml;
+# `.github/scripts/measure_cu.py` and history/README.md have the detail, including what changed:
+# the items here are persistent and shared, so a leg's CU is its compute items inside its own
+# hour window, compute operations only.
+#
+#   pipeline         builds, records the run, commits history/runs/ + history/parity/    dispatch
+#   Capacity units   this -- reads the model, commits history/cu.json     after pipeline · daily · dispatch
+#
+# TWO AUTOMATIC READS, AND THEY DO DIFFERENT JOBS. A CU hour keeps growing for up to ~70 minutes
+# after the work (~6 min ingestion lag, 5-64 min smoothing), and measure_cu.py has no settle
+# logic: every read re-reads the whole window from the floor and merges with `max(old, new)`, so
+# re-reading is idempotent and monotonic -- two reads of the same window can only RAISE a
+# number, never lower one.
+#
+#   `workflow_run`, ~1 min after a pipeline   a deliberate LOWER BOUND, so a fresh run's row is
+#                                             populated immediately instead of sitting blank
+#   `schedule`, daily                          the settling read. The pipeline is manual, so there
+#                                             is no grid to time this off; one daily re-read of
+#                                             the 14-day window finishes whatever ran.
+#
+# **Why `workflow_run` and not a job in pipeline.yml.** A build should never wait on a metrics
+# model, a CU read should never be re-run because a build was, and this file owns its own
+# permissions and secrets. It fires after the WHOLE pipeline run completes -- the record job
+# included -- so the run record it needs is already on the branch.
+#
+# **No conclusion filter on the trigger, deliberately.** A failed or cancelled pipeline still
+# spent capacity and still commits a record (its record job is `!cancelled()`).
+#
+# **NEVER ADD A `push:` TRIGGER HERE OR TO pipeline.yml.** Both commit to `history/`. A push made
+# with GITHUB_TOKEN triggers nothing, which is what makes the two committers safe today; a PAT or
+# an App token would not be, and tests_py/test_parity_record.py pins the trigger set.
+#
+# GitHub DISABLES a schedule after 60 days of repository inactivity, silently; re-enabling is
+# manual. If that ever bites, the `workflow_run` read still fires -- the number just never rises.
+on:
+  workflow_dispatch:
+    inputs:
+      # In the MODEL'S clock (the app's own +10 offset, not UTC) -- a wrong value reads as "no
+      # activity" rather than as an error. Blank is computed from the earliest recorded run
+      # inside retention, which is what you want; set it to re-read a window by hand.
+      since:
+        description: "CU floor override, in the model's clock (+10)"
+        type: string
+        default: ""
+  schedule:
+    # 13:17 UTC. Off the top of the hour, where GitHub delays scheduled runs most; late enough
+    # that anything dispatched during a European or Australian working day has settled.
+    - cron: "17 13 * * *"
+  workflow_run:
+    workflows: [pipeline]
+    types: [completed]
+
+# This job PUSHES, so two runs must queue rather than race on the ledger. Not cancel-in-progress:
+# cancelling mid-push is the one outcome worth avoiding. Every read is idempotent, so a dropped
+# pending run costs nothing.
+concurrency:
+  group: capacity-${{ github.event.workflow_run.head_branch || github.ref_name }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  # NOT `continue-on-error`: unattended, a failed read would report GREEN and the ledger would
+  # quietly stop being topped up. Red instead, so the failure shows on the run.
+  measure:
+    name: read capacity units
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      id-token: write     # OIDC -> the Power BI token, minted by duckrun
+      contents: write     # commits history/cu.json
+    env:
+      # Every one of these is a real GUID and therefore a SECRET: no tracked file holds one, an
+      # input's `default:` cannot take a context, and measure_cu.py keeps no fallback.
+      # On a `workflow_run` or `schedule` event the `inputs` context is empty, so `since` falls
+      # through to blank, which is what is wanted.
+      CU_METRICS_WORKSPACE_ID: ${{ secrets.CU_METRICS_WORKSPACE_ID }}
+      CU_METRICS_MODEL_ID: ${{ secrets.CU_METRICS_MODEL_ID }}
+      CU_CAPACITY_ID: ${{ secrets.CU_CAPACITY_ID }}
+      CU_WORKSPACE_FILTER: ${{ secrets.FABRIC_WORKSPACE_ID }}
+      CU_SINCE: ${{ inputs.since }}
+      AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+      AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+      PYTHONIOENCODING: utf-8
+      # The branch to read and write. On a `workflow_run` event `github.ref_name` is the DEFAULT
+      # branch regardless of where the triggering run happened, so `head_branch` is what keeps a
+      # topic-branch pipeline writing its ledger back to its own branch.
+      BRANCH: ${{ github.event.workflow_run.head_branch || github.ref_name }}
+    steps:
+      # `ref:` IS LOAD-BEARING. On a `workflow_run` event a default checkout takes the TRIGGERING
+      # run's head SHA -- which is from BEFORE the pipeline's record job pushed the run record.
+      # The read would then not see the very run that triggered it, and nothing would say so.
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_branch || github.ref_name }}
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements/duckrun.txt
+      # duckrun mints the Power BI token from the OIDC assertion (the same audience deploy.py
+      # uses to refresh a semantic model) and brings `requests`. No azure/login.
+      - run: pip install -r requirements/duckrun.txt
+
+      # About two DAX queries: `discover_columns()` plus one read per capacity, and
+      # CU_CAPACITY_ID is pinned to one. The floor covers the whole 14-day retention window every
+      # time and that is not a cost -- the aggregation is server-side. Do NOT add a high-water
+      # mark to narrow it: `max(old, new)` DEPENDS on re-reading the window.
+      - name: Top up the CU ledger
+        run: python .github/scripts/measure_cu.py
+
+      # The ledger is the only storage that outlives the app's ~14-day retention, so committing it
+      # IS the measurement's output. NO REBASE: reset onto origin as it stands now, put the
+      # freshly-measured ledger back, commit, push -- and repeat against a newer origin if the
+      # push loses. `cu.json` is copied aside because `reset --hard` reverts a tracked file we
+      # modified. Overwriting it wholesale is safe because this workflow is the ONLY writer of
+      # `cu.json` and its concurrency group serialises it against itself; the pipeline's record
+      # job writes different files.
+      - name: Commit the ledger
+        run: |
+          set -euo pipefail
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          cp history/cu.json "$RUNNER_TEMP/cu.json"
+          for attempt in 1 2 3 4 5; do
+            git fetch -q origin "$BRANCH"
+            git reset -q --hard "origin/$BRANCH"
+            cp "$RUNNER_TEMP/cu.json" history/cu.json
+            git add history/cu.json
+            if git diff --cached --quiet; then
+              echo "ledger unchanged -- everything settled" >&2; exit 0
+            fi
+            git commit -q -m "cu: capacity units as of run ${{ github.run_id }}"
+            if git push -q origin "HEAD:$BRANCH"; then
+              echo "pushed the ledger on attempt $attempt" >&2; exit 0
+            fi
+            echo "push lost a race on attempt $attempt -- refetching origin/$BRANCH" >&2
+            sleep $((attempt * 5))
+          done
+          echo "could not push the ledger after 5 attempts" >&2
+          exit 1

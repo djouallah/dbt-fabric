@@ -129,6 +129,14 @@ jobs:
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           allow-no-subscriptions: true
 
+      # ---- the run record -------------------------------------------------------------
+      # The fragment this leg writes (record.py): the items it touched, under their GUIDs, and
+      # the leg's compute window. OUTSIDE the checkout, so no untracked file lands in the tree;
+      # pipeline.yml's record job merges every job's fragment into history/runs/. A step, not
+      # job env: the `runner` context is not available at job level.
+      - name: Open the run-record fragment
+        run: echo "RUN_RECORD=$RUNNER_TEMP/record/record-20-build-$ENGINE.json" >> "$GITHUB_ENV"
+
       # ---- provision ---------------------------------------------------------------
       - name: Provision Fabric items
         run: python .github/scripts/provision.py "$ENGINE" >> "$GITHUB_ENV"
@@ -154,6 +162,14 @@ jobs:
         # the legs used to be forced through max-parallel: 1.
         if: ${{ inputs.land }}
         run: python download_aemo.py
+
+      # ---- the leg's window --------------------------------------------------------
+      # `started` / `finished` bracket everything that spends Fabric compute -- build, tests
+      # AND the fingerprint -- and are what measure_cu.py attributes this leg's capacity units
+      # with, at the metrics model's hour grain. The items are persistent and shared here, so
+      # the window is not optional: without it a GUID's CU is every run's CU. history/README.md.
+      - name: Record leg start
+        run: python .github/scripts/record.py leg-start "$ENGINE"
 
       # ---- build -------------------------------------------------------------------
       - name: dbt build on Fabric compute
@@ -189,6 +205,24 @@ jobs:
           name: parity-${{ inputs.engine }}
           path: history/parity/${{ inputs.engine }}.json
           if-no-files-found: warn
+
+      # AFTER the fingerprint, not after the build: on spark the run-operation opens a new
+      # Livy session and on dwh it is a full Warehouse Query, both billed. The notebook legs
+      # run it inside the notebook, i.e. inside their window either way. `job.status` is
+      # already `failure` once any earlier step failed, so no step ids are needed.
+      - name: Record leg end
+        if: always()
+        run: python .github/scripts/record.py leg-end "$ENGINE" "${{ job.status }}"
+
+      # always(): a failed build still spent compute, and it still has to be attributable.
+      # `ignore`: RUN_RECORD unset (or a leg that died before leg-start) is a no-op fragment,
+      # not an error -- record.py logs what it assembled.
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: record-fragment-build-${{ inputs.engine }}
+          path: ${{ runner.temp }}/record/
+          if-no-files-found: ignore
 
   # Iceberg accumulates small files and has no snapshot expiry, so compaction is a separate
   # job. `needs` is for ORDERING only — never overlap a rewrite with a load — and it must

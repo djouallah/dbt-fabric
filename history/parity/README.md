@@ -7,6 +7,7 @@ exactly; mw_sum and price_sum get a 1e-7 relative tolerance, because DOUBLE -> D
 tie-breaking differs per engine. This is the acceptance test for the whole repo: five
 adapters, one gold layer, one set of numbers.
 
-Fingerprints are committed by the `parity` job so a run can be compared against the last
-one. Do not commit a fingerprint from a laptop run — a local build covers a couple of days
+Fingerprints are committed by the `record` job of `pipeline.yml` (when the comparison
+passes) so a run can be compared against the last one; the same fingerprints are folded into
+that run's record under `history/runs/`. Do not commit a fingerprint from a laptop run — a local build covers a couple of days
 of data and would make the next real comparison fail for the wrong reason.

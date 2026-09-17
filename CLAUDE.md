@@ -267,6 +267,54 @@ cd dbt1 && dbt build --target duckrun --profiles-dir .
 - Do not use `NotebookEdit` on `fabric_items/run.Notebook/notebook-content.ipynb` — keep
   each cell's `source` as an array of lines (the test above checks it).
 
+## Measuring what it cost and what it wrote
+
+Ported from `djouallah/direct-lake-parquet-layout` (`record.py`, `cu/measure.py`, `stats.py`);
+`history/README.md` is the reader-facing account. What differs here, and why:
+
+- **Nothing is torn down, so a GUID does not belong to one run.** The source deletes every item
+  when a run ends and reads CU cumulatively per item. Here the lakehouse is shared and the
+  warehouse persists, so every leg records `started`/`finished` (`record.py leg-start` /
+  `leg-end` in `build.yml`, bracketing build + tests + **fingerprint** — on spark the
+  run-operation opens a new Livy session, on dwh it is a full Warehouse Query) and the GUIDs
+  its compute bills against (`legs.<engine>.compute`). `measure_cu.py` sums the hour grain of
+  `Metrics By Item Operation And Hour` over those items in those hours, per run × engine.
+- **Compute only.** Every `OneLake …` operation is excluded, in the DAX and again in Python:
+  on a shared lakehouse the storage transactions in any window are all five legs' plus
+  whatever else touched the item. Compute is unambiguous per engine — each DuckDB leg's
+  notebook item, dwh's `Warehouse Query` on its own item, spark's Livy run on the lakehouse
+  (only the spark leg opens Livy sessions there).
+- **Caveats the window cannot fix:** two runs under an hour apart share an hour on dwh/spark;
+  a Livy session idling past leg-end bills into the next hour. Documented, not fixed.
+- **`items` and `legs` are dicts, never lists.** The fragment merge is a recursive dict union
+  that REPLACES lists, so a list would let the leg-end fragment wipe the leg-start.
+  Fragments merge in BASENAME order (`download-artifact` nests each in its own directory).
+- **`RUN_RECORD` unset is a silent no-op** — `provision.py` and `remote_dbt.py` must stay
+  runnable by hand and from the demo notebook. The cost: a job that forgets it produces a
+  record missing those items with nothing red. Every fragment upload is
+  `if-no-files-found: ignore`; `record.py finish` logs the item table it assembled.
+- **`runner.temp` is not a named value at job level.** `RUN_RECORD` is set from a step into
+  `$GITHUB_ENV`, and the fragment lives outside the checkout so the committing jobs never see
+  an untracked `record/`.
+- **Compare this run's downloaded fingerprints, never `history/parity/`.** After the first
+  commit that directory also holds the previous run's, so a leg that failed this run would be
+  graded — and folded into the record — on a stale fingerprint.
+- **`layout.py` globs `<prefix>_*.*`, never a bare `get_stats()`**, which would sweep every
+  `test_*` isolation schema's footers over OneLake. The prefix comes from `deploy.mart_schema`
+  — do not add a third copy of the schema rule (`compact_iceberg.py` already has a second).
+  Its heavy imports (`duckrun`, `provision`, `obstore`) are lazy so `tests_py/test_layout.py`
+  runs in `ci.yml`'s unit job; `provision.py` reads `FABRIC_WORKSPACE_ID` at import.
+- **`capacity.yml` and `pipeline.yml` must never gain a `push:` trigger.** Both commit to
+  `history/`. GITHUB_TOKEN pushes trigger nothing, which is the only reason two committers are
+  safe; `tests_py/test_parity_record.py` pins the trigger set. On a `workflow_run` event the
+  checkout MUST use `github.event.workflow_run.head_branch`: the default is the triggering
+  run's SHA, from before the record job pushed.
+- **Secrets the CU read needs:** `CU_METRICS_WORKSPACE_ID`, `CU_METRICS_MODEL_ID`,
+  `CU_CAPACITY_ID` (the same values as the source repo). The Power BI token comes from
+  `duckrun.auth.get_powerbi_token()` — the audience `deploy.py` already mints — so no
+  `azure/login`. `CU_MODEL_OFFSET_HOURS` is the app's own clock (+10 on this tenant); a wrong
+  value reads as "no activity", not as an error.
+
 ## Domain facts worth keeping
 
 - **The latest day is almost always PARTIAL.** Never divide by 288.

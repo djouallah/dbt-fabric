@@ -34,6 +34,12 @@ THE LANDING PATH AND THE READ PATH ARE DIFFERENT VARIABLES, deliberately:
 They used to be one variable, and provision.py re-emitted it for ducklake and dwh — so
 those two legs' downloaders landed their own private copies of the AEMO CSVs and the parity
 comparison was quietly comparing different inputs.
+
+EVERY ITEM THIS TOUCHES IS WRITTEN DOWN UNDER ITS GUID into the run-record fragment named by
+`RUN_RECORD` (see record.py) -- plus, for dwh and spark, WHICH item the leg's compute bills
+against (`legs.<engine>.compute`): the Warehouse for dwh, the shared lakehouse for spark's
+Livy session. That is what measure_cu.py joins the Capacity Metrics model on. `RUN_RECORD`
+unset is a no-op, so running this by hand (or from the demo notebook) still works.
 """
 from __future__ import annotations
 
@@ -43,6 +49,8 @@ import sys
 import time
 
 import requests
+
+import record
 
 API = "https://api.fabric.microsoft.com/v1"
 WS = os.environ["FABRIC_WORKSPACE_ID"]
@@ -228,9 +236,11 @@ def main() -> int:
 
     log(f"provisioning {engine} in workspace {WS}")
     folder_id = ensure_folder(FOLDER)
+    record.item(folder_id, "folder", "Folder", FOLDER)
 
     landing_id = ensure("lakehouses", LANDING_LAKEHOUSE,
                         {"creationPayload": {"enableSchemas": True}}, folder_id)
+    record.item(landing_id, "landing", "Lakehouse", LANDING_LAKEHOUSE)
     landing_path = abfss(landing_id, "Files")
 
     # Every engine's download_aemo.py writes HERE, and only here.
@@ -240,6 +250,7 @@ def main() -> int:
     # to it: the dwh leg needs it to host the landing shortcut.
     data_id = ensure("lakehouses", DATA_LAKEHOUSE,
                      {"creationPayload": {"enableSchemas": True}}, folder_id)
+    record.item(data_id, "data", "Lakehouse", DATA_LAKEHOUSE)
     # remote_dbt.py needs the item (not a path) for run_python's result round-trip: the
     # workspace holds many lakehouses, so duckrun cannot infer one.
     emit("DATA_LAKEHOUSE_ID", data_id)
@@ -304,6 +315,7 @@ def main() -> int:
             raise SystemExit("ducklake SQL DB connection details never appeared")
         if folder_id and db_id:
             move_to_folder(db_id, folder_id)
+        record.item(db_id, "catalog", "SQLDatabase", DUCKLAKE_SQL_DB, engine="ducklake")
         emit("DUCKLAKE_CATALOG_DSN", f"Server={server};Database={database};Encrypt=yes")
         # DuckLake's parquet goes under the shared lakehouse's TABLES, as in the original
         # ducklake repo: DuckLake lays it out as <data_path>/<schema>/<table>/ and the
@@ -328,7 +340,14 @@ def main() -> int:
         wh_id = ensure("warehouses", DWH_WAREHOUSE, None, folder_id)
         emit("FABRIC_DWH_SERVER", warehouse_connection(wh_id))
         emit("FABRIC_DWH_NAME", DWH_WAREHOUSE)
+        # The item, not just the name: layout.py reads the warehouse's Tables by GUID.
+        emit("FABRIC_DWH_ID", wh_id)
         emit("FABRIC_AUTH", "CLI")
+        # A Warehouse bills its own compute (`Warehouse Query`) against its own item, and the
+        # item outlives every run -- so the leg's window, not the GUID alone, is what
+        # attributes it. See history/README.md.
+        record.item(wh_id, "warehouse", "Warehouse", DWH_WAREHOUSE, engine="dwh")
+        record.leg("dwh", compute=[wh_id])
         # A Warehouse has no Files section, so it reads the landing zone through a shortcut
         # hosted in the shared data lakehouse. Note this is the READ path only — the
         # downloader still writes to LANDING_PATH above.
@@ -341,6 +360,10 @@ def main() -> int:
         # Resolved from the GUID, never hardcoded: dbt-fabricspark needs the workspace NAME
         # to build relations against a schema-enabled lakehouse.
         emit("FABRIC_WORKSPACE_NAME", workspace_name())
+        # A Livy session bills `High Concurrency Session Livy Run` against the lakehouse it
+        # was opened on -- the SHARED one. Only the spark leg opens Livy sessions there, so the
+        # (item, operation) pair is still unambiguous; the window does the rest.
+        record.leg("spark", compute=[data_id])
 
     log(f"provisioned {engine}")
     return 0

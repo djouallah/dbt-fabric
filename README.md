@@ -101,6 +101,10 @@ download_aemo.py                           one downloader, one landing zone, pla
 .github/scripts/check_gating.py            proves the gating, offline
 .github/scripts/parity.py                  proves the engines agree
 .github/scripts/remote_dbt.py              runs a DuckDB leg inside Fabric (8 vCores)
+.github/scripts/record.py                  the run record: items by GUID, each leg's window
+.github/scripts/layout.py                  what each engine wrote: files, row groups, encodings, order
+.github/scripts/measure_cu.py              what each engine cost: capacity units per run and engine
+history/                                   parity/ fingerprints, runs/ records, cu.json ledger
 deploy.py                                  the in-Fabric demo: repo copy, notebook + pipeline, semantic model
 fabric_items/                              the scheduled notebook, its variable library, the pipeline
 semantic_model/                            one Direct Lake model, deployed once per engine
@@ -254,14 +258,29 @@ green. `check_gating.py` asserts the prefix offline.
   never travel. dwh and spark run dbt on the runner, where it is only a client of the
   Warehouse / Livy.
 - `pipeline.yml` — manual only; lands ONCE in a shared `land` job, then runs all five engines
-  in parallel, then the **parity** job compares their fingerprints. `process_limit` is a
-  dispatch input: files each fact model folds per run, oldest first, on every engine.
-  `deploy` (`none` / `no_model` / `full`) deploys the in-Fabric demo after the build (next
-  section).
+  in parallel, then the **layout** job reads every engine's tables back and the **record**
+  job compares the fingerprints and commits one run record to `history/runs/`.
+  `process_limit` is a dispatch input: files each fact model folds per run, oldest first, on
+  every engine. `deploy` (`none` / `no_model` / `full`) deploys the in-Fabric demo after the
+  build (next section).
+- `capacity.yml` — fires after every pipeline run and once a day: reads capacity units per
+  run and engine from the Fabric Capacity Metrics model and commits `history/cu.json`.
 
 Manual only because deploying Fabric items and spending capacity is a deliberate act, and
-the parity job commits to `history/parity/`, so a push trigger would make the commit start
-the next run.
+the record job commits to `history/`, so a push trigger would make the commit start the
+next run.
+
+## What it cost, and what it wrote
+
+Ported from [`direct-lake-parquet-layout`](https://github.com/djouallah/direct-lake-parquet-layout)
+and adapted to shared, persistent items. Every pipeline run leaves one record in
+`history/runs/` — the Fabric item GUIDs it touched, each leg's compute window, the parquet
+layout of every engine's tables (files, row groups, `fct_summary`'s per-column encodings and
+physical row order) and the parity fingerprints — and the `Capacity units` workflow keeps
+`history/cu.json`: **compute** capacity units per run and engine, read from the Capacity Metrics
+model for each leg's items inside its own hours. Storage transactions are deliberately not
+attributed: the lakehouse is shared, so its OneLake operations in any window belong to
+everybody. [`history/README.md`](history/README.md) has the schemas and the caveats.
 
 Note: cancelling a GitHub job does **not** stop Fabric — the notebook or Livy session keeps
 running, and billing.

@@ -1,10 +1,13 @@
 name: pipeline
 
-# Builds the same models on every engine, then proves they agree.
+# Builds the same models on every engine, proves they agree, and writes down what the run
+# touched and what it wrote (history/runs/); the Capacity units workflow then adds what it cost.
 #
 # Manual only. Deploying Fabric items and spending capacity is a deliberate act, and the
-# parity job commits to history/parity/, so a push trigger would make the commit start the
-# next run.
+# record job commits to history/ (the run record and the parity fingerprints), so a push
+# trigger would make the commit start the next run. A push made with GITHUB_TOKEN triggers
+# nothing, which is what makes committing from here safe today; NEVER add a push: trigger
+# here or to capacity.yml -- tests_py/test_parity_record.py pins the trigger set.
 
 on:
   workflow_dispatch:
@@ -100,6 +103,13 @@ jobs:
     env:
       download_limit: ${{ inputs.download_limit }}
       daily_download_limit: ${{ inputs.daily_download_limit }}
+      # The dispatch inputs, as `record.py init` writes them into the run record. Blank = absent.
+      RUNIN_ENGINES: ${{ inputs.engines }}
+      RUNIN_DBT_SCHEMA: ${{ inputs.dbt_schema }}
+      RUNIN_PROCESS_LIMIT: ${{ inputs.process_limit }}
+      RUNIN_SPARK_RESOURCE_PROFILE: ${{ inputs.spark_resource_profile }}
+      RUNIN_DOWNLOAD_LIMIT: ${{ inputs.download_limit }}
+      RUNIN_DAILY_DOWNLOAD_LIMIT: ${{ inputs.daily_download_limit }}
       AZURE_TRANSPORT_OPTION_TYPE: curl
       CURL_CA_INFO: /etc/ssl/certs/ca-certificates.crt
       AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
@@ -115,10 +125,23 @@ jobs:
           cache: pip
           cache-dependency-path: requirements/*.txt
       - run: pip install -r requirements/duckrun.txt
+      # The run record starts here -- run id, sha, inputs -- and provision.py adds the shared
+      # items' GUIDs to the same fragment. record.py; the record job merges every job's.
+      # A step, not job env: the `runner` context is not available at job level.
+      - name: Open the run record
+        run: |
+          echo "RUN_RECORD=$RUNNER_TEMP/record/record-00-run.json" >> "$GITHUB_ENV"
+          RUN_RECORD="$RUNNER_TEMP/record/record-00-run.json" python .github/scripts/record.py init
       - name: Provision the shared items
         run: python .github/scripts/provision.py duckrun >> "$GITHUB_ENV"
       - name: Land AEMO files
         run: python download_aemo.py
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: record-fragment-00-run
+          path: ${{ runner.temp }}/record/
+          if-no-files-found: ignore
 
   build:
     needs: [plan, land]
@@ -142,11 +165,68 @@ jobs:
       spark_resource_profile: ${{ inputs.spark_resource_profile }}
     secrets: inherit
 
-  # THE ACCEPTANCE TEST. Everything above is just a build; this is the claim the repo makes.
-  parity:
-    needs: build
-    if: ${{ !cancelled() && inputs.engines == 'all' }}
+  # WHAT EACH ENGINE WROTE. layout.py reads every engine's tables back through Delta with
+  # duckrun.get_stats() -- rows, files, row groups, size, compression -- plus fct_summary's
+  # per-column encodings, row-group ordering and run lengths, and puts the engines side by
+  # side in the step summary and in the run record under `layout`. It only READS.
+  #
+  # Best-effort by construction (continue-on-error here, try/except per engine inside): a
+  # table that cannot be read is "not measured", never a red run, and the record job below
+  # still runs and still commits. No azure/login: duckrun mints the OneLake and Fabric tokens
+  # from the OIDC assertion, as in `land`. The curl transport is for DuckDB reading parquet
+  # off Fabric, as in build.yml.
+  layout:
+    needs: [plan, build]
+    if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
+    # Footers over OneLake for five engines' worth of tables; the source repo's four items
+    # took ~10 minutes, and a too-short cap turns slowness into a red run.
+    timeout-minutes: 60
+    continue-on-error: true
+    env:
+      AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+      AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+      FABRIC_WORKSPACE_ID: ${{ secrets.FABRIC_WORKSPACE_ID }}
+      DBT_SCHEMA: ${{ inputs.dbt_schema }}
+      # Recorded under layout.config, not used here: what build.yml ran the notebook legs at.
+      FABRIC_CORES: "8"
+      SPARK_RESOURCE_PROFILE: ${{ inputs.spark_resource_profile }}
+      # Only the engines this run built: reading an engine nobody rebuilt would record an
+      # older generation's layout under this run's id.
+      BUILD_ENGINES: ${{ join(fromJSON(needs.plan.outputs.engines).*.engine, ',') }}
+      AZURE_TRANSPORT_OPTION_TYPE: curl
+      CURL_CA_INFO: /etc/ssl/certs/ca-certificates.crt
+      PYTHONIOENCODING: utf-8
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements/duckrun.txt
+      - run: pip install -r requirements/duckrun.txt
+      - name: Read the layout back
+        run: |
+          echo "RUN_RECORD=$RUNNER_TEMP/record/record-30-layout.json" >> "$GITHUB_ENV"
+          RUN_RECORD="$RUNNER_TEMP/record/record-30-layout.json" python .github/scripts/layout.py
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: record-fragment-layout
+          path: ${{ runner.temp }}/record/
+          if-no-files-found: ignore
+
+  # THE ACCEPTANCE TEST, AND THE RUN'S PAPER TRAIL. Everything above is just a build; this
+  # compares the engines' fingerprints (the claim the repo makes) and assembles ONE run record
+  # from every job's fragment -- items by GUID, each leg's compute window, the layout, this
+  # run's fingerprints -- and commits it to history/runs/. The Capacity units workflow then
+  # reads CU for those items in those windows. Runs whatever happened above (!cancelled()):
+  # a failed leg still spent capacity, and that still has to be attributable.
+  record:
+    needs: [build, layout]
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -155,30 +235,84 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           pattern: parity-*
-          path: /tmp/parity
+          path: ${{ runner.temp }}/parity
           merge-multiple: true
+      # merge-multiple: false (the default) nests each artifact in its own directory, which is
+      # exactly why record.py sorts fragments by BASENAME.
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: record-fragment-*
+          path: ${{ runner.temp }}/fragments
       - name: Compare engines
-        # pipefail, or `| tee` reports tee's exit status and a PARITY FAILED run goes green
-        # (run 35111311688 did exactly that, and the Record step below then committed it).
+        id: parity
+        if: inputs.engines == 'all'
+        # continue-on-error so the record below is assembled and committed either way; the
+        # verdict step at the end turns a failed comparison back into a red job.
+        continue-on-error: true
+        # THIS RUN'S DOWNLOADED FINGERPRINTS, never history/parity/: after the first commit that
+        # directory also holds the previous run's, so a leg that failed this run would be graded
+        # on a stale fingerprint. pipefail, or `| tee` reports tee's exit status and a PARITY
+        # FAILED run goes green (run 35111311688 did exactly that).
         run: |
           set -o pipefail
-          mkdir -p history/parity
-          cp /tmp/parity/*.json history/parity/ 2>/dev/null || true
-          python .github/scripts/parity.py compare history/parity | tee -a "$GITHUB_STEP_SUMMARY"
-      - name: Record
-        if: success()
+          python .github/scripts/parity.py compare "$RUNNER_TEMP/parity" | tee -a "$GITHUB_STEP_SUMMARY"
+      - name: Assemble the run record
+        id: rec
         run: |
+          set -euo pipefail
+          out="history/runs/$(date -u +%Y-%m-%dT%H%MZ)-${{ github.run_id }}.json"
+          mkdir -p history/runs
+          python .github/scripts/record.py finish "$RUNNER_TEMP/fragments" "$RUNNER_TEMP/parity" "$out"
+          echo "path=$out" >> "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: run-record
+          path: ${{ steps.rec.outputs.path }}
+      # NO REBASE. Reset onto whatever origin holds RIGHT NOW, put the record (and, when the
+      # comparison passed, the fingerprints) back, commit, push -- and repeat against a newer
+      # origin if the push loses. The Capacity units workflow commits history/cu.json on its own
+      # concurrency group, so the two can race on the ref and never on a file. The files are
+      # copied aside first because `reset --hard` on attempt 2 deletes exactly what attempt 1
+      # committed.
+      #
+      # -f IS REQUIRED for the fingerprints. .gitignore carries `history/parity/*.json` so that a
+      # laptop run cannot commit a fingerprint and poison the comparison, and `git add <dir>`
+      # SKIPS ignored files silently -- the run then goes green having recorded NOTHING, which
+      # is why history/parity/ held no fingerprints at all for a while. CI is the one writer
+      # allowed to override the ignore. tests_py/test_parity_record.py pins this.
+      - name: Commit
+        env:
+          REC: ${{ steps.rec.outputs.path }}
+          BR: ${{ github.ref_name }}
+          PARITY_OK: ${{ steps.parity.outcome == 'success' }}
+        run: |
+          set -euo pipefail
           git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          # -f IS REQUIRED. .gitignore carries `history/parity/*.json` so that a laptop run
-          # cannot commit a fingerprint and poison the comparison, and `git add <dir>` SKIPS
-          # ignored files silently -- it stages only the README, `git diff --cached` then
-          # reports nothing to commit, and the run goes green having recorded NOTHING. That is
-          # why history/parity/ held no fingerprints at all. CI is the one writer allowed to
-          # override the ignore. tests_py/test_parity_record.py pins this.
-          git add -f history/parity
-          git diff --quiet --cached || git commit -m "parity: ${{ github.run_id }}"
-          git push
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          cp "$REC" "$RUNNER_TEMP/record.json"
+          for attempt in 1 2 3 4 5; do
+            git fetch -q origin "$BR"
+            git reset -q --hard "origin/$BR"
+            mkdir -p history/runs history/parity
+            cp "$RUNNER_TEMP/record.json" "$REC"
+            git add "$REC"
+            if [ "$PARITY_OK" = "true" ]; then
+              cp "$RUNNER_TEMP"/parity/*.json history/parity/
+              git add -f history/parity
+            fi
+            if git diff --cached --quiet; then echo "nothing to commit" >&2; exit 0; fi
+            git commit -q -m "record: run ${{ github.run_id }} (${{ inputs.engines }})"
+            if git push -q origin "HEAD:$BR"; then echo "pushed on attempt $attempt" >&2; exit 0; fi
+            echo "push lost a race on attempt $attempt -- refetching origin/$BR" >&2
+            sleep $((attempt * 5))
+          done
+          echo "could not push after 5 attempts; the record is still the run-record artifact" >&2
+          exit 1
+      - name: Parity verdict
+        if: steps.parity.outcome == 'failure'
+        run: |
+          echo "PARITY FAILED -- see the Compare engines step. The run record was committed; the fingerprints were not." >&2
+          exit 1
 
   # THE IN-FABRIC DEMO, deployed AFTER the build so the Direct Lake models find their tables
   # (a model reframes on deploy). Off by default: orchestration is GitHub Actions; the notebook
