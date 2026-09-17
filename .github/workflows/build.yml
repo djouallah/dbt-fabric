@@ -72,7 +72,6 @@ jobs:
     # a duckrun install) to look up a GUID this job already resolved.
     outputs:
       warehouse_path: ${{ steps.lakehouse.outputs.warehouse_path }}
-      onelake_endpoint: ${{ steps.lakehouse.outputs.onelake_endpoint }}
     env:
       ENGINE: ${{ inputs.engine }}
       # The three legs whose dbt runs inside Fabric. Exact match on the list, not a substring.
@@ -148,12 +147,10 @@ jobs:
       - name: Provision Fabric items
         run: python .github/scripts/provision.py "$ENGINE" >> "$GITHUB_ENV"
 
-      # Empty for every engine but iceberg (provision.py emits these two only there).
+      # Empty for every engine but iceberg (provision.py emits it only there).
       - name: Expose the catalog location to the compact job
         id: lakehouse
-        run: |
-          echo "warehouse_path=$WAREHOUSE_PATH" >> "$GITHUB_OUTPUT"
-          echo "onelake_endpoint=$ONELAKE_ENDPOINT" >> "$GITHUB_OUTPUT"
+        run: echo "warehouse_path=$WAREHOUSE_PATH" >> "$GITHUB_OUTPUT"
 
       - name: Capture Warehouse SQL token
         if: inputs.engine == 'dwh'
@@ -256,9 +253,8 @@ jobs:
       # test_iceberg_landing/test_iceberg_mart, and report a tidy catalog having compacted
       # nothing.
       DBT_SCHEMA: ${{ inputs.dbt_schema }}
-      # Where the catalog is, from the build job's provisioning (job outputs above).
+      # Which lakehouse, from the build job's provisioning (job output above).
       WAREHOUSE_PATH: ${{ needs.build.outputs.warehouse_path }}
-      ONELAKE_ENDPOINT: ${{ needs.build.outputs.onelake_endpoint }}
       AZURE_TRANSPORT_OPTION_TYPE: curl
       CURL_CA_INFO: /etc/ssl/certs/ca-certificates.crt
     steps:

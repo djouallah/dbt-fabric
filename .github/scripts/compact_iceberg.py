@@ -56,7 +56,9 @@ import time
 
 import duckdb
 
-ENDPOINT = os.environ["ONELAKE_ENDPOINT"]
+# The OneLake Iceberg REST catalog. One endpoint for every tenant and workspace; the
+# warehouse path below is what picks the lakehouse.
+ENDPOINT = "https://onelake.table.fabric.microsoft.com/iceberg"
 TOKEN = os.environ["ONELAKE_TOKEN"]
 WAREHOUSE = os.environ["WAREHOUSE_PATH"]      # "{workspace_id}/{lakehouse_id}"
 
