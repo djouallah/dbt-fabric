@@ -15,6 +15,13 @@
 # most recently; pinning would freeze the answer at the moment it was written, which is
 # exactly the thing being tested. The log records the resolved versions.
 pysail
-# The Spark Connect CLIENT. Plain `pyspark` is the JVM package and does not bring the connect
-# extras; without them SparkSession.builder.remote() fails on the grpc import.
-pyspark[connect]
+# THE CLIENT ONLY, and never `pyspark` or `pyspark[connect]`. Those are the full Apache Spark
+# distribution -- JVM jars and all -- which is the exact thing Sail exists to avoid: the whole
+# claim being tested is that a Spark-compatible engine can run with no JVM anywhere. Pulling
+# Spark in to talk to the thing replacing Spark would make the probe a lie about its own
+# dependencies.
+#
+# pyspark-client is Apache's own slim Spark Connect client (grpc + pyarrow + pandas, no jars)
+# and it keeps the `pyspark.sql` import path, so the script is unchanged. pysail's own test
+# extra pins pyspark-client==4.2.0, which is the authority on what pairs with it.
+pyspark-client

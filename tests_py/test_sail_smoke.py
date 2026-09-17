@@ -86,6 +86,24 @@ def test_there_is_no_engine_shaped_requirements_file():
     assert SMOKE_REQ.exists()
 
 
+def test_no_jvm_spark_in_the_smoke_env():
+    """The probe must not install Apache Spark to talk to the thing replacing Apache Spark.
+
+    Sail's whole claim is Spark compatibility with no JVM. `pyspark` and `pyspark[connect]`
+    are the full distribution, jars included; `pyspark-client` is Apache's slim Connect client
+    and keeps the same `pyspark.sql` import path, so nothing in the script depends on which
+    one is installed -- which is exactly why this needs pinning rather than noticing.
+    """
+    lines = [ln.split("#")[0].strip() for ln in SMOKE_REQ.read_text(encoding="utf-8").splitlines()]
+    pkgs = [ln for ln in lines if ln]
+    assert "pyspark-client" in pkgs, f"the Connect client went missing: {pkgs}"
+    for bad in ("pyspark", "pyspark[connect]"):
+        assert bad not in pkgs, (
+            f"requirements/sail_smoke.txt installs {bad!r}, which is Apache Spark with its "
+            f"JVM jars. Use pyspark-client."
+        )
+
+
 def test_there_is_no_sail_model_tree():
     for project in ("dbt1", "dbt2"):
         assert not (REPO / project / "models" / "aemo" / "sail").exists()
