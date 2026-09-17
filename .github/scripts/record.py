@@ -97,11 +97,24 @@ def item(guid: str | None, role: str, kind: str, name: str, **extra) -> str | No
 def leg(engine: str, **fields) -> str | None:
     """Record facts about one engine's leg: `started`, `finished`, `outcome`, `compute` (the
     GUIDs whose compute operations belong to this leg). Merged, so the fields accumulate across
-    the steps that write them."""
+    the steps that write them.
+
+    `compute` ACCUMULATES -- the one list in the record that does. The merge replaces lists,
+    and ducklake's compute is TWO items written by two scripts in one job: provision.py names
+    the catalog SQL DB (it bills `Sql Usage` against its own item, and nothing but the
+    ducklake leg queries it) and remote_dbt.py names the notebook. Without the union the
+    second writer would silently drop the first. Upper-cased, de-duplicated, order kept.
+    """
     if not engine:
         return None
     if "compute" in fields:
-        fields["compute"] = [str(g).upper() for g in fields["compute"] if g]
+        new = [str(g).upper() for g in fields["compute"] if g]
+        p = path()
+        if p and os.path.exists(p):
+            with open(p, encoding="utf-8") as f:
+                cur = ((json.load(f).get("legs") or {}).get(engine) or {}).get("compute") or []
+            new = list(cur) + [g for g in new if g not in cur]
+        fields["compute"] = new
     return merge({"legs": {engine: fields}})
 
 

@@ -316,6 +316,11 @@ def main() -> int:
         if folder_id and db_id:
             move_to_folder(db_id, folder_id)
         record.item(db_id, "catalog", "SQLDatabase", DUCKLAKE_SQL_DB, engine="ducklake")
+        # The catalog is COMPUTE, and it is ducklake's alone: a Fabric SQL DB bills `Sql Usage`
+        # against its own item (19.5k CU over three days beside spark's 73k of Livy, measured
+        # 2026-09-17), and nothing but the ducklake leg ever queries it. remote_dbt.py adds the
+        # leg's notebook to the same list; record.leg accumulates rather than replaces.
+        record.leg("ducklake", compute=[db_id])
         emit("DUCKLAKE_CATALOG_DSN", f"Server={server};Database={database};Encrypt=yes")
         # DuckLake's parquet goes under the shared lakehouse's TABLES, as in the original
         # ducklake repo: DuckLake lays it out as <data_path>/<schema>/<table>/ and the

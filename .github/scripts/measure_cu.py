@@ -17,9 +17,11 @@ and only the three throwaway notebooks are per-run items. So every leg records t
 COMPUTE ONLY. Every `OneLake …` operation is storage, and on a SHARED lakehouse the storage
 transactions in any window are the sum of all five legs plus anything else that touched the
 item -- there is nothing to attribute. They are excluded in the query and again here. What is
-left is unambiguous per engine: each DuckDB leg's notebook run, dwh's `Warehouse Query` on its
-own item, spark's `High Concurrency Session Livy Run` on the lakehouse (only the spark leg
-opens Livy sessions there).
+left is unambiguous per engine (measured against the live model, 2026-09-17): each DuckDB
+leg's notebook (`Jupyter Notebook Scheduled Run`, a per-run item), ducklake's catalog SQL DB
+beside it (`Sql Usage`, nothing else queries it), dwh's `Warehouse Query` on its own item,
+spark's `High Concurrency Session Livy Run` on the lakehouse (only the spark leg opens Livy
+sessions there).
 
 WHAT THE WINDOW CANNOT DO. Two runs less than an hour apart share an hour on dwh and spark
 (both get that hour's whole CU); a Livy session idling past leg-end bills into the next hour

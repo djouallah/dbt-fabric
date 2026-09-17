@@ -155,3 +155,15 @@ def test_init_reads_the_dispatch_inputs_and_skips_blanks(tmp_path, monkeypatch):
     doc = _doc(tmp_path / "frag.json")
     assert doc["inputs"] == {"engines": "all"}
     assert doc["run"]["id"] == "42" and doc["run"]["started"].endswith("Z")
+
+
+def test_compute_items_accumulate_within_a_leg(tmp_path, monkeypatch):
+    """ducklake's compute is TWO items written by two scripts in one job -- the catalog SQL DB
+    from provision.py, the notebook from remote_dbt.py -- and the merge replaces lists, so
+    `leg()` has to union them itself. Upper-cased, de-duplicated, order kept."""
+    p = tmp_path / "frag.json"
+    monkeypatch.setenv("RUN_RECORD", str(p))
+    record.leg("ducklake", compute=["db1"])
+    record.leg("ducklake", started="T0")
+    record.leg("ducklake", compute=["nb1", "DB1"])
+    assert _doc(p)["legs"]["ducklake"] == {"compute": ["DB1", "NB1"], "started": "T0"}

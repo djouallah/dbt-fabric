@@ -281,14 +281,19 @@ Ported from `djouallah/direct-lake-parquet-layout` (`record.py`, `cu/measure.py`
   `Metrics By Item Operation And Hour` over those items in those hours, per run × engine.
 - **Compute only.** Every `OneLake …` operation is excluded, in the DAX and again in Python:
   on a shared lakehouse the storage transactions in any window are all five legs' plus
-  whatever else touched the item. Compute is unambiguous per engine — each DuckDB leg's
-  notebook item, dwh's `Warehouse Query` on its own item, spark's Livy run on the lakehouse
-  (only the spark leg opens Livy sessions there).
+  whatever else touched the item. Compute is unambiguous per engine, measured 2026-09-17 —
+  each DuckDB leg's notebook (`Jupyter Notebook Scheduled Run`), ducklake's catalog SQL DB
+  (`Sql Usage`), dwh's `Warehouse Query` on its own item, spark's Livy run on the lakehouse
+  (only the spark leg opens Livy sessions there). `history/README.md` carries the table.
 - **Caveats the window cannot fix:** two runs under an hour apart share an hour on dwh/spark;
   a Livy session idling past leg-end bills into the next hour. Documented, not fixed.
 - **`items` and `legs` are dicts, never lists.** The fragment merge is a recursive dict union
   that REPLACES lists, so a list would let the leg-end fragment wipe the leg-start.
   Fragments merge in BASENAME order (`download-artifact` nests each in its own directory).
+  The one list that accumulates is `legs.<engine>.compute`, and `record.leg()` does the union
+  itself: ducklake's compute is two items written by two scripts in one job — the catalog SQL
+  DB (`Sql Usage`, measured 19.5k CU in three days, nothing else queries it) from
+  `provision.py` and the notebook from `remote_dbt.py`.
 - **`RUN_RECORD` unset is a silent no-op** — `provision.py` and `remote_dbt.py` must stay
   runnable by hand and from the demo notebook. The cost: a job that forgets it produces a
   record missing those items with nothing red. Every fragment upload is

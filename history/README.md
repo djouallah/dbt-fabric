@@ -33,10 +33,20 @@ hours they ran, and the ledger holds what those items cost in those hours.
 
 - `role` is a closed vocabulary: `landing` · `data` (the shared `dbt` lakehouse) · `warehouse`
   · `catalog` (ducklake's SQL DB) · `folder` · `compute` (a throwaway notebook).
-- **`legs.<engine>.compute` is the item whose compute operations belong to that leg**: the
-  notebook for duckrun / ducklake / iceberg, the Warehouse for dwh, the shared lakehouse for
-  spark (a Livy session bills against the lakehouse it was opened on, and only the spark leg
-  opens one there). `started` / `finished` bracket build + tests + fingerprint.
+- **`legs.<engine>.compute` are the items whose compute operations belong to that leg**, and
+  `started` / `finished` bracket build + tests + fingerprint. Measured against the live model
+  on 2026-09-17 (workspace `sqlengines`, capacity `CAT_Premium_Europe`):
+
+  | engine | `compute` | operation, as the metrics app names it |
+  |---|---|---|
+  | duckrun, iceberg | the throwaway notebook `dbt-<engine>-<run id>` | `Jupyter Notebook Scheduled Run` |
+  | ducklake | that notebook **and** `dbt_ducklake_meta` (the catalog SQL DB — `Sql Usage`, 19.5k CU in three days, nothing else queries it) | `Jupyter Notebook Scheduled Run`, `Sql Usage` |
+  | dwh | `dbt_dwh` (Warehouse) | `Warehouse Query` |
+  | spark | `dbt` (the shared Lakehouse — a Livy session bills against the lakehouse it was opened on, and only the spark leg opens one there) | `High Concurrency Session Livy Run` |
+
+  Deliberately **not** attributed to any leg: the demo notebook `run` and its pipeline
+  (`Jupyter Notebook Pipeline Run`, `ActivityRun`), the deployed semantic models (`Query`,
+  refreshes), and every `OneLake …` storage operation.
 - Every job writes a *fragment* (`record.py`, `RUN_RECORD` env) and the `record` job merges
   them by basename order. `items` and `legs` are dicts because the merge unions dicts and
   replaces lists.
