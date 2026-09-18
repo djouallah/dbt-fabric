@@ -64,7 +64,7 @@ jobs:
       matrix:
         include:
           - {engine: duckrun,  label: "🦆 duckdb · delta-rs"}
-          - {engine: iceberg,  label: "🧊 duckdb · iceberg"}
+          - {engine: iceberg,  label: "🧊 iceberg · dbt OSS 2"}
           - {engine: ducklake, label: "🌊 duckdb · ducklake"}
           - {engine: dwh,      label: "🏢 fabric · warehouse"}
           - {engine: spark,    label: "⚡ fabric · spark"}
