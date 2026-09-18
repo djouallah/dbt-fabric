@@ -59,9 +59,9 @@ jobs:
       FABRIC_WORKSPACE_ID: ${{ secrets.FABRIC_WORKSPACE_ID }}
       PYTHONUNBUFFERED: "1"
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with:
           # pysail publishes for 3.10-3.14; 3.12 keeps this on the same interpreter as every
           # other job in the repo.
@@ -128,7 +128,7 @@ jobs:
         timeout-minutes: 10
         run: python .github/scripts/sail_smoke.py 2>&1 | tee sail_smoke.log
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v5
         if: always()
         with:
           # This log IS the deliverable — it is the body of the issue for lakehq/sail or

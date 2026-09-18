@@ -145,8 +145,8 @@ jobs:
       # 5000 req/h authenticated against 60 anonymous, and runners share IPs.
       GITHUB_TOKEN: ${{ github.token }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
           cache: pip
@@ -166,7 +166,7 @@ jobs:
         run: echo "data_lakehouse_id=$DATA_LAKEHOUSE_ID" >> "$GITHUB_OUTPUT"
       - name: Land AEMO files
         run: python download_aemo.py
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v5
         if: always()
         with:
           name: record-fragment-00-run
@@ -234,9 +234,9 @@ jobs:
       GITHUB_TOKEN: ${{ github.token }}
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
           cache: pip
@@ -334,7 +334,7 @@ jobs:
           dbt run-operation parity_fingerprint --target "$ENGINE" --profiles-dir . \
             | python "$GITHUB_WORKSPACE/.github/scripts/parity.py" capture "$GITHUB_WORKSPACE/history/parity"
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v5
         if: always()
         with:
           name: parity-${{ matrix.engine }}
@@ -352,7 +352,7 @@ jobs:
       # always(): a failed build still spent compute, and it still has to be attributable.
       # `ignore`: RUN_RECORD unset (or a leg that died before leg-start) is a no-op fragment,
       # not an error -- record.py logs what it assembled.
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v5
         if: always()
         with:
           name: record-fragment-build-${{ matrix.engine }}
@@ -393,8 +393,8 @@ jobs:
       AZURE_TRANSPORT_OPTION_TYPE: curl
       CURL_CA_INFO: /etc/ssl/certs/ca-certificates.crt
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
       # Just the engine. iceberg_rewrite_data_files() exists on the pre-release line only,
@@ -460,8 +460,8 @@ jobs:
       CURL_CA_INFO: /etc/ssl/certs/ca-certificates.crt
       PYTHONIOENCODING: utf-8
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
           cache: pip
@@ -471,7 +471,7 @@ jobs:
         run: |
           echo "RUN_RECORD=$RUNNER_TEMP/record/record-30-layout.json" >> "$GITHUB_ENV"
           RUN_RECORD="$RUNNER_TEMP/record/record-30-layout.json" python .github/scripts/layout.py
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v5
         if: always()
         with:
           name: record-fragment-layout
@@ -491,18 +491,18 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v5
         with:
           pattern: parity-*
           path: ${{ runner.temp }}/parity
           merge-multiple: true
       # merge-multiple: false (the default) nests each artifact in its own directory, which is
       # exactly why record.py sorts fragments by BASENAME.
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v5
         with:
           pattern: record-fragment-*
           path: ${{ runner.temp }}/fragments
@@ -527,7 +527,7 @@ jobs:
           mkdir -p history/runs
           python .github/scripts/record.py finish "$RUNNER_TEMP/fragments" "$RUNNER_TEMP/parity" "$out"
           echo "path=$out" >> "$GITHUB_OUTPUT"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v5
         with:
           name: run-record
           path: ${{ steps.rec.outputs.path }}
@@ -597,8 +597,8 @@ jobs:
       DEPLOY_ENGINES: ${{ join(fromJSON(needs.plan.outputs.engines).*.engine, ',') }}
       DEPLOY_SEMANTIC_MODEL: ${{ inputs.deploy == 'full' }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
           cache: pip

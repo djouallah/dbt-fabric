@@ -96,11 +96,11 @@ jobs:
       # `ref:` IS LOAD-BEARING. On a `workflow_run` event a default checkout takes the TRIGGERING
       # run's head SHA -- which is from BEFORE the pipeline's record job pushed the run record.
       # The read would then not see the very run that triggered it, and nothing would say so.
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           ref: ${{ github.event.workflow_run.head_branch || github.ref_name }}
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
           cache: pip
