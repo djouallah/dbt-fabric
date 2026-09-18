@@ -2,11 +2,11 @@
   "engine": "dwh",
   "adapter": "fabric",
   "model": "fct_summary",
-  "rows_total": 85537087,
+  "rows_total": 103603674,
   "duids": 397,
-  "days": 1746,
+  "days": 2106,
   "date_min": "2018-04-01",
   "date_max": "2026-09-18",
-  "mw_sum": 10475899206.684448,
-  "price_sum": 7612149821.385675
+  "mw_sum": 12615665348.201643,
+  "price_sum": 9353533324.415981
 }
