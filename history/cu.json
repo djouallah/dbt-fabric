@@ -111,6 +111,14 @@
    "runs": 11,
    "since": "2026-09-17T16:00:00",
    "timed": 39
+  },
+  {
+   "at": "2026-09-18T07:12:37Z",
+   "changed": 10,
+   "pending": 0,
+   "runs": 12,
+   "since": "2026-09-17T16:00:00",
+   "timed": 44
   }
  ],
  "runs": {
@@ -591,11 +599,11 @@
     "ducklake": {
      "cu": {
       "Jupyter Notebook Scheduled Run": 5247.864,
-      "Sql Usage": 4006.633
+      "Sql Usage": 6122.473
      },
      "seconds": {
       "Jupyter Notebook Scheduled Run": 655.98,
-      "Sql Usage": 2100.0
+      "Sql Usage": 3180.0
      },
      "window": [
       "2026-09-18T06:21:46Z",
@@ -616,10 +624,10 @@
     },
     "dwh": {
      "cu": {
-      "Warehouse Query": 12027.674
+      "Warehouse Query": 14308.962
      },
      "seconds": {
-      "Warehouse Query": 1392.58
+      "Warehouse Query": 1813.614
      },
      "window": [
       "2026-09-18T06:22:00Z",
@@ -640,11 +648,11 @@
     },
     "spark": {
      "cu": {
-      "High Concurrency Session Livy Run": 20584.477,
+      "High Concurrency Session Livy Run": 29362.436,
       "Lakehouse Operations": 1888.949
      },
      "seconds": {
-      "High Concurrency Session Livy Run": 1030.043,
+      "High Concurrency Session Livy Run": 1657.73,
       "Lakehouse Operations": 472.233
      },
      "window": [
@@ -654,8 +662,77 @@
     }
    },
    "started": "2026-09-18T06:19:09Z"
+  },
+  "35316738167": {
+   "engines": {
+    "ducklake": {
+     "cu": {
+      "Jupyter Notebook Scheduled Run": 1540.954,
+      "Sql Usage": 6802.454
+     },
+     "seconds": {
+      "Jupyter Notebook Scheduled Run": 192.618,
+      "Sql Usage": 3540.0
+     },
+     "window": [
+      "2026-09-18T06:56:18Z",
+      "2026-09-18T07:01:35Z"
+     ]
+    },
+    "duckrun": {
+     "cu": {
+      "Jupyter Notebook Scheduled Run": 2936.49
+     },
+     "seconds": {
+      "Jupyter Notebook Scheduled Run": 367.059
+     },
+     "window": [
+      "2026-09-18T06:56:01Z",
+      "2026-09-18T07:04:22Z"
+     ]
+    },
+    "dwh": {
+     "cu": {
+      "Warehouse Query": 17954.351
+     },
+     "seconds": {
+      "Warehouse Query": 2114.487
+     },
+     "window": [
+      "2026-09-18T06:56:17Z",
+      "2026-09-18T07:02:29Z"
+     ]
+    },
+    "iceberg": {
+     "cu": {
+      "Jupyter Notebook Scheduled Run": 1390.99
+     },
+     "seconds": {
+      "Jupyter Notebook Scheduled Run": 173.872
+     },
+     "window": [
+      "2026-09-18T06:56:09Z",
+      "2026-09-18T07:01:06Z"
+     ]
+    },
+    "spark": {
+     "cu": {
+      "High Concurrency Session Livy Run": 30142.539,
+      "Lakehouse Operations": 1888.949
+     },
+     "seconds": {
+      "High Concurrency Session Livy Run": 1852.754,
+      "Lakehouse Operations": 472.233
+     },
+     "window": [
+      "2026-09-18T06:56:11Z",
+      "2026-09-18T07:06:16Z"
+     ]
+    }
+   },
+   "started": "2026-09-18T06:53:18Z"
   }
  },
  "schema": 1,
- "updated": "2026-09-18T06:42:04Z"
+ "updated": "2026-09-18T07:12:37Z"
 }
