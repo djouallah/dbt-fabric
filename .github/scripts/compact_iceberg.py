@@ -3,7 +3,12 @@
 Every model the iceberg leg WRITES is an insert-only incremental merge — that is deliberate
 (OneLake accepts one add-snapshot per commit), but it means each dbt run appends another
 small data file per table and nothing ever folds them back together. This runs
-iceberg_rewrite_data_files() over each table, consolidating files below the target size.
+iceberg_rewrite_data_files() over each table, folding files below MIN_FILE_SIZE up toward
+TARGET_FILE_SIZE.
+
+ITS JOB IS TO MERGE, NEVER TO SPLIT, and that takes saying so explicitly — see the size
+constants below for the run where leaving the bounds defaulted cost 2.8 GB of rewrite to make
+a layout worse.
 
 iceberg_rewrite_data_files landed in duckdb/iceberg#1035 and is not in a stable
 duckdb release yet, so the compact job (pipeline.yml) installs the latest PRE-release duckdb
@@ -67,8 +72,29 @@ TOKEN = os.environ["ONELAKE_TOKEN"]
 # not from `build` because `build` is a matrix, whose entries overwrite one another's outputs.
 WAREHOUSE = f"{os.environ['FABRIC_WORKSPACE_ID']}/{os.environ['DATA_LAKEHOUSE_ID']}"
 
-# Files smaller than this get folded together; the rest are left alone.
-TARGET_FILE_SIZE = "64MiB"
+# THE SIZE A MERGE AIMS FOR -- and on its own it is NOT a "leave big files alone" setting.
+# iceberg_rewrite_data_files bin-packs toward the target the way Spark's rewrite_data_files
+# does, so when min/max are left to their defaults it brackets the target (0.75x and 1.8x) and
+# rewrites everything OUTSIDE that band -- which means it SPLITS files above ~1.8x as
+# enthusiastically as it merges files below 0.75x.
+#
+# That cost a real run. 35350150404 folded 3,000 archive files in one go and left a good
+# layout -- fct_scada at 7 files of ~410 MB. Compaction then spent 2,872 MB of rewrite turning
+# those 7 into 43 files of ~67 MB, i.e. straight down onto a 64MiB target. fct_summary went
+# 2 -> 12 and fct_price 2 -> 7 the same way. Nothing was broken; the job just undid a better
+# layout than it produced, and paid OneLake write traffic to do it.
+#
+# So all three bounds are explicit now. MAX is the one that matters: a file above the target is
+# there because a big batch wrote it, and Direct Lake would rather have it whole.
+TARGET_FILE_SIZE = "256MiB"
+# Below this, fold. Deliberately just under the target rather than at 64MiB, so the 43-file
+# tables the old setting produced are themselves candidates and get folded back up.
+MIN_FILE_SIZE = "192MiB"
+# Above this, split -- set high enough that nothing a fold writes ever is. 2GiB clears the
+# largest single file seen here by a wide margin (fct_scada's were ~410 MB after a 3,000-file
+# batch), so in practice it reads as "never split", while staying a real ceiling rather than a
+# sentinel the function might reject.
+MAX_FILE_SIZE = "2GiB"
 # Don't bother rewriting a table that only has a handful of files. Also what keeps
 # already-tidy tables (dim_calendar, anything compacted last run) cheap.
 #
@@ -212,6 +238,8 @@ def compact(con, table, say):
             f"SELECT rewritten_data_files, added_data_files, rewritten_bytes "
             f"FROM iceberg_rewrite_data_files('{fq}', "
             f"target_file_size_bytes => '{TARGET_FILE_SIZE}', "
+            f"min_file_size_bytes => '{MIN_FILE_SIZE}', "
+            f"max_file_size_bytes => '{MAX_FILE_SIZE}', "
             f"min_input_files => {MIN_INPUT_FILES})"
         ).fetchone()
     except Exception as e:
@@ -226,11 +254,12 @@ def compact(con, table, say):
 
     rewritten, added, rewritten_bytes = row
     if not rewritten:
-        # Either under the file threshold or every file already at/above the target size --
-        # nothing distinguishes the two without a metadata scan, and neither is a problem
-        # (observed on fct_scada, whose files are individually larger than the target).
-        return (table, f"0 rewritten — under the {MIN_INPUT_FILES}-file threshold or nothing "
-                       f"below {TARGET_FILE_SIZE}")
+        # Either under the file threshold or every file already inside [MIN, MAX] -- nothing
+        # distinguishes the two without a metadata scan, and neither is a problem. This is the
+        # EXPECTED line for a table a big batch has just written: those files are above MIN and
+        # nowhere near MAX, so there is nothing to do and that is the point.
+        return (table, f"0 rewritten — under the {MIN_INPUT_FILES}-file threshold, or every "
+                       f"file already between {MIN_FILE_SIZE} and {MAX_FILE_SIZE}")
 
     mb = (rewritten_bytes or 0) / 1048576.0
     return (table, f"OK ({rewritten} -> {added} files, {mb:.1f} MB)")
@@ -250,7 +279,8 @@ def report(lines, duckdb_version):
 
 def main():
     version = duckdb.__version__
-    print(f"duckdb {version} — compacting {len(TABLES)} table(s) at {TARGET_FILE_SIZE}, "
+    print(f"duckdb {version} — compacting {len(TABLES)} table(s) toward {TARGET_FILE_SIZE}, "
+          f"folding below {MIN_FILE_SIZE}, splitting above {MAX_FILE_SIZE}, "
           f"min_input_files={MIN_INPUT_FILES}, budget={BUDGET_MINUTES:g}min, in order:")
     for t in TABLES:
         print(f"  - onelake.{t}")

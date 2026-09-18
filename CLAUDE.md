@@ -199,6 +199,16 @@ cd dbt1 && dbt build --target duckrun --profiles-dir .
 - **duckrun maintenance is built in** (compaction on byte debt, vacuum after). Do not add
   OPTIMIZE/VACUUM jobs for it. Iceberg is the opposite: it has no snapshot expiry, so
   `compact_iceberg.py` is a real job — and it speeds up reads without shrinking storage.
+- **`iceberg_rewrite_data_files` SPLITS as readily as it merges, so give it all three size
+  bounds.** It bin-packs toward `target_file_size_bytes` the way Spark's `rewrite_data_files`
+  does: leave `min_file_size_bytes` / `max_file_size_bytes` defaulted and they bracket the
+  target at 0.75x and 1.8x, so every file above ~1.8x target is rewritten *down*. Run
+  35350150404 folded 3,000 archive files in one go and left a good layout — `fct_scada` at 7
+  files of ~410 MB — and compaction then spent 2,872 MB of rewrite turning it into 43 files of
+  ~67 MB, straight onto the old 64MiB target. Nothing was broken and nothing was red; the job
+  just paid OneLake write traffic to make the layout worse. The parameter list is worth reading
+  before tuning it (`SELECT parameters FROM duckdb_functions() WHERE function_name =
+  'iceberg_rewrite_data_files'`) — a wrong name is a loud Binder Error, so it is cheap to check.
 - **Fabric OPENROWSET cannot read gzip CSV.** `DATA_COMPRESSION` is only valid under PARSER
   1.0, which cannot parse the ragged/quoted AEMO rows. Plain CSV + PARSER 2.0 is the only
   working combination, and it is why everything lands uncompressed.
