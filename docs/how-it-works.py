@@ -274,12 +274,9 @@ def scene():
                   anchor="middle", italic=True))
 
     o.append(text(500, 408, "dbt build --target &lt;engine&gt;", 17, "ink", anchor="middle"))
-    o.append(text(500, 432, "five model trees, the same SQL* - the flag enables one, "
-                            "the other four parse disabled",
+    o.append(text(500, 432, "five model trees, the same SQL (at least in spirit) - "
+                            "the flag enables one, the other four parse disabled",
                   12, "soft", anchor="middle", italic=True))
-    o.append(text(54, 556, "* sameish. five dialects, one meaning: T-SQL has no GREATEST, "
-                           "and Spark turns a slash date into NULL rather than erroring",
-                  11, "soft", italic=True))
 
     chips = [
         ("duckrun", "DuckDB, single node", "&#8594; Delta, via delta-rs",
