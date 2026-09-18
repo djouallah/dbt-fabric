@@ -127,6 +127,14 @@
    "runs": 12,
    "since": "2026-09-17T16:00:00",
    "timed": 44
+  },
+  {
+   "at": "2026-09-18T07:42:59Z",
+   "changed": 3,
+   "pending": 0,
+   "runs": 12,
+   "since": "2026-09-17T16:00:00",
+   "timed": 44
   }
  ],
  "runs": {
@@ -676,11 +684,11 @@
     "ducklake": {
      "cu": {
       "Jupyter Notebook Scheduled Run": 1540.954,
-      "Sql Usage": 8429.521
+      "Sql Usage": 9752.35
      },
      "seconds": {
       "Jupyter Notebook Scheduled Run": 192.618,
-      "Sql Usage": 4380.0
+      "Sql Usage": 5040.0
      },
      "window": [
       "2026-09-18T06:56:18Z",
@@ -701,10 +709,10 @@
     },
     "dwh": {
      "cu": {
-      "Warehouse Query": 23766.606
+      "Warehouse Query": 24281.18
      },
      "seconds": {
-      "Warehouse Query": 2927.151
+      "Warehouse Query": 3167.875
      },
      "window": [
       "2026-09-18T06:56:17Z",
@@ -725,11 +733,11 @@
     },
     "spark": {
      "cu": {
-      "High Concurrency Session Livy Run": 32465.509,
+      "High Concurrency Session Livy Run": 37718.887,
       "Lakehouse Operations": 1888.949
      },
      "seconds": {
-      "High Concurrency Session Livy Run": 2191.367,
+      "High Concurrency Session Livy Run": 2490.093,
       "Lakehouse Operations": 472.233
      },
      "window": [
@@ -742,5 +750,5 @@
   }
  },
  "schema": 1,
- "updated": "2026-09-18T07:31:29Z"
+ "updated": "2026-09-18T07:42:59Z"
 }
