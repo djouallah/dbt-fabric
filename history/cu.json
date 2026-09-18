@@ -95,6 +95,14 @@
    "runs": 10,
    "since": "2026-09-17T16:00:00",
    "timed": 34
+  },
+  {
+   "at": "2026-09-18T06:10:39Z",
+   "changed": 2,
+   "pending": 0,
+   "runs": 10,
+   "since": "2026-09-17T16:00:00",
+   "timed": 34
   }
  ],
  "runs": {
@@ -508,11 +516,11 @@
     "ducklake": {
      "cu": {
       "Jupyter Notebook Scheduled Run": 944.883,
-      "Sql Usage": 955.928
+      "Sql Usage": 2136.497
      },
      "seconds": {
       "Jupyter Notebook Scheduled Run": 236.22,
-      "Sql Usage": 540.0
+      "Sql Usage": 1200.0
      },
      "window": [
       "2026-09-18T04:20:08Z",
@@ -533,10 +541,10 @@
     },
     "dwh": {
      "cu": {
-      "Warehouse Query": 5742.696
+      "Warehouse Query": 6130.056
      },
      "seconds": {
-      "Warehouse Query": 691.781
+      "Warehouse Query": 781.806
      },
      "window": [
       "2026-09-18T04:20:10Z",
@@ -572,5 +580,5 @@
   }
  },
  "schema": 1,
- "updated": "2026-09-18T04:40:46Z"
+ "updated": "2026-09-18T06:10:39Z"
 }
