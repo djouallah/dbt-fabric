@@ -5,6 +5,10 @@ parity fingerprint -- so a remote leg and a local leg are the same run on differ
 
     python .github/scripts/run_in_fabric.py <duckrun | ducklake | iceberg>
 
+One thing it does that the local leg does not: it waits out a PAUSED serverless catalog
+database (SQL error 40613) by rebuilding, rather than reporting it as a build failure. See
+RESUME_SIGNATURE below.
+
 TWO WAYS TO INVOKE dbt, because the repo holds two dbt major versions:
 
   duckrun, ducklake   dbt-core 1.x, in-process through dbtRunner. Keeping it in-process is
@@ -53,14 +57,22 @@ os.environ.pop("CURL_CA_INFO", None)
 BASE = ["--target", engine, "--profiles-dir", "."]
 
 
+# The text of the last failure, for RESUMING below. Set by run_v1 only: run_v2 inherits its
+# subprocess's streams rather than capturing them, and the engine it runs (iceberg) has no
+# serverless database in its path anyway.
+LAST_ERROR = ""
+
+
 def run_v1(*args) -> bool:
     """dbt-core 1.x, in-process. cwd is the project dir, which is how dbt finds the project."""
+    global LAST_ERROR
     from dbt.cli.main import dbtRunner  # imported late: after the env is set
 
     print(f"=== dbt {' '.join(args)} ({engine}) ===", flush=True)
     t0 = time.time()
     res = dbtRunner().invoke([*args, *BASE])
     print(f"=== dbt {args[0]}: success={res.success} in {int(time.time() - t0)}s ===", flush=True)
+    LAST_ERROR = "" if res.success else str(res.exception or "")
     if res.exception:
         print(res.exception, flush=True)
     return bool(res.success)
@@ -99,7 +111,35 @@ if PROJECT[engine] == "dbt1":
     # --profiles-dir . is relative, so put the process in the project.
     os.chdir(project_dir)
 
+# A PAUSED SERVERLESS DATABASE IS NOT A BUILD FAILURE -- WAIT FOR IT.
+#
+# ducklake's catalog is a Fabric SQL DB, which auto-pauses when idle. The first connection
+# after that gets SQL error 40613 ("Database ... is not currently available. Please retry the
+# connection later"), WHICH IS THE SERVER ASKING US TO RETRY: the resume is already under way
+# and takes about a minute. dbt has no notion of this and dies at the ATTACH, in ~26 seconds,
+# before a single model runs -- and `dbt retry` below cannot help, because a crash at
+# connection open writes no run_results.json to retry from. Observed on run 35294987062, the
+# first ducklake run after a 12-hour gap; every earlier run was close enough behind the last
+# that the database was still awake.
+#
+# Only this signature, and only the FIRST build: any other failure is a real one and must
+# stay fast. Retrying the whole `dbt build` rather than probing the database first is
+# deliberate -- the probe that matters is the one dbt itself makes, with its own connection,
+# its own token and its own extension.
+RESUME_SIGNATURE = "40613"
+RESUME_ATTEMPTS = 5
+RESUME_WAIT_SECONDS = 60
+
 ok = run("build")
+for attempt in range(1, RESUME_ATTEMPTS + 1):
+    if ok or RESUME_SIGNATURE not in LAST_ERROR:
+        break
+    print(f"=== catalog database is resuming (SQL {RESUME_SIGNATURE}); waiting "
+          f"{RESUME_WAIT_SECONDS}s and rebuilding, attempt {attempt}/{RESUME_ATTEMPTS} ===",
+          flush=True)
+    time.sleep(RESUME_WAIT_SECONDS)
+    ok = run("build")
+
 if not ok and (project_dir / "target" / "run_results.json").exists():
     # Same as the workflow's `|| dbt retry`: heals the tail of a run that lost a few nodes.
     # Only when the build got far enough to write run_results.json -- a crash at connection

@@ -182,6 +182,19 @@ cd dbt1 && dbt build --target duckrun --profiles-dir .
   down mid-`fct_scada` twice in one day. Tokens are minted in the notebook by `notebookutils`
   (the `setup` hook); only the `FORWARD` allowlist of config travels, never anything
   token-shaped. `DATA_LAKEHOUSE_ID` from provision.py is what run_python needs.
+- **ducklake's catalog SQL DB auto-pauses, and the first connection after that FAILS.** A
+  Fabric SQL DB is serverless: idle long enough and it pauses, then the next connection gets
+  SQL error 40613 ("Database ... is not currently available. Please retry the connection
+  later") while it resumes, which takes about a minute. dbt has no notion of this — it dies at
+  the DuckLake ATTACH in ~26 seconds, before one model runs, and `dbt retry` cannot heal it
+  because a crash at connection open writes no `run_results.json`. Run 35294987062 lost the
+  whole ducklake leg this way, 12 hours after the previous run, with NO code change involved;
+  every earlier run had been close enough behind the last to find the database awake. So a
+  40613 is not a red build: `run_in_fabric.py` waits and re-runs `build`, keyed on that code
+  alone (`RESUME_SIGNATURE`, pinned by `tests_py/test_fabric_resume_retry.py`). Retrying the
+  whole build rather than probing the database first is the point — the connection that has to
+  succeed is dbt's own, with its own token and extension. Only ducklake has a serverless
+  database in its path, which is why only it is ever affected.
 - **`delta_export()` takes no arguments** and writes each DuckLake table's `_delta_log` in
   place, which is why ducklake's `data_path` is the shared lakehouse's `Tables/` section
   (`Tables/ducklake_mart/<table>` is then a real lakehouse table). A two-argument call was
