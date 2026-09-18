@@ -12,5 +12,5 @@
 #
 # Compaction is NOT here: the compact job installs `--pre duckdb` on its own and nothing
 # else -- iceberg_rewrite_data_files() exists on the pre-release line only, and that job never
-# touches duckrun or the Fabric API (build.yml).
+# touches duckrun or the Fabric API (pipeline.yml).
 duckrun

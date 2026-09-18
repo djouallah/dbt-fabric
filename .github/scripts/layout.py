@@ -42,6 +42,7 @@ from __future__ import annotations
 import json
 import os
 import sys
+from collections import Counter
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from pathlib import Path
@@ -69,6 +70,17 @@ MART = "fct_summary"
 # two engines produce the same rows in a very different physical layout.
 WRITER = {"duckrun": "delta-rs", "iceberg": "duckdb (iceberg)", "ducklake": "duckdb (ducklake)",
           "spark": "spark", "dwh": "warehouse"}
+
+# Display only, and the SAME five labels as pipeline.yml's `plan` step and ci.yml's gating
+# matrix: the headline table and the Actions graph should name a leg identically, because they
+# are read side by side. `engine` remains the key everywhere else.
+LABEL = {"duckrun": "🦆 duckdb · delta-rs", "iceberg": "🧊 duckdb · iceberg",
+         "ducklake": "🌊 duckdb · ducklake", "dwh": "🏢 fabric · warehouse",
+         "spark": "⚡ fabric · spark"}
+
+# The headline heading counts the engines in words -- "Five engines, one gold layer" reads as a
+# claim, "5 engine(s)" reads as a log line. A single-engine run still has to say something true.
+NUMBER = {1: "One", 2: "Two", 3: "Three", 4: "Four", 5: "Five"}
 
 # How many physical rows `run_lengths` reads from the sample file. A FIXED ROW BUDGET rather
 # than "the first row group", because the engines' row-group sizes differ by orders of magnitude
@@ -398,6 +410,69 @@ def fmt(v, kind: str) -> str:
     return f"`{v}`" if kind == "left" else str(v)
 
 
+def engine_total(per_engine: dict, engine: str, key: str):
+    """One engine's `key` summed over every table it was measured on, or None if it was not
+    measured at all. None and 0 are different claims and must render differently."""
+    if not per_engine.get(engine):
+        return None
+    return sum(d.get(key) or 0 for d in per_engine[engine].values())
+
+
+def headline_table(per_engine: dict, engines: list[str], ordering: dict, out: list[str]) -> None:
+    """THE TABLE THE RUN PAGE OPENS WITH: one row per engine, no per-table breakdown. The claim
+    it has to make in one glance is the repo's whole claim -- the engines are interchangeable
+    (same rows) and what comes out is a well-shaped parquet table (the geometry columns). The
+    eight-table and per-column tables below it are the evidence for this one.
+
+    `rows` and `size MB` are all of TABLES; the geometry is `fct_summary` alone, because that is
+    the table Power BI reads through Direct Lake. ⚠️ marks an engine whose row count differs
+    from the others -- the same disagreement parity_table shows per table, carried up here."""
+    out.append(f"## 🏁 {NUMBER.get(len(engines), str(len(engines)))} "
+               f"{'engine' if len(engines) == 1 else 'engines'}, one gold layer\n")
+    out.append(f"<sub><b>rows</b> and <b>size</b> are all {len(TABLES)} tables; the geometry "
+               f"columns are <code>{MART}</code> alone, the table Power BI reads through Direct "
+               f"Lake. ⚠️ = this engine's row count differs from the others.</sub>\n")
+    heads = ["engine", "writer", "rows", "size MB", "files", "row groups", "avg RG rows",
+             "compression", "V-Order"]
+    out.append("| " + " | ".join(heads) + " |")
+    out.append("| --- | --- | --: | --: | --: | --: | --: | --- | --- |")
+
+    totals = {e: engine_total(per_engine, e, "total_rows") for e in engines}
+    present = [v for v in totals.values() if v is not None]
+    # The majority row count, so the ⚠️ lands on the engine that disagrees rather than on all
+    # of them. One engine measured, or all of them agreeing, flags nothing.
+    agreed = Counter(present).most_common(1)[0][0] if present else None
+    for e in engines:
+        mart = (per_engine.get(e) or {}).get(MART) or {}
+        rows = totals[e]
+        cells = [fmt(rows, "num") + ("" if rows is None or rows == agreed else " ⚠️"),
+                 fmt(None if not per_engine.get(e) else
+                     round(engine_total(per_engine, e, "size_mb"), 1), "num")]
+        cells += [fmt(mart.get(k), kind)
+                  for k, kind in (("num_files", "num"), ("num_row_groups", "num"),
+                                  ("avg_row_group", "num"), ("compression", "left"))]
+        cells.append(vorder_cell(mart, (ordering or {}).get(e), e))
+        out.append(f"| {LABEL.get(e, e)} | `{WRITER.get(e, e)}` | " + " | ".join(cells) + " |")
+    out.append("")
+
+
+def vorder_cell(mart: dict, ordering: dict | None, engine: str) -> str:
+    """V-Order for one engine, as the deep dive already reports it: the per-file Delta
+    `add.tags.VORDER` where a writer stamps it (only Fabric Spark does), the get_stats() flag
+    otherwise, and `n/a` for the Warehouse -- which V-Orders by default and writes no tag, so
+    neither a tag count nor a false flag would be true of it. See ordering_table."""
+    v = (ordering or {}).get("vorder_files") or {}
+    if v:
+        return f"{v['tagged']:,}/{v['files']:,}"
+    # Nothing measured is not a V-Order claim either way -- before the dwh branch, or an engine
+    # that failed would still assert something about its files.
+    if not mart:
+        return "—"
+    if engine == "dwh":
+        return "n/a (warehouse)"
+    return fmt(mart.get("vorder"), "bool")
+
+
 def parity_table(per_engine: dict, engines: list[str], out: list[str]) -> None:
     """Row counts side by side. ⚠️ = differs or missing across engines. The last two rows carry
     per-engine totals: rows must line up; MB legitimately differs by writer and compression."""
@@ -414,9 +489,7 @@ def parity_table(per_engine: dict, engines: list[str], out: list[str]) -> None:
                    + " | ".join(fmt(v, "num") for v in vals) + " |")
 
     def total(e, key):
-        if not per_engine.get(e):
-            return None
-        return sum(d.get(key) or 0 for d in per_engine[e].values())
+        return engine_total(per_engine, e, key)
 
     rows = [total(e, "total_rows") for e in engines]
     present = [v for v in rows if v is not None]
@@ -631,6 +704,8 @@ def main() -> int:
                 + (f", {v['tagged']}/{v['files']} V-Ordered file(s)" if v else ""))
 
     out: list[str] = []
+    # FIRST, and deliberately: this is what the run page opens with.
+    headline_table(per_engine, engines, ordering, out)
     parity_table(per_engine, engines, out)
     detail_tables(per_engine, engines, out)
     encoding_table(encodings, engines, out)

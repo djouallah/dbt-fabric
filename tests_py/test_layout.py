@@ -117,6 +117,41 @@ def test_parity_table_flags_disagreement_and_absence():
     assert any(l.startswith("| **total rows** ⚠️") for l in out)
 
 
+def test_headline_table_flags_the_row_count_outlier():
+    """The run page's first table. The ⚠️ must land on the engine that DISAGREES, not on every
+    engine, and an engine that was not measured must read `—` rather than 0 -- "nothing there"
+    and "not measured" are different claims, and a 0 in the headline row reads as a broken
+    build rather than an unread table."""
+    per = {"duckrun": {"fct_summary": {"total_rows": 10, "size_mb": 1.0, "num_files": 2,
+                                       "compression": "ZSTD", "vorder": False},
+                       "fct_scada": {"total_rows": 30, "size_mb": 3.0}},
+           "dwh": {"fct_summary": {"total_rows": 10, "size_mb": 2.0},
+                   "fct_scada": {"total_rows": 30, "size_mb": 4.0}},
+           "spark": {"fct_summary": {"total_rows": 9, "size_mb": 1.0}},
+           "iceberg": {}}
+    out: list[str] = []
+    layout.headline_table(per, ["duckrun", "dwh", "spark", "iceberg"], {}, out)
+    rows = {e: next(l for l in out if l.startswith(f"| {layout.LABEL[e]} |"))
+            for e in ("duckrun", "dwh", "spark", "iceberg")}
+    assert "⚠️" in rows["spark"], "the engine 9 rows short is not flagged"
+    assert "⚠️" not in rows["duckrun"] and "⚠️" not in rows["dwh"], "the agreeing majority is flagged"
+    # 40 = 10 + 30 summed over the tables, not fct_summary alone.
+    assert "| 40 |" in rows["duckrun"]
+    assert "⚠️" not in rows["iceberg"] and "| — | — | — |" in rows["iceberg"]
+    assert out[0].startswith("## 🏁 Four engines")
+
+
+def test_headline_vorder_distinguishes_untagged_from_unmeasured():
+    """`·` (a writer that stamps no V-Order tag), `n/a (warehouse)` (V-Orders by default and
+    writes no tag) and `—` (not measured) are three different answers. The spark tag count comes
+    from the deep dive, which is the only per-file truth."""
+    mart = {"total_rows": 1, "vorder": False}
+    assert layout.vorder_cell(mart, {"vorder_files": {"tagged": 3, "files": 4}}, "spark") == "3/4"
+    assert layout.vorder_cell(mart, {}, "duckrun") == "·"
+    assert layout.vorder_cell(mart, {}, "dwh") == "n/a (warehouse)"
+    assert layout.vorder_cell({}, {}, "dwh") == "—"
+
+
 def test_build_doc_omits_unmeasured_sections():
     doc = layout.build_doc({"duckrun": {"fct_summary": {"total_rows": 1}}}, ["duckrun", "dwh"],
                            {"duckrun": ("Lakehouse", "dbt", "G1")}, {"duckrun": "duckrun"},

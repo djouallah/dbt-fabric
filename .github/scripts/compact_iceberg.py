@@ -6,7 +6,7 @@ small data file per table and nothing ever folds them back together. This runs
 iceberg_rewrite_data_files() over each table, consolidating files below the target size.
 
 iceberg_rewrite_data_files landed in duckdb/iceberg#1035 and is not in a stable
-duckdb release yet, so the compact job (build.yml) installs the latest PRE-release duckdb
+duckdb release yet, so the compact job (pipeline.yml) installs the latest PRE-release duckdb
 (`--pre duckdb`, unpinned) and nothing else. The iceberg extension binary is keyed to the
 duckdb build, so whatever pip resolves brings its own matching extension; connect() prints
 both shas.
@@ -61,8 +61,9 @@ import duckdb
 ENDPOINT = "https://onelake.table.fabric.microsoft.com/iceberg"
 TOKEN = os.environ["ONELAKE_TOKEN"]
 # The catalog's warehouse is "<workspace id>/<lakehouse id>". Composed here from the two
-# parts rather than handed over whole: the build job passes the lakehouse GUID as a job
-# output, and GitHub drops an output that contains a secret -- the workspace id is one.
+# parts rather than handed over whole: the `land` job passes the lakehouse GUID as a job output,
+# and GitHub drops an output that contains a secret -- the workspace id is one. From `land` and
+# not from `build` because `build` is a matrix, whose entries overwrite one another's outputs.
 WAREHOUSE = f"{os.environ['FABRIC_WORKSPACE_ID']}/{os.environ['DATA_LAKEHOUSE_ID']}"
 
 # Files smaller than this get folded together; the rest are left alone.
@@ -232,20 +233,15 @@ def compact(con, table, say):
 
 
 def report(lines, duckdb_version):
+    """THE JOB LOG, and deliberately not $GITHUB_STEP_SUMMARY. This ran before `layout` and so
+    used to be the first table on the run page -- one engine's maintenance, ahead of the
+    cross-engine layout table that is the point of the whole repo. Compaction is a detail of the
+    iceberg leg; it belongs in that leg's log. Nothing else reads this."""
     out = ["=" * 100, f"Iceberg compaction (duckdb {duckdb_version})", "-" * 100]
     for table, status in lines:
         out.append(f"{table:<32}{status}")
     out.append("=" * 100)
     print("\n".join(out))
-
-    summary = os.environ.get("GITHUB_STEP_SUMMARY")
-    if summary:
-        with open(summary, "a", encoding="utf-8") as f:
-            f.write(f"## 🧹 Iceberg compaction (duckdb {duckdb_version})\n\n")
-            f.write("| table | result |\n|---|---|\n")
-            for table, status in lines:
-                f.write(f"| `{table}` | {status} |\n")
-            f.write("\n")
 
 
 def main():

@@ -1,6 +1,6 @@
 # The Sail SMOKE TEST, not an engine.
 #
-# DELIBERATELY NOT NAMED requirements/sail.txt. That stem is how build.yml resolves an
+# DELIBERATELY NOT NAMED requirements/sail.txt. That stem is how pipeline.yml resolves an
 # ENGINE's dependencies (`requirements/${ENGINE}.txt`), and how ci.yml's gating matrix names
 # its jobs. Sail is a candidate sixth engine, not a sixth engine — giving it an engine-shaped
 # requirements file is the first step toward something picking it up as one.

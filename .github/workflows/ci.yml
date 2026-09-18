@@ -55,17 +55,19 @@ jobs:
   # the dependencies it builds with. check_gating.py knows which project each engine is in.
   gating:
     # `label` is cosmetic — the only thing the Actions UI shows. `engine` is the real target
-    # name that dbt, the folder layout and every script key on; do not rename those.
+    # name that dbt, the folder layout and every script key on; do not rename those. The same
+    # five labels are in pipeline.yml's `plan` step and in layout.py's LABEL, and the three are
+    # meant to match.
     name: gating (${{ matrix.label }})
     strategy:
       fail-fast: false
       matrix:
         include:
-          - {engine: duckrun,  label: duckdb-delta_rs}
-          - {engine: iceberg,  label: dbt2-iceberg}
-          - {engine: ducklake, label: ducklake}
-          - {engine: dwh,      label: fabric-warehouse}
-          - {engine: spark,    label: fabric-spark}
+          - {engine: duckrun,  label: "🦆 duckdb · delta-rs"}
+          - {engine: iceberg,  label: "🧊 duckdb · iceberg"}
+          - {engine: ducklake, label: "🌊 duckdb · ducklake"}
+          - {engine: dwh,      label: "🏢 fabric · warehouse"}
+          - {engine: spark,    label: "⚡ fabric · spark"}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:

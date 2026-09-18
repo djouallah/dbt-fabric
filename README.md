@@ -304,18 +304,18 @@ green. `check_gating.py` asserts the prefix offline.
   (one environment per engine). Runs on every push. The matrix cannot be collapsed into one
   job: `dbt-fabric` and `dbt-fabricspark` shadow each other under `dbt.adapters`, and dbt OSS
   2 and `duckrun` both want to own the `dbt` console script.
-- `build.yml` — the reusable per-engine leg: `dbt build` (models and tests) → fingerprint (it lands
-  only when the caller passes `land: true`). **duckrun, ducklake and iceberg run dbt on
-  Fabric compute** — a throwaway Python notebook of 8 vCores through duckrun's `run_python`
+- `pipeline.yml` — manual only, and the whole pipeline in one file: it lands ONCE in a shared
+  `land` job, then runs all five engines in parallel as a matrix of `build` legs, then the
+  **layout** job reads every engine's tables back and the **record** job compares the
+  fingerprints and commits one run record to `history/runs/`. Each leg does `dbt build`
+  (models and tests) → fingerprint. **duckrun, ducklake and iceberg run dbt on Fabric
+  compute** — a throwaway Python notebook of 8 vCores through duckrun's `run_python`
   (`.github/scripts/remote_dbt.py`); tokens are minted inside Fabric by `notebookutils` and
   never travel. dwh and spark run dbt on the runner, where it is only a client of the
-  Warehouse / Livy.
-- `pipeline.yml` — manual only; lands ONCE in a shared `land` job, then runs all five engines
-  in parallel, then the **layout** job reads every engine's tables back and the **record**
-  job compares the fingerprints and commits one run record to `history/runs/`.
-  `process_limit` is a dispatch input: files each fact model folds per run, oldest first, on
-  every engine. `deploy` (`none` / `no_model` / `full`) deploys the in-Fabric demo after the
-  build (next section).
+  Warehouse / Livy. A `compact` job folds the Iceberg catalog's small files afterwards, before
+  `layout` measures them. `process_limit` is a dispatch input: files each fact model folds per
+  run, oldest first, on every engine. `deploy` (`none` / `no_model` / `full`) deploys the
+  in-Fabric demo after the build (next section).
 - `capacity.yml` — fires after every pipeline run and once a day: reads capacity units per
   run and engine from the Fabric Capacity Metrics model and commits `history/cu.json`.
 

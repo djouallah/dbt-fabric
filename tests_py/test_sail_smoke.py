@@ -80,7 +80,7 @@ def test_ci_scripts_do_not_know_about_sail(script):
 
 
 def test_there_is_no_engine_shaped_requirements_file():
-    # build.yml resolves an engine's dependencies as requirements/<engine>.txt (falling back
+    # pipeline.yml resolves an engine's dependencies as requirements/<engine>.txt (falling back
     # from <engine>_runner.txt). A file at that stem is how this stops being a probe.
     assert not (REPO / "requirements" / "sail.txt").exists()
     assert SMOKE_REQ.exists()

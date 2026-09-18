@@ -15,7 +15,7 @@ is confined to two places and nothing here has to care about it: requirements/<e
 says what to pip-install in the notebook (dbt-oss alone for iceberg), and run_in_fabric.py
 picks the project directory and the way it invokes dbt. Note that the RUNNER running this
 script must NOT have dbt-oss installed -- it needs duckrun, and duckrun pins dbt-core<2;
-build.yml installs requirements/iceberg_runner.txt here for exactly that reason.
+pipeline.yml installs requirements/iceberg_runner.txt here for exactly that reason.
 
 HOW. duckrun.workspace(...).run_python(...) ships this repo to a throwaway Fabric Python
 notebook of FABRIC_CORES vCores, pip-installs requirements/<engine>.txt there, mints the tokens

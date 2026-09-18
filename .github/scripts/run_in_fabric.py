@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """The dbt commands ONE engine runs INSIDE the throwaway Fabric notebook that remote_dbt.py
-launches. Mirrors the local leg in build.yml exactly -- `dbt build || dbt retry`, then the
+launches. Mirrors the local leg in pipeline.yml exactly -- `dbt build || dbt retry`, then the
 parity fingerprint -- so a remote leg and a local leg are the same run on different compute.
 
     python .github/scripts/run_in_fabric.py <duckrun | ducklake | iceberg>

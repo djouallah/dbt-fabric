@@ -100,7 +100,7 @@ cd dbt1 && dbt build --target duckrun --profiles-dir .
   private copy of the CSVs and `parity.py` was grading engines on different inputs. Never
   re-emit `FILES_PATH` to move an engine's data somewhere; give it its own key, the way
   `DUCKLAKE_DATA_PATH` does.
-- **Only `duckrun` is exempt from `azure/login`** in `build.yml`. It mints its own tokens
+- **Only `duckrun` is exempt from `azure/login`** in `pipeline.yml`'s build legs. It mints its own tokens
   from the OIDC assertion; every other leg shells out to `az` for an audience duckrun cannot
   mint, so exempting one of them kills it before it provisions anything. `iceberg` still
   needs the login even though its dbt runs on `dbt-oss`: the login is for `provision.py` and
@@ -257,12 +257,21 @@ cd dbt1 && dbt build --target duckrun --profiles-dir .
 
 ## Things not to "fix"
 
-- **`pipeline.yml` lands once, then fans out.** The five legs run in PARALLEL and pass
-  `land: false`; the shared `land` job runs `download_aemo.py` before them. Do not move
-  landing back into the legs to "make them independent": download_aemo.py rewrites
-  `csv_raw_archive_log.parquet` with a delete-then-copy, so concurrent legs race on that one
-  file. The `land` job also provisions the folder, `dbt_landing` and the shared `dbt`
-  lakehouse up front, which is what stops five parallel create-if-missing calls colliding.
+- **`pipeline.yml` lands once, then fans out.** The five legs are a MATRIX JOB in that one file
+  (there is no per-engine reusable workflow any more — `build.yml` was merged in on 2026-09-18,
+  because a reusable workflow is listed in the Actions sidebar as if it were a third top-level
+  pipeline and read like one). They run in PARALLEL and do not land; the shared `land` job runs
+  `download_aemo.py` before them. Do not move landing back into the legs to "make them
+  independent": download_aemo.py rewrites `csv_raw_archive_log.parquet` with a delete-then-copy,
+  so concurrent legs race on that one file. The `land` job also provisions the folder,
+  `dbt_landing` and the shared `dbt` lakehouse up front, which is what stops five parallel
+  create-if-missing calls colliding — and it is where `compact` gets `DATA_LAKEHOUSE_ID` from.
+  **Never take that GUID from `build`**: a matrix job's entries overwrite one another's outputs,
+  and `compact_iceberg.py` treats an empty GUID as "nothing to compact", warns and exits 0 — so
+  iceberg would silently stop being compacted with every run still green. `layout` must keep
+  `compact` in its `needs` for the same family of reason: it measures the very files
+  `iceberg_rewrite_data_files` rewrites, and a read mid-rewrite is a plausible number, not an
+  error. `tests_py/test_pipeline_compact.py` pins all three.
 
 - The duplicated model files. Five copies of `fct_summary.sql` is the design: they are
   gated so exactly one is live, and the duplication is what lets each engine say what its
@@ -298,7 +307,7 @@ Ported from `djouallah/direct-lake-parquet-layout` (`record.py`, `cu/measure.py`
 - **Nothing is torn down, so a GUID does not belong to one run.** The source deletes every item
   when a run ends and reads CU cumulatively per item. Here the lakehouse is shared and the
   warehouse persists, so every leg records `started`/`finished` (`record.py leg-start` /
-  `leg-end` in `build.yml`, bracketing build + tests + **fingerprint** — on spark the
+  `leg-end` in `pipeline.yml`, bracketing build + tests + **fingerprint** — on spark the
   run-operation opens a new Livy session, on dwh it is a full Warehouse Query) and the GUIDs
   its compute bills against (`legs.<engine>.compute`). `measure_cu.py` sums the hour grain of
   `Metrics By Item Operation And Hour` over those items in those hours, per run × engine.
