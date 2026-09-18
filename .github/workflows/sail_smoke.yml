@@ -74,7 +74,7 @@ jobs:
       # The ONLY thing this job asks Azure for. Not duckrun, so it cannot mint its own
       # OneLake token off the OIDC assertion the way that leg does — it needs a real `az`
       # session for the step below, and for nothing else.
-      - uses: azure/login@v2
+      - uses: azure/login@v3
         with:
           client-id: ${{ secrets.AZURE_CLIENT_ID }}
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
@@ -128,7 +128,7 @@ jobs:
         timeout-minutes: 10
         run: python .github/scripts/sail_smoke.py 2>&1 | tee sail_smoke.log
 
-      - uses: actions/upload-artifact@v5
+      - uses: actions/upload-artifact@v6
         if: always()
         with:
           # This log IS the deliverable — it is the body of the issue for lakehq/sail or
