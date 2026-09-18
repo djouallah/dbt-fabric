@@ -1,0 +1,154 @@
+name: docs
+
+# THE DAG AND THE CATALOG, PUBLISHED. Runs `dbt docs generate --static` and deploys the one
+# self-contained page it produces to GitHub Pages -- https://djouallah.github.io/dbt-fabric/.
+# It builds nothing, commits nothing and spends no Fabric compute.
+#
+#   pipeline         builds, records the run, commits history/runs/ + history/parity/   dispatch
+#   Capacity units   reads the metrics model, commits history/cu.json     after pipeline · daily · dispatch
+#   docs             this -- generates the DAG + catalog, deploys to Pages    after pipeline · dispatch
+#
+# **WHY duckrun OF THE FIVE.** The models are identical on all five engines, so any of them
+# draws the same DAG; what differs is the CATALOG, and that is the half worth publishing.
+# duckrun reads `num_rows`, `bytes` and `last_modified` straight out of the Delta log.
+# dbt-fabric (dwh) reports an approximate row count and nothing else -- no bytes, no
+# last-modified -- because its catalog query is `objectpropertyex(..., 'Cardinality')`.
+#
+# duckrun is also the only engine on which `docs generate` is FREE and SAFE:
+#
+#   free   the adapter mints its own tokens from the OIDC assertion (no azure/login), and a
+#          catalog read is Delta footers over OneLake, not compute. The duckrun BUILD runs
+#          inside Fabric only because the 7 GB runner OOMs folding fct_scada in memory; this
+#          reads, so it stays on the runner like the `layout` job does.
+#   safe   every duckrun model guards its parse-time `run_query` on
+#          `flags.WHICH in ('run','build','retry')` and has an else-branch that assumes there
+#          IS work, so `docs generate` (WHICH == 'generate') compiles the full SQL and fires
+#          no query. dwh does NOT: dbt1/macros/new_source_files.sql guards only on
+#          `not execute`, so generating its docs would fire real OPENROWSET queries against
+#          the Warehouse -- the exact trap CLAUDE.md warns about.
+#
+# **THE PAGE IS ONE FILE.** `--static` inlines the manifest and the catalog into
+# `target/static_index.html`, which is what duckrun's own deploy-docs and
+# direct-lake-parquet-layout's dashboard publish. The alternative -- uploading `target/`
+# wholesale, the way the dbt_fabric_python_* repos did -- also publishes run_results.json and
+# every compiled .sql, and can half-load. One file cannot.
+#
+# **NEVER ADD A `push:` TRIGGER.** tests_py/test_parity_record.py::test_only_ci_runs_on_push
+# pins the trigger set for every workflow but ci.yml. The source repo does allow push on its
+# dashboard workflow, on the argument that a workflow which neither commits nor spends cannot
+# loop -- but there the page is static HTML and here it is a live read of Fabric, and
+# `workflow_run` already republishes whenever the models or the data actually move.
+on:
+  workflow_dispatch:
+    inputs:
+      dbt_schema:
+        description: DBT_SCHEMA — must match what the pipeline built ('mart' for production, i.e. duckrun_landing / duckrun_mart)
+        type: string
+        default: mart
+  workflow_run:
+    workflows: [pipeline]
+    types: [completed]
+    # NO conclusion filter, deliberately, and for a different reason than capacity.yml's. The
+    # build matrix is `fail-fast: false`, so the run's conclusion is "failure" if ANY of the
+    # five legs failed -- including four that have nothing to do with duckrun's tables. The
+    # catalog is a snapshot of what is in the lakehouse either way.
+
+# Pages serialises deploys on its own side; queue behind an in-flight publish rather than
+# racing it, and never cancel one -- a half-replaced page is the one outcome worth avoiding.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  # NOT `continue-on-error`: unattended, a failed generate would report green and the site
+  # would quietly go stale at whatever it last published.
+  site:
+    name: generate the docs
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      id-token: write     # OIDC -> the OneLake token, minted by duckrun itself
+      contents: read      # reads the repo; writes nothing back
+    env:
+      AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+      AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+      FABRIC_WORKSPACE_ID: ${{ secrets.FABRIC_WORKSPACE_ID }}
+      # On a `workflow_run` event the `inputs` context is empty, so this falls through to the
+      # production schemas -- which is what a scheduled republish should read.
+      DBT_SCHEMA: ${{ inputs.dbt_schema || 'mart' }}
+      AZURE_TRANSPORT_OPTION_TYPE: curl
+      CURL_CA_INFO: /etc/ssl/certs/ca-certificates.crt
+      PYTHONIOENCODING: utf-8
+    steps:
+      # `ref:` IS LOAD-BEARING, for the same reason as capacity.yml's. On a `workflow_run`
+      # event a default checkout takes the TRIGGERING run's head SHA -- from before the record
+      # job pushed -- and `github.ref_name` is the default branch regardless of where the
+      # pipeline ran, so a topic-branch pipeline would document main's models instead of its own.
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ github.event.workflow_run.head_branch || github.ref_name }}
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements/duckrun.txt
+      # The adapter and nothing else. No azure/login: duckrun mints the storage token from the
+      # OIDC assertion, which is why `id-token: write` is on this job.
+      - run: pip install -r requirements/duckrun.txt
+
+      # For ONELAKE_TABLES_PATH, which dbt1/profiles.yml's duckrun output requires. Idempotent
+      # create-if-missing, and on a run that follows a pipeline everything already exists.
+      # RUN_RECORD is deliberately NOT set: unset makes record.item() a silent no-op, which is
+      # exactly what is wanted here -- publishing a page is not a run worth recording, and a
+      # fragment written outside a pipeline run would have no record to merge into.
+      - name: Resolve the OneLake paths
+        run: python .github/scripts/provision.py duckrun >> "$GITHUB_ENV"
+
+      # dbt1/, target duckrun -- and BOTH halves matter. The target name is the engine
+      # selector: a name that stops matching models/aemo/<engine>/ enables nothing, and dbt
+      # then writes a perfectly valid page with an EMPTY DAG and exits 0. The next step is
+      # what catches that.
+      - name: dbt docs generate
+        working-directory: dbt1
+        run: dbt docs generate --static --target duckrun --profiles-dir .
+
+      # The page's own acceptance test, ported from duckrun's tests/tools/check_catalog_stats.py
+      # (its issue #3 was a stat-less catalog). Green-and-empty is this repo's characteristic
+      # failure, and a published page is the one place nobody would notice it.
+      - name: Check the catalog actually carries stats
+        run: |
+          python .github/scripts/check_catalog_stats.py \
+            dbt1/target/catalog.json dbt1/target/manifest.json
+
+      # `--static` writes target/static_index.html -- manifest and catalog inlined, no sidecar
+      # JSON, no CDN. That single file IS the site; nothing else from target/ is published.
+      - name: Assemble the site
+        run: |
+          set -euo pipefail
+          mkdir -p site
+          cp dbt1/target/static_index.html site/index.html
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+  # Its own job because deploy-pages needs the `github-pages` environment, and `needs: site`
+  # means a generate that failed cannot overwrite a good page with a half-written one.
+  publish:
+    name: publish to Pages
+    needs: site
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

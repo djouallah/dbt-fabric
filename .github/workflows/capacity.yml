@@ -10,6 +10,7 @@ name: Capacity units
 #
 #   pipeline         builds, records the run, commits history/runs/ + history/parity/    dispatch
 #   Capacity units   this -- reads the model, commits history/cu.json     after pipeline · daily · dispatch
+#   docs             the DAG + catalog page, deployed to Pages                after pipeline · dispatch
 #
 # TWO AUTOMATIC READS, AND THEY DO DIFFERENT JOBS. A CU hour keeps growing for up to ~70 minutes
 # after the work (~6 min ingestion lag, 5-64 min smoothing), and measure_cu.py has no settle

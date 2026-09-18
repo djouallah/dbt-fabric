@@ -2,6 +2,8 @@
 
 One dbt project that builds the **same AEMO gold layer** on five adapters:
 
+![Bronze, silver, gold - and the engine is a variable. Bronze is files, not tables: download_aemo.py, plain python, pulls the nemweb zips and lands plain CSV plus an archive-log parquet, once, the same bytes for every engine. Silver is <engine>_landing, in dbt SQL: stg_csv_archive_log is a view on that log saying which files are new; fct_price and fct_scada type and dedupe the daily archive keeping all 130 and all 53 columns; fct_price_today and fct_scada_today do the same for the intraday feed, still in AEMO's own shape. Gold is <engine>_mart, in dbt SQL: fct_summary, one row per (date, time, DUID) joining generation to the price of its region and merged key by key, beside the dimensions it is read through, dim_duid and dim_calendar - Direct Lake reads all three in place, no copy. Underneath silver and gold sits the only thing that changes, dbt build --target <engine>: five model trees of identical SQL where the flag enables one, running on duckrun (DuckDB to Delta via delta-rs), iceberg (dbt OSS 2 to an Iceberg REST catalog), ducklake (DuckDB plus a SQL catalog, parquet and a Delta export), dwh (Fabric Warehouse, Delta written in T-SQL) or spark (Fabric Spark, Delta in a Lakehouse).](docs/how-it-works-dark.svg)
+
 | target | adapter | engine | shape | writes |
 |---|---|---|---|---|
 | `duckrun` | `duckrun` | DuckDB | single node | Delta Lake on OneLake, via delta-rs |
@@ -153,6 +155,7 @@ macros/aemo_columns.sql                    the AEMO CSV layout — single source
 download_aemo.py                           one downloader, one landing zone, plain CSV
 .github/scripts/check_gating.py            proves the gating, offline
 .github/scripts/parity.py                  proves the engines agree
+.github/scripts/check_catalog_stats.py     proves the published page is not empty
 .github/scripts/remote_dbt.py              runs a DuckDB leg inside Fabric (8 vCores)
 .github/scripts/record.py                  the run record: items by GUID, each leg's window
 .github/scripts/layout.py                  what each engine wrote: files, row groups, encodings, order
@@ -318,6 +321,14 @@ green. `check_gating.py` asserts the prefix offline.
   in-Fabric demo after the build (next section).
 - `capacity.yml` — fires after every pipeline run and once a day: reads capacity units per
   run and engine from the Fabric Capacity Metrics model and commits `history/cu.json`.
+- `docs.yml` — fires after every pipeline run: `dbt docs generate --static` and deploys the
+  one self-contained page to GitHub Pages — **[the DAG and the catalog](https://djouallah.github.io/dbt-fabric/)**.
+  It builds nothing and spends no Fabric compute. **duckrun of the five**, because the DAG is
+  the same on all of them and the *catalog* is not: duckrun reports `num_rows`, `bytes` and
+  `last_modified` out of the Delta log, where dbt-fabric's catalog query gives an approximate
+  row count and nothing else. It is also the only engine whose models guard their parse-time
+  `run_query` on `flags.WHICH`, so generating its docs fires no query; on dwh the same command
+  would run real `OPENROWSET` queries against the Warehouse.
 
 Manual only because deploying Fabric items and spending capacity is a deliberate act, and
 the record job commits to `history/`, so a push trigger would make the commit start the
