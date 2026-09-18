@@ -105,9 +105,8 @@ def test_no_jvm_spark_in_the_smoke_env():
 
 
 def test_there_is_no_sail_model_tree():
-    for project in ("dbt1", "dbt2"):
-        assert not (REPO / project / "models" / "aemo" / "sail").exists()
-        assert not (REPO / project / "tests" / "aemo" / "sail").exists()
+    assert not (REPO / "dbt1" / "models" / "aemo" / "sail").exists()
+    assert not (REPO / "dbt1" / "tests" / "aemo" / "sail").exists()
 
 
 # ---- it stays dispatch-only and non-gating -----------------------------------------------

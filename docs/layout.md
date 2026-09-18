@@ -5,16 +5,18 @@ models are. The gating is the part worth reading twice: its default failure mode
 builds NOTHING and exits 0.
 
 ```
-dbt1/                                      dbt-core 1.x: duckrun, ducklake, dwh, spark
-dbt2/                                      dbt OSS 2: iceberg (+ its catalogs.yml)
-<project>/models/aemo/<engine>/<layer>/<model>.sql
+dbt1/                                      the dbt project: all five engines, dbt-core 1.x
+dbt1/models/aemo/<engine>/<layer>/<model>.sql
                                            the same 8 model names in all five trees
-<project>/models/aemo/_staging.yml _dimensions.yml _marts.yml
-                                           ONE patch file per layer; the two projects' copies
-                                           are pinned identical by tests_py
-macros/aemo_columns.sql                    the AEMO CSV layout — single source of truth,
-                                           SHARED: both projects read ../macros
-<project>/tests/aemo/<engine>/             the same 12 assertions, per dialect
+dbt1/models/aemo/_staging.yml _dimensions.yml _marts.yml
+                                           ONE patch file per layer, above the engine folders,
+                                           so one patch documents whichever tree is enabled
+macros/aemo_columns.sql                    the AEMO CSV layout — single source of truth, at the
+                                           REPO ROOT: dbt1 reads it through ../macros
+dbt1/macros/                               what one engine's adapter forces: the T-SQL
+                                           OPENROWSET reader, the Spark staging dance, the
+                                           iceberg adapter overrides
+dbt1/tests/aemo/<engine>/                  the same 12 assertions, per dialect
 download_aemo.py                           one downloader, one landing zone, plain CSV
 .github/scripts/check_gating.py            proves the gating, offline
 .github/scripts/parity.py                  proves the engines agree
@@ -34,27 +36,25 @@ semantic_model/                            one Direct Lake model, deployed once 
 Five copies of each model is the design, not an accident. They are gated so exactly one is
 live, and the duplication is what lets each engine say what its adapter forces in plain SQL,
 without a thicket of `{% if target.type %}` conditionals. The shared *data* — the AEMO
-column layout — lives once, in `macros/aemo_columns.sql`, which both projects read.
+column layout — lives once, in `macros/aemo_columns.sql`.
 
-**Why two projects.** `catalogs.yml` is how dbt 2 declares an Iceberg REST catalog, and dbt
-reads it from the directory holding `dbt_project.yml`. Put one next to a dbt 1.x project and
-every engine in it dies — `Adapter 'duckdb' does not support catalogs.yml v2 yet` with
-`use_catalogs_v2` set, or a v1-loader validation error without it. So the split is by dbt
-major version and nothing else: same models, same patch files, same shared macros, same
-`iceberg_landing` / `iceberg_mart` schemas the dbt-duckdb leg wrote before it.
+**Why the project is called `dbt1`.** For one day it had a sibling. `catalogs.yml` is how dbt
+OSS 2 declares an Iceberg REST catalog, and dbt reads it from the directory holding
+`dbt_project.yml` — put one next to a dbt 1.x project and every engine in it dies. So the
+`iceberg` leg moved to its own `dbt2/` on 2026-09-17, failed to build a single model against
+the OneLake catalog, and came back the next day. [Engine
+nuances](engine-nuances.md) has what that cost and what it bought.
 
 ### How one run selects one engine
 
 `dbt build --target dwh` in `dbt1/` sets `target.name == 'dwh'`, so only
-`models/aemo/dwh/**` is `+enabled` and its three sibling trees parse into
+`models/aemo/dwh/**` is `+enabled` and its four sibling trees parse into
 `manifest['disabled']`. The model file names are *identical* across all five trees — legal
 only because exactly one tree is enabled per run. There is no `--select` anywhere.
 
-Gating is on **`target.name`, not `target.type`**. The four `dbt1` targets happen to have
-four distinct types today, but that is an accident of the engine list — `target.name` is the
-folder name, which is what selection actually means. `dbt2` holds one tree and keeps the same
-gate anyway: without it a run under the wrong target name would build into the wrong schema
-rather than building nothing.
+Gating is on **`target.name`, not `target.type`**, and that is forced rather than chosen:
+`iceberg` and `ducklake` are both `type: duckdb`, so the type cannot tell five trees apart.
+`target.name` is the folder name, which is what selection actually means.
 
 **The default failure mode of this design is a green run that built nothing.** A target name
 that matches no folder disables everything, and `dbt build` then reports "Nothing to do" and

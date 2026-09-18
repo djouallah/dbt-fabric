@@ -1,15 +1,16 @@
 # The free offline checks: `python -m pytest tests_py/ -q`.
 #
-# NO dbt HERE ANY MORE. tests_py used to pin macros/iceberg_adapter_overrides.sql against
-# the INSTALLED dbt-duckdb, which meant the unit job had to install an adapter. That file is
-# gone -- once the iceberg engine moved to dbt2/ its only live branch was dead, and dbt v2
-# ships its own Iceberg-aware DuckDB macros -- so the unit tests are now pure file reading
-# and sqlglot parsing, and install neither dbt nor an adapter.
+# NO dbt HERE, DELIBERATELY. tests_py/test_adapter_overrides.py pins
+# dbt1/macros/iceberg_adapter_overrides.sql against the INSTALLED dbt-duckdb, which would
+# mean an adapter in this list -- so it pytest.importorskip's instead: the guard tests run
+# here for free and the two upstream-body comparisons run in ci.yml's `gating` matrix, where
+# an adapter is installed anyway. Do not add dbt here to make them unskip; everything else in
+# tests_py is pure file reading and sqlglot parsing.
 #
 # pyyaml is explicit rather than inherited: it used to arrive transitively via dbt-core.
 pytest
 pyyaml
 sqlglot
-# tests_py/test_jinja_syntax.py lexes every model and macro with Jinja's own parser --
-# the one check on the dbt2 templates that does not need dbt OSS 2 installed.
+# tests_py/test_jinja_syntax.py lexes every model and macro with Jinja's own parser -- the
+# one syntax check that costs no dbt install.
 jinja2

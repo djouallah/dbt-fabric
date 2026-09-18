@@ -281,7 +281,7 @@ def scene():
     chips = [
         ("duckrun", "DuckDB, single node", "&#8594; Delta, via delta-rs",
          lambda x, y: duck(x, y, "ss", True)),
-        ("iceberg", "DuckDB, dbt OSS 2", "&#8594; Iceberg, REST catalog",
+        ("iceberg", "DuckDB + iceberg extension", "&#8594; Iceberg, REST catalog",
          lambda x, y: iceberg(x, y, "ss")),
         ("ducklake", "DuckDB + a SQL catalog", "&#8594; parquet + Delta metadata",
          lambda x, y: duck(x, y, "ss") + waves(x, y + 15, "ss", 20)),

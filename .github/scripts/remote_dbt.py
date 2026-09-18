@@ -9,13 +9,12 @@ couple of cancelled runs had left a backlog; ducklake and iceberg are the same f
 original delta repo never ran dbt on the runner: its run_dbt.py used duckrun's RemoteRunner,
 "data-local to OneLake -- a GitHub runner pulls every byte across the internet twice".
 
-ALL THREE ENGINES ARE DuckDB, BUT NOT ALL THREE ARE THE SAME dbt. duckrun and ducklake are
-dbt-core 1.x building the dbt1/ project; iceberg is dbt OSS 2 building dbt2/. The difference
-is confined to two places and nothing here has to care about it: requirements/<engine>.txt
-says what to pip-install in the notebook (dbt-oss alone for iceberg), and run_in_fabric.py
-picks the project directory and the way it invokes dbt. Note that the RUNNER running this
-script must NOT have dbt-oss installed -- it needs duckrun, and duckrun pins dbt-core<2;
-pipeline.yml installs requirements/iceberg_runner.txt here for exactly that reason.
+ALL THREE ENGINES ARE DuckDB ON dbt-core 1.x, building the dbt1/ project -- three adapters
+(duckrun, dbt-duckdb over an Iceberg REST catalog, dbt-duckdb over DuckLake), one dbt. Nothing
+here distinguishes them beyond requirements/<engine>.txt, which says what to pip-install in
+the notebook, and SETUP below, which says which tokens to mint. iceberg was dbt OSS 2 out of a
+separate dbt2/ for one day and needed a requirements/iceberg_runner.txt so the runner did not
+also install dbt-oss; both are gone.
 
 HOW. duckrun.workspace(...).run_python(...) ships this repo to a throwaway Fabric Python
 notebook of FABRIC_CORES vCores, pip-installs requirements/<engine>.txt there, mints the tokens

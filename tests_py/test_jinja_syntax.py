@@ -87,3 +87,33 @@ def test_no_jinja_comment_inside_an_expression(path):
         if text[i] == "\n":
             line += 1
         i += 1
+
+
+@pytest.mark.parametrize("path", list(_templates()))
+def test_no_comment_delimiter_inside_a_comment(path):
+    """A comment must never QUOTE comment delimiters, because Jinja comments do not nest.
+
+    `{#-- ... {#-- ... --#} ... --#}` does not mean what it looks like: the scanner closes on
+    the FIRST `#}` it meets, and everything after it becomes template text that the model
+    silently emits. Nothing else catches that -- the file still lexes, `dbt parse` is happy,
+    and the damage is prose in the compiled SQL.
+
+    Met writing this suite's own neighbours: a comment explaining the rule above quoted
+    `{# #}` to illustrate it and closed itself on the `#}` inside the illustration. CLAUDE.md
+    lists it under "Jinja traps, all met in this repo"; this is the check for it.
+    """
+    text = path.read_text(encoding="utf-8")
+    i = 0
+    while (i := text.find("{#", i)) != -1:
+        end = text.find("#}", i + 2)
+        line = text[:i].count("\n") + 1
+        assert end != -1, (
+            f"{path.relative_to(REPO)}:{line} opens a Jinja comment that is never closed"
+        )
+        assert "{#" not in text[i + 2:end], (
+            f"{path.relative_to(REPO)}:{line} has a comment containing another `{{#`. Jinja "
+            f"comments do not nest -- this one closed at the first `#}}` and the rest of it "
+            f"is being emitted as SQL. Describe the delimiters in words instead of quoting "
+            f"them."
+        )
+        i = end + 2

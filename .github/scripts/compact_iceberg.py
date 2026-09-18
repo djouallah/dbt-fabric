@@ -1,6 +1,6 @@
 """Compact the OneLake Iceberg catalog's data files (post-load maintenance).
 
-Every model in this project is an insert-only incremental merge — that is deliberate
+Every model the iceberg leg WRITES is an insert-only incremental merge — that is deliberate
 (OneLake accepts one add-snapshot per commit), but it means each dbt run appends another
 small data file per table and nothing ever folds them back together. This runs
 iceberg_rewrite_data_files() over each table, consolidating files below the target size.
@@ -19,13 +19,14 @@ an R2-backed catalog. What differs here:
     "non-trailing parts must be equal length" rule; OneLake writes go through the azure
     extension over abfss:// and never touch the S3 uploader.
 
-CREDENTIALS ARE VENDED BY THE CATALOG. The only token this script holds goes to the ATTACH,
-for the REST catalog; every data-file read and write runs on the storage credentials the
-catalog hands back per table (OneLake IRC vends `adls.sas-token.onelake.dfs.fabric.microsoft.com`,
-usable since duckdb/duckdb-iceberg#1331, merged 2026-08-19, which stopped dropping the
-endpoint suffix). This is deliberately NOT what dbt2/catalogs.yml does: dbt 2 bundles duckdb
-1.5.3, which cannot take those, so it attaches with access_delegation_mode NONE and its own
-azure secret. This job runs the 2.0 nightly and does not need that.
+CREDENTIALS ARE VENDED BY THE CATALOG, here and in the dbt leg. The only token this script
+holds goes to the ATTACH, for the REST catalog; every data-file read and write runs on the
+storage credentials the catalog hands back per table (OneLake IRC vends
+`adls.sas-token.onelake.dfs.fabric.microsoft.com`, usable since duckdb/duckdb-iceberg#1331,
+merged 2026-08-19, which stopped dropping the endpoint suffix). dbt1/profiles.yml's iceberg
+output now attaches the same way and carries no azure secret either -- this script proved it
+first. It could and the dbt leg could not only while that leg ran on dbt OSS 2, which bundles
+duckdb 1.5.3; both are on `--pre duckdb` now.
 
 Two earlier workarounds were removed on 2026-09-17, each after a run proved it unneeded:
   - a priming iceberg_metadata() scan before every rewrite, for duckdb/iceberg#1349
@@ -108,11 +109,14 @@ LANDING, MART = f"{_PREFIX}_landing", f"{_PREFIX}_mart"
 # in this repo — it existed only in the iceberg source repo, which is exactly the one-engine
 # drift the merge exists to stop. Listing it only bought a "no version-hint" read failure
 # every run.
+# NO stg_csv_archive_log. It is not a catalog table: the iceberg model declares
+# database='memory', so it is a view in DuckDB's in-memory catalog that dies with the run --
+# the same session view duckrun and ducklake get. It WAS an insert-only table here until
+# 2026-09-18, so an old one may still sit in OneLake; nothing below will touch it.
 TABLES = [
     f"{LANDING}.fct_price_today",
     f"{LANDING}.fct_scada_today",
     f"{MART}.fct_summary",
-    f"{LANDING}.stg_csv_archive_log",
     f"{MART}.dim_calendar",
     f"{MART}.dim_duid",
     f"{LANDING}.fct_price",

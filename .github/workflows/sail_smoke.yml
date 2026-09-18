@@ -81,7 +81,7 @@ jobs:
           allow-no-subscriptions: true
 
       - name: Mint OneLake token
-        # storage.azure.com, the same audience dbt2/profiles.yml hands the Iceberg REST
+        # storage.azure.com, the same audience dbt1/profiles.yml hands the Iceberg REST
         # catalog and the same one build.yml's compact job mints. Sail's OneLake catalog takes
         # a bearer token and explicitly will NOT take an account key or a SAS.
         run: |

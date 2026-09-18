@@ -90,7 +90,7 @@ jobs:
         # emoji presentation and can come out as monochrome text glyphs.
         run: |
           ALL='[{"engine":"duckrun","label":"🦆 duckdb · delta-rs"},
-                {"engine":"iceberg","label":"🧊 dbt OSS 2 · iceberg"},
+                {"engine":"iceberg","label":"🧊 duckdb · iceberg"},
                 {"engine":"ducklake","label":"🌊 duckdb · ducklake"},
                 {"engine":"dwh","label":"🏢 fabric · warehouse"},
                 {"engine":"spark","label":"⚡ fabric · spark"}]'
@@ -244,18 +244,13 @@ jobs:
           cache-dependency-path: requirements/*.txt
 
       - name: Install ${{ matrix.engine }} dependencies
-        # `<engine>_runner.txt` when there is one, else `<engine>.txt`. Only iceberg has the
-        # split, and it has to: that leg's dbt is dbt OSS 2, which cannot share an
-        # environment with duckrun (duckrun pins dbt-core<2 and would lay a 1.x `dbt` script
-        # over v2's). The runner here never runs dbt for iceberg -- it provisions and
-        # launches the notebook -- so it installs duckrun alone, while
-        # requirements/iceberg.txt (dbt-oss alone) goes to the notebook and the gating job.
-        # The compact job below installs its own `--pre duckdb`.
-        run: |
-          REQ="requirements/${ENGINE}_runner.txt"
-          [ -f "$REQ" ] || REQ="requirements/${ENGINE}.txt"
-          echo "installing $REQ"
-          pip install -r "$REQ"
+        # ONE list per engine, and the same one the notebook and the gating job install --
+        # every leg is dbt-core 1.x now, so nothing needs a runner-only variant. iceberg had
+        # a requirements/iceberg_runner.txt while it was dbt OSS 2, because dbt-oss and
+        # duckrun cannot share an environment (duckrun pins dbt-core<2 and lays a 1.x `dbt`
+        # script over v2's); dbt-duckdb and duckrun share one happily.
+        # The compact job below still installs its own `--pre duckdb` and nothing else.
+        run: pip install -r "requirements/${ENGINE}.txt"
 
       # ---- auth -------------------------------------------------------------------
       # duckrun — and ONLY duckrun — mints every token it needs (OneLake storage, Fabric
@@ -315,9 +310,9 @@ jobs:
 
       - name: dbt build
         if: env.REMOTE != 'true'
-        # dbt1/, always: the only engines that reach this step are dwh and spark, and both
-        # are dbt-core 1.x. The v2 engine (iceberg) is in the REMOTE list and builds in the
-        # notebook instead, out of dbt2/ -- see .github/scripts/run_in_fabric.py.
+        # dbt1/ is the only project; the engines that reach this step are dwh and spark,
+        # since the three DuckDB legs are in the REMOTE list and build inside the notebook
+        # instead -- see .github/scripts/run_in_fabric.py.
         working-directory: dbt1
         # `dbt retry` needs --target too, or it renders the profile's default target.
         run: |

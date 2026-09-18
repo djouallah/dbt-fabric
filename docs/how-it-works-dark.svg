@@ -175,7 +175,7 @@ text{font-family:'Segoe Print','Bradley Hand','Comic Sans MS','Chalkboard SE',cu
 <path class='s' d='M228.9 541.0 L228.2 511.4 L229.9 480.8 L228.1 451.5'/>
 <path class='s' d='M229.2 540.4 L228.8 510.3 L228.9 481.1 L228.3 452.5'/>
 <text x='243' y='478' font-size='15' text-anchor='start' class='ink'>iceberg</text>
-<text x='243' y='502' font-size='10.5' text-anchor='start' class='soft'>DuckDB, dbt OSS 2</text>
+<text x='243' y='502' font-size='10.5' text-anchor='start' class='soft'>DuckDB + iceberg extension</text>
 <text x='243' y='522' font-size='10.5' text-anchor='start' class='soft'>&#8594; Iceberg, REST catalog</text>
 <path class='ss' d='M374.4 460.1 l13.4 19.0 l-27.0 -0.0 z'/>
 <path class='ss' d='M373.6 460.1 l14.3 18.6 l-27.2 0.2 z'/>

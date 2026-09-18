@@ -20,30 +20,25 @@
   {%- set has_new_duids = true -%}
 {%- endif -%}
 
-{#-- INSERT-ONLY MERGE. The other four engines declare this in config as
-     merge_clauses={'when_matched': [{'action': 'do_nothing'}]}; dbt 2 has no config key for
-     it, so the same SQL comes from the `insert_only` custom strategy in
-     dbt2/macros/incremental_insert_only.sql. Same semantics, same unique_key: matched rows
-     are never touched and only new keys insert. --#}
-{#-- append_new_columns, NOT the sync_all_columns the other four engines use, and this is
-     an adapter limitation rather than a preference.
-
-     sync_all_columns also changes the TYPE of a column whose type has drifted, and dbt
-     does that as add-copy-rename: `alter table add column <col>__dbt_alter`, copy, then
-     rename over the original. On the OneLake Iceberg catalog that sequence is not atomic.
-     It got as far as adding the temp column and then failed, leaving a permanent
-     `latitude__dbt_alter` in iceberg_mart.dim_duid that broke every subsequent run with
-     "Column with name latitude__dbt_alter already exists!" -- a table that has to be
-     dropped by hand to recover.
-
-     append_new_columns keeps the part that matters here (a new geo/fuel attribute in the
-     reference CSVs still lands) and gives up only in-place type changes, which this model
-     has never actually needed -- the types come from a fixed CAST list. If a type ever
-     does have to change, drop the table and let it rebuild. --#}
+{#-- Insert-only merge on DUID, the same pattern as the facts: new DUIDs insert, existing ones
+     are never touched — so a run that sees a stale or empty view of the table can at worst
+     re-insert nothing that survives the merge, instead of the old wipe-and-reload appending a
+     full duplicate copy. Consequence: attribute changes (region / fuel / geo) never update in
+     place; `dbt run --full-refresh -s dim_duid` is the reconciliation lever. --#}
+{#-- on_schema_change is append_new_columns here, NOT the sync_all_columns the other DuckDB
+     engines use. sync_all_columns performs a type change as add-copy-rename
+     (<col>__dbt_alter), which is not atomic on the Iceberg catalog: it added
+     latitude__dbt_alter to iceberg_mart.dim_duid, failed the rename, and every later run
+     died on "Column with name latitude__dbt_alter already exists!" until the table was
+     dropped. A type change on this engine means dropping the table by hand.
+     This comment sits ABOVE the config() call and not inside it: a Jinja comment between
+     the braces of an expression is a dbt parse error (MacroSyntaxInvalid, dbt1502), and
+     tests_py/test_jinja_syntax.py is what catches it. --#}
 {{ config(
     materialized='incremental',
-    incremental_strategy='insert_only',
+    incremental_strategy='merge',
     unique_key=['DUID'],
+    merge_clauses={'when_matched': [{'action': 'do_nothing'}]},
     on_schema_change='append_new_columns'
 ) }}
 

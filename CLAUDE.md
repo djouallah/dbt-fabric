@@ -6,10 +6,8 @@ run if you do not know them.
 ## The rule that governs every change
 
 **One gold layer. The same business logic on all five engines.** If you change what a model
-*computes*, change it in all five `<project>/models/aemo/<engine>/` copies. Note *five across
-two projects*: `dbt1/` holds duckrun, ducklake, dwh and spark; `dbt2/` holds iceberg. It is
-easy to edit four and miss the one across the directory boundary. The only thing allowed to
-differ between engines is *operational* — dialect, adapter capability, incremental strategy,
+*computes*, change it in all five `dbt1/models/aemo/<engine>/` copies. The only thing allowed
+to differ between engines is *operational* — dialect, adapter capability, incremental strategy,
 maintenance — and every such difference is commented at its site with the reason.
 
 Do not add a model, a column, or a filter to one engine only. That is what the four repos
@@ -24,20 +22,11 @@ python -m pytest tests_py/ -q            # seconds, no credentials, no dbt insta
 python .github/scripts/check_gating.py   # every engine whose dbt is installed; CI does all five
 ```
 
-`check_gating.py` knows which project each engine is in and parses it there. One environment
-holds either dbt 1.x or dbt OSS 2, never both, so out of the box the iceberg line reads
-"skipping". To cover all five from one shell, put dbt 2 in its own venv and point `DBT2_BIN`
-at it:
-
-```bash
-python -m venv /tmp/v2env && /tmp/v2env/Scripts/pip install dbt-oss     # or bin/pip on POSIX
-DBT2_BIN=/tmp/v2env/Scripts/dbt.exe python .github/scripts/check_gating.py
-```
-
-Worth doing: a dbt2 mistake otherwise costs a Fabric notebook to find. Note that on a machine
-behind a package proxy the newest `dbt-oss` may not be carried — the proxy index served only
-up to `2.0.0rc2` here, which is fine for gating. Never install `dbt-oss` into the environment
-that has `duckrun`; it pins `dbt-core<2` and the two fight over the `dbt` console script.
+All five engines are dbt-core 1.x, so one environment reaches every one whose adapter is
+installed — with `dbt-duckdb` present that is duckrun, iceberg and ducklake in a single run.
+`dbt-fabric` and `dbt-fabricspark` still cannot share an environment (they shadow each other
+under `dbt.adapters`), so those two need their own venv and a `DBT_BIN` pointing at it. There
+is no `DBT2_BIN` any more; if you find a reference to one, it is stale.
 
 `check_gating.py` is not optional. **The default failure mode of this layout is a run that
 builds NOTHING and exits 0** — a target name that stops matching a folder name disables
@@ -53,16 +42,19 @@ cd dbt1 && dbt build --target duckrun --profiles-dir .
 
 ## Gating
 
-- **TWO dbt PROJECTS.** `dbt1/` is dbt-core 1.x (duckrun, ducklake, dwh, spark); `dbt2/` is
-  dbt OSS 2 (iceberg). They are split because `catalogs.yml` lives next to `dbt_project.yml`
-  and dbt 1.x aborts on one — `Adapter 'duckdb' does not support catalogs.yml v2 yet` with
-  `use_catalogs_v2`, a v1-loader error without it. Do not try to merge them back. Every dbt
-  command therefore runs from inside a project dir, and `.github/scripts/check_gating.py`'s
-  `ENGINES` dict is the one place the mapping lives — keep `tests_py/_layout.py` in step.
-- Gate on **`target.name`**, never `target.type`. The four `dbt1` targets have four distinct
-  types today, but that is an accident of the engine list, not a property to lean on.
+- **ONE dbt PROJECT, `dbt1/`, five engines.** Every dbt command runs from inside it
+  (`--profiles-dir .`), which is why `.github/scripts/check_gating.py`'s `ENGINES` dict still
+  maps engine → project dir — keep `tests_py/_layout.py` and
+  `.github/scripts/run_in_fabric.py`'s `PROJECT` in step with it. The name `dbt1` is a scar:
+  iceberg spent 2026-09-17 to 2026-09-18 in a sibling `dbt2/` on dbt OSS 2, because
+  `catalogs.yml` cannot sit in a dbt 1.x project root. **Do not try that again without
+  reading "Why iceberg is not on dbt OSS 2" below.**
+- Gate on **`target.name`**, never `target.type`, and here that is not a preference: `iceberg`
+  and `ducklake` are BOTH `type: duckdb`, so `target.type` cannot tell five trees apart.
   `target.type` is still right inside a macro that is about DIALECT rather than engine (see
-  `parse_filename`).
+  `parse_filename`), and it is the WRONG discriminator for anything separating iceberg from
+  ducklake — see `dbt1/macros/iceberg_adapter_overrides.sql`, where a `duckdb__` macro
+  reaches both and has to branch on `target.name`.
 - **Never put anything on the `aemo_electricity` project key.** A generic test declared in a
   patch file takes the fqn of the YML *file*, so a gate there disables every generic test —
   silently, with the run still green.
@@ -102,82 +94,76 @@ cd dbt1 && dbt build --target duckrun --profiles-dir .
   `DUCKLAKE_DATA_PATH` does.
 - **Only `duckrun` is exempt from `azure/login`** in `pipeline.yml`'s build legs. It mints its own tokens
   from the OIDC assertion; every other leg shells out to `az` for an audience duckrun cannot
-  mint, so exempting one of them kills it before it provisions anything. `iceberg` still
-  needs the login even though its dbt runs on `dbt-oss`: the login is for `provision.py` and
-  for the `compact` job's OneLake token, not for the adapter. The `deploy`
+  mint, so exempting one of them kills it before it provisions anything. `iceberg` needs the
+  login for `provision.py` and for the `compact` job's OneLake token, not for the adapter — its
+  in-notebook `ONELAKE_TOKEN` comes from `notebookutils`. The `deploy`
   job in `pipeline.yml` is duckrun end to end (storage, Fabric and Power BI tokens all from
   the assertion), so it has no login step either.
 
-- **dbt OSS 2 and `duckrun` must never share a Python environment.** `duckrun` pins
-  `dbt-core<2` and `dbt-duckdb<2`, which lay a dbt 1.x `dbt` console script over v2's — and
-  the job then silently parses the wrong project with the wrong engine. That is why the
-  iceberg leg has TWO requirement files: `requirements/iceberg.txt` (just `dbt-oss`) goes to
-  the Fabric notebook and the gating job, `requirements/iceberg_runner.txt` (duckrun alone)
-  goes to the runner, which only provisions and launches. The `compact` job installs
-  `--pre duckdb` and nothing else.
-- **dbt 2 needs `persistent: true` on its profile secrets.** It applies `secrets:` on a
-  THROWAWAY connection, so a session-scoped secret never reaches the model and the write dies
-  "could not open file ... the credentials used were wrong". The ATTACH survives that
-  connection because attachments are database-scoped; a secret is not. `settings:` has the
-  same problem, so anything that must reach a model is an `on-run-start` hook (or a
-  `+pre_hook`, which runs on the model's own connection), never `settings:`.
-- **On dbt 2 a `pre_hook` does NOT share a DuckDB session with the model body.** The other
-  DuckDB engines set a session variable in a pre_hook and read it back with `getvariable()`;
-  on dbt 2 that reads NULL. `dbt2` therefore resolves its file list with a render-time
-  `run_query` and inlines it as a literal list (`dbt2/macros/duckdb_source_files.sql`).
-  **It fails SILENTLY** — `getvariable()` on an unset variable is NULL, not an error, so the
-  model still succeeds. It only surfaced because `read_csv` refuses a NULL list. Never put
-  session state between a hook and a model body on this engine. (Reproduced offline on
-  dbt-core 2.0.0-rc.2 at threads 1 and 4; `settings:` has the same problem, and attachments
-  survive only because they are database-scoped.)
-- **dbt 2 infers dependencies statically and rejects a `ref()` it can only see inside a
-  conditional** — "dbt was unable to infer all dependencies for the model ... This typically
-  happens when ref() is placed within a conditional block." Any model whose `ref()` lives in
-  an `{% if %}` or a `{% set %}` block needs an explicit `-- depends_on: {{ ref(...) }}` line
-  at the top. Every dbt2 fact model has one.
+- **The iceberg leg attaches with VENDED CREDENTIALS and carries NO storage secret.** The
+  `token:` on its ATTACH authorises the REST CATALOG only; every data-file read and write runs
+  on the credential the catalog hands back per table (OneLake IRC vends
+  `adls.sas-token.onelake.dfs.fabric.microsoft.com`, usable since duckdb/duckdb-iceberg#1331,
+  merged 2026-08-19). `compact_iceberg.py` has done this since 2026-09-17 and the dbt leg does
+  it too now. **`--pre duckdb` in `requirements/iceberg.txt` is therefore load-bearing**: on a
+  stable duckdb the vend fails at the first write. The fallback, if it ever does, is
+  `access_delegation_mode: 'none'` plus an `azure` secret with `ONELAKE_TOKEN` — that is what
+  the leg used to carry, and what dbt OSS 2 was stuck with because it bundles duckdb 1.5.3.
+  Do not put it back without a failing run to point at. `ducklake` still needs its own
+  `azure` secret: DuckLake has no catalog to vend one.
+- **`stage_create_tables: 0` and `skip_create_table_metadata_updates: 1` survive the move to
+  vending.** Neither is about credentials: OneLake vends nothing on `createTable`, so a STAGED
+  create-table-as cannot write its data files (`0` splits CTAS into create-then-insert), and it
+  rejects the follow-up metadata update — "Only one instance of each update type is allowed per
+  request". `default_schema: dbo` must name a namespace that EXISTS; OneLake 422s on namespace
+  creation and `dbo` always exists in a lakehouse.
+- **dbt-duckdb silently drops boolean-false attach options.** Use int `0`/`1`, or
+  `stage_create_tables: false` vanishes and the catalog gets the staged path it rejects.
+- **`iceberg` and `ducklake` are both `type: duckdb`, so a `duckdb__` macro override reaches
+  BOTH.** `dbt1/macros/iceberg_adapter_overrides.sql` therefore branches on `target.name` and
+  reproduces dbt-duckdb's own body verbatim for the other path — and
+  `tests_py/test_adapter_overrides.py` pins those fallbacks against the INSTALLED adapter, so
+  an upstream change fails loudly instead of leaving ducklake on a stale copy. Two overrides,
+  both still needed against dbt-duckdb 1.11.0: `duckdb__get_columns_in_relation` filters
+  Iceberg's hidden `__` column out of `DESCRIBE` (upstream uses DESCRIBE now but has no
+  filter), and `duckdb__drop_relation` omits `CASCADE`, which the Iceberg extension does not
+  support (upstream omits it for DuckLake only). That test `importorskip`s, so
+  `requirements/dev.txt` stays dbt-free and `ci.yml`'s gating jobs run the comparison.
+- **`iceberg`'s `stg_csv_archive_log` declares `database='memory'`.** The profile's default
+  database is the attached Iceberg catalog, which has no `CREATE VIEW`, so without the
+  override the model cannot be a view — and it was an insert-only TABLE in the catalog until
+  2026-09-18, which made iceberg the one engine whose log could keep rows
+  `csv_raw_archive_log.parquet` no longer has. dbt-duckdb hands every model a cursor on ONE
+  in-process connection, so a named view in `memory` is visible to every later model and dies
+  with the run — the same session view duckrun and ducklake get. A literal
+  `CREATE TEMPORARY VIEW` would be per-cursor and invisible to the fact models' pre_hooks.
+  `compact_iceberg.py`'s `TABLES` therefore does NOT list it.
 - **`on_schema_change='sync_all_columns'` is unsafe on the Iceberg catalog.** It performs a
   type change as add-copy-rename (`<col>__dbt_alter`), which is not atomic there: it added
   `latitude__dbt_alter` to `iceberg_mart.dim_duid`, failed the rename, and every later run
   died on "Column with name latitude__dbt_alter already exists!" until the table was dropped.
-  `dbt2` uses `append_new_columns`; a type change there means dropping the table.
-- **dbt 2 has NO config key for an insert-only merge**, so `dbt2` carries a custom
-  incremental strategy — `incremental_strategy='insert_only'`, defined in
-  `dbt2/macros/incremental_insert_only.sql`. It emits the same MERGE the other four engines
-  get from `merge_clauses={'when_matched':[{'action':'do_nothing'}]}`.
-  Do not try to reach it from config again, both spellings have been tried and both are HARD
-  parse errors (`UnusedConfigKey`, dbt1060, which `warn_error_options` cannot downgrade):
-  v2's model-config schema
-  (`crates/dbt-schemas/src/schemas/project/configs/model_config.rs`) accepts only
-  `merge_update_columns`, `merge_exclude_columns` and `merge_with_schema_evolution` — not
-  `merge_clauses`, not `merge_update_condition` — even though v2's own
-  `duckdb__get_merge_sql` reads `config.get('merge_clauses')` and implements `do_nothing`.
-  The macro supports a key the schema forbids. The allowed keys are no way out either: they
-  route to the 'explicit' update mode, where an empty column list renders a bare `UPDATE SET`.
-  **When you add a config to a dbt2 model, check it against that Rust file first** — the
-  error names the key but not the allowed set, and each guess costs a CI round trip.
-- **Do not port `iceberg_adapter_overrides.sql` into `dbt2/`.** It was deleted with the move.
-  dbt 2's own DuckDB macros already do all of it — `DESCRIBE` for Iceberg column discovery,
-  `DROP` without `CASCADE`, a standalone rename, a direct-create path for Iceberg REST — so
-  an override there would replace v2's better version with a copy of dbt-duckdb 1.x's.
-- **dbt-duckdb silently drops boolean-false attach options.** Use int `0`/`1`. This is a
-  `ducklake` fact now; `dbt2`'s `catalogs.yml` takes real booleans.
-- **duckdb versions per leg (2026-09-17):** ducklake is PINNED to 1.5.5 (its community
-  extensions, `mssql_ducklake` and `delta_export`, publish for that line); duckrun tracks the
-  latest PRE-RELEASE (`--pre duckdb`). Never pin `deltalake` for duckrun: the adapter pins it
-  itself. **iceberg's dbt no longer uses the pip `duckdb` at all** — dbt OSS 2 bundles its own
-  engine. `requirements/iceberg_runner.txt` is duckrun alone; the compact job installs
-  `--pre duckdb` by itself, since `iceberg_rewrite_data_files()` exists only on the
-  pre-release line, and takes the catalog location from the build job's outputs instead of
-  re-running `provision.py`.
+  `iceberg`'s `dim_duid` uses `append_new_columns`; a type change there means dropping the
+  table by hand. Do not "align" it with ducklake's `sync_all_columns`.
+- **duckdb versions per leg (2026-09-18):** ducklake is PINNED to 1.5.5 (its community
+  extensions, `mssql_ducklake` and `delta_export`, publish for that line); duckrun AND iceberg
+  track the latest PRE-RELEASE (`--pre duckdb`). Never pin `deltalake` for duckrun: the adapter
+  pins it itself. For iceberg the pre-release is not a preference — see the credential-vending
+  bullet above. The compact job installs `--pre duckdb` by itself and nothing else, since
+  `iceberg_rewrite_data_files()` exists only on that line, and takes the catalog location from
+  the `land` job's output instead of re-running `provision.py`.
+- **There is ONE requirements file per engine.** `requirements/iceberg_runner.txt` existed only
+  while that leg was `dbt-oss`, which cannot share an environment with `duckrun` (duckrun pins
+  `dbt-core<2` and lays a 1.x `dbt` console script over v2's). `dbt-duckdb` and `duckrun` share
+  one happily, so the runner, the Fabric notebook and the gating job all install
+  `requirements/iceberg.txt`.
 - **duckrun: `insert` and `merge_clauses={'when_matched':[{'action':'do_nothing'}]}` are the
   same operation** — a DuckDB anti-join plus a plain append, no delta-rs merge pool, no file
   rewritten. Prefer it to `merge` wherever the model only ever adds rows; a delta-rs merge
   scales with the target's partition span, not the batch, which is what OOM-kills big facts.
   `partition_by` + `incremental_predicates` on `month_key` is what makes the probe prune.
 - **duckrun, ducklake and iceberg run dbt INSIDE Fabric** (`.github/scripts/remote_dbt.py` →
-  duckrun's `run_python`, 8 vCores; `run_in_fabric.py` is what runs there — and it picks the
-  project dir and invokes dbt 1.x in-process via `dbtRunner` but dbt 2 as a SUBPROCESS, since
-  v2 is a Rust engine with no `dbtRunner` to import). Do not move them
+  duckrun's `run_python`, 8 vCores; `run_in_fabric.py` is what runs there, invoking dbt
+  in-process via `dbtRunner`). Do not move them
   back onto the runner: DuckDB folds the archive in memory and the 7 GB hosted runner was shut
   down mid-`fct_scada` twice in one day. Tokens are minted in the notebook by `notebookutils`
   (the `setup` hook); only the `FORWARD` allowlist of config travels, never anything
@@ -223,9 +209,8 @@ cd dbt1 && dbt build --target duckrun --profiles-dir .
   parity split by up to 63k rows. Do not reintroduce a per-engine variant. A drifted summary
   is reset by DROPPING the table — any engine, a one-off manual drop is fine on dwh too, it is
   the per-run `--full-refresh` that is not — because merge cannot retract rows and
-  `--full-refresh` on iceberg fails (`fct_summary__dbt_tmp does not exist`) — though dbt 2's
-  table materialization has a direct-create path for Iceberg REST, so that may no longer hold;
-  nothing depends on it either way, the reset is still a DROP.
+  `--full-refresh` on iceberg fails (`fct_summary__dbt_tmp does not exist`) — that catalog
+  cannot do the rename the intermediate relation needs. The reset is a DROP on every engine.
 - **Fabric's Spark catalog base32hex-decodes every part of a multipart name** (alphabet
   `0-9A-V`). `text.\`path\`` fails on the `x` ("Failed to decode multipart name: 'text'");
   `parquet.\`path\`` works only because every letter of `parquet` is inside the alphabet. And
@@ -255,6 +240,53 @@ cd dbt1 && dbt build --target duckrun --profiles-dir .
   (`mode="direct_lake"`). A model reframes on deploy, so the engine must have built once
   before its model can be deployed.
 
+## Why iceberg is not on dbt OSS 2
+
+It was, for one day (`1f8c602` .. run 35338716074, 2026-09-17 to 2026-09-18), in a sibling
+`dbt2/` project. **It never built a single model against the OneLake catalog:**
+
+```
+[error] [DbDriverFailed (dbt1308)]: Database Error in model stg_csv_archive_log
+  HTTP Error: GetTableInformation endpoint returned response code BadRequest_400
+  with message "Malformed request"
+```
+
+v2's Iceberg REST client sends a request the catalog rejects, and there is nothing in this repo
+to fix. Do not re-attempt the move on a v2 release that has not fixed that. What it cost, and
+what is now dead code you will not find by grepping — every line of this was in the tree:
+
+- **A whole second dbt project**, because `catalogs.yml` lives next to `dbt_project.yml` and
+  dbt 1.x aborts on one: `Adapter 'duckdb' does not support catalogs.yml v2 yet` with
+  `use_catalogs_v2` set, a v1-loader "no `write_integrations`" error without it. Two
+  `profiles.yml`, two copies of the three model patch files, two `macro-paths`, and a
+  `tests_py/test_patch_files_match.py` to pin the copies byte for byte.
+- **A custom incremental strategy** (`insert_only`), because v2's model-config schema
+  (`crates/dbt-schemas/src/schemas/project/configs/model_config.rs`) accepts only
+  `merge_update_columns`, `merge_exclude_columns` and `merge_with_schema_evolution` — not
+  `merge_clauses`, not `merge_update_condition` — even though v2's own `duckdb__get_merge_sql`
+  reads `config.get('merge_clauses')` and implements `do_nothing`. `UnusedConfigKey` (dbt1060)
+  is a HARD parse error `warn_error_options` cannot downgrade. Both spellings were tried.
+- **A render-time file list**, because on v2 a `pre_hook` does NOT share a DuckDB session with
+  the model body: the `SET VARIABLE` / `getvariable()` pattern the other DuckDB engines use
+  reads NULL, and **fails SILENTLY** — `getvariable()` on an unset variable is NULL, not an
+  error. It only surfaced because `read_csv` refuses a NULL list. Reproduced offline on
+  dbt-core 2.0.0-rc.2 at threads 1 and 4.
+- **`persistent: true` on every profile secret**, because v2 applies `secrets:` on a THROWAWAY
+  connection — the write dies "could not open file ... the credentials used were wrong". The
+  ATTACH survives because attachments are database-scoped; a secret is not. `settings:` has the
+  same problem, so anything that must reach a model was an `on-run-start` hook.
+- **An explicit `-- depends_on: {{ ref(...) }}` on every fact model**, because v2 infers
+  dependencies statically and rejects a `ref()` it can only see inside a conditional.
+- **An `azure` secret and `access_delegation_mode: NONE`**, because v2 bundles duckdb 1.5.3,
+  which cannot consume a vended storage credential. That is the one thing the move back BOUGHT:
+  see the credential-vending bullet above.
+
+What v2 did better, and is worth remembering if it is ever reconsidered: its own DuckDB macros
+need no adapter overrides — `DESCRIBE` for Iceberg column discovery, `DROP` without `CASCADE`,
+a standalone rename, and a direct-create path for Iceberg REST that dbt-duckdb has never had.
+That last one is why a `table` materialization was briefly possible for the archive log on v2
+and is not here.
+
 ## Things not to "fix"
 
 - **`pipeline.yml` lands once, then fans out.** The five legs are a MATRIX JOB in that one file
@@ -276,10 +308,13 @@ cd dbt1 && dbt build --target duckrun --profiles-dir .
 - The duplicated model files. Five copies of `fct_summary.sql` is the design: they are
   gated so exactly one is live, and the duplication is what lets each engine say what its
   adapter forces without a thicket of conditionals. The shared *data* — the AEMO column
-  layout — lives in `macros/aemo_columns.sql`, at the REPO ROOT, and must stay there: both
-  projects reach it through `macro-paths: [..., "../macros"]`. The three model patch files
-  are the one thing that genuinely is duplicated (a patch file must sit in its own project's
-  model-paths); `tests_py/test_patch_files_match.py` pins the two copies byte for byte.
+  layout — lives in `macros/aemo_columns.sql`, at the REPO ROOT, and must stay there:
+  `dbt1` reaches it through `macro-paths: [..., "../macros"]`. That path looks redundant with
+  one project and is not: keeping the shared spec outside `dbt1/macros` is what says it is
+  shared data rather than engine logic, and `tests_py/test_aemo_columns.py` pins it there.
+  The three model patch files (`_staging.yml`, `_dimensions.yml`, `_marts.yml`) sit at
+  `dbt1/models/aemo/`, one level ABOVE the engine folders, so ONE patch documents and tests
+  whichever tree is enabled — moving them to the root of `models/` loses the gateable segment.
 - `fabric_items/` vs `semantic_model/` being separate directories. duckrun's `deploy()`
   takes no exclude filter, and `_scan_item_folders` validates every item folder before
   deploying any, so one stray folder makes the whole deploy ship nothing. The model is

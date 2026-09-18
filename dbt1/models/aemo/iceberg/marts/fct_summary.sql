@@ -25,13 +25,11 @@
 -- No merge path DELETES a row the recomputation stops producing, which is why dispatch_duids
 -- below gates the intraday branch to units the daily branch can reproduce. Treat any edit to
 -- dispatch_duids as load-bearing -- nothing catches a mistake in it except parity.
-{#-- Insert-only merge; the `insert_only` strategy is defined in
-     dbt2/macros/incremental_insert_only.sql, and it is there because dbt 2 has no config key
-     for "MERGE but do not touch matched rows". Same semantics as the other four engines. --#}
 {{ config(
     materialized='incremental',
-    incremental_strategy='insert_only',
+    incremental_strategy='merge',
     unique_key=['date', 'time', 'DUID'],
+    merge_clauses={'when_matched': [{'action': 'do_nothing'}]},
     schema='mart'
 ) }}
 

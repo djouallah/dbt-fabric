@@ -3,20 +3,17 @@
 launches. Mirrors the local leg in pipeline.yml exactly -- `dbt build || dbt retry`, then the
 parity fingerprint -- so a remote leg and a local leg are the same run on different compute.
 
-    python .github/scripts/run_in_fabric.py <duckrun | ducklake | iceberg>
+    python .github/scripts/run_in_fabric.py <duckrun | iceberg | ducklake>
 
 One thing it does that the local leg does not: it waits out a PAUSED serverless catalog
 database (SQL error 40613) by rebuilding, rather than reporting it as a build failure. See
 RESUME_SIGNATURE below.
 
-TWO WAYS TO INVOKE dbt, because the repo holds two dbt major versions:
-
-  duckrun, ducklake   dbt-core 1.x, in-process through dbtRunner. Keeping it in-process is
-                      worth it here: the notebook kernel already has the adapter imported,
-                      and res.exception gives a real traceback in the streamed log.
-  iceberg             dbt OSS 2, as a SUBPROCESS of the `dbt` binary. v2 is a Rust engine
-                      behind a thin launcher and ships no dbtRunner equivalent, so there is
-                      nothing to import. It is also a different project directory (dbt2/).
+ALL THREE ARE dbt-core 1.x, INVOKED IN-PROCESS through dbtRunner. Keeping it in-process is
+worth it here: the notebook kernel already has the adapter imported, and res.exception gives a
+real traceback in the streamed log. There used to be a second path -- iceberg spent a day on
+dbt OSS 2, a Rust engine with no dbtRunner to import, launched as a subprocess out of a
+separate dbt2/ project. Both are gone with it.
 
 THE FILE NAME MUST NOT START WITH `dbt_`. dbt 1.x's plugin manager imports every importable
 module whose name starts with dbt_ when a command starts, and this script's own directory is
@@ -28,17 +25,15 @@ already in the environment (remote_dbt.py's setup hook minted them from notebook
 config came across as env vars; stdout is streamed back to the runner.
 """
 import os
-import shutil
-import subprocess
 import sys
 import time
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[2]
 
-# engine -> (project directory, dbt major version). Keep in step with
-# .github/scripts/check_gating.py's ENGINES.
-PROJECT = {"duckrun": "dbt1", "ducklake": "dbt1", "iceberg": "dbt2"}
+# engine -> project directory. Keep in step with .github/scripts/check_gating.py's ENGINES
+# and tests_py/_layout.py's PROJECT_OF.
+PROJECT = {"duckrun": "dbt1", "iceberg": "dbt1", "ducklake": "dbt1"}
 
 engine = sys.argv[1]
 if engine not in PROJECT:
@@ -46,7 +41,7 @@ if engine not in PROJECT:
 project_dir = REPO / PROJECT[engine]
 
 # DuckDB spill: the harness put TMPDIR on the notebook's ~135 GiB work disk; /tmp is a ~19 GiB
-# overlay. dbt1's on-run-start hooks and dbt2's read DUCKDB_TEMP_DIR.
+# overlay. The duckrun and iceberg on-run-start hooks read DUCKDB_TEMP_DIR.
 os.environ["DUCKDB_TEMP_DIR"] = os.path.join(os.environ.get("TMPDIR", "/tmp"), "duckdb_spill")
 os.makedirs(os.environ["DUCKDB_TEMP_DIR"], exist_ok=True)
 # Inside Fabric DuckDB's default OneLake transport is the one that works (curl is the fix for
@@ -57,13 +52,11 @@ os.environ.pop("CURL_CA_INFO", None)
 BASE = ["--target", engine, "--profiles-dir", "."]
 
 
-# The text of the last failure, for RESUMING below. Set by run_v1 only: run_v2 inherits its
-# subprocess's streams rather than capturing them, and the engine it runs (iceberg) has no
-# serverless database in its path anyway.
+# The text of the last failure, for RESUMING below.
 LAST_ERROR = ""
 
 
-def run_v1(*args) -> bool:
+def run(*args) -> bool:
     """dbt-core 1.x, in-process. cwd is the project dir, which is how dbt finds the project."""
     global LAST_ERROR
     from dbt.cli.main import dbtRunner  # imported late: after the env is set
@@ -78,38 +71,9 @@ def run_v1(*args) -> bool:
     return bool(res.success)
 
 
-def run_v2(*args) -> bool:
-    """dbt OSS 2, as a subprocess.
-
-    `dbt` is resolved next to THIS interpreter first. pip installed it into the notebook
-    kernel's environment, whose scripts directory is not necessarily on the PATH a
-    subprocess inherits -- shutil.which alone found nothing on the first attempt.
-
-    stdout/stderr are inherited rather than captured so the log streams back live and the
-    fingerprint JSON lands in remote_dbt.py's captured log, exactly as for the v1 legs.
-    """
-    exe = Path(sys.executable).parent / ("dbt.exe" if os.name == "nt" else "dbt")
-    dbt = str(exe) if exe.exists() else shutil.which("dbt")
-    if dbt is None:
-        print("no `dbt` executable found -- is dbt-oss installed?", flush=True)
-        return False
-
-    print(f"=== dbt {' '.join(args)} ({engine}) ===", flush=True)
-    t0 = time.time()
-    # stdin closed: an interactive prompt on a runner must DIE, not wait.
-    r = subprocess.run([dbt, *args, *BASE], cwd=project_dir,
-                       stdin=subprocess.DEVNULL)
-    ok = r.returncode == 0
-    print(f"=== dbt {args[0]}: success={ok} in {int(time.time() - t0)}s ===", flush=True)
-    return ok
-
-
-run = run_v2 if PROJECT[engine] == "dbt2" else run_v1
-
-if PROJECT[engine] == "dbt1":
-    # dbtRunner has no --project-dir equivalent that also moves the profiles lookup, and
-    # --profiles-dir . is relative, so put the process in the project.
-    os.chdir(project_dir)
+# dbtRunner has no --project-dir equivalent that also moves the profiles lookup, and
+# --profiles-dir . is relative, so put the process in the project.
+os.chdir(project_dir)
 
 # A PAUSED SERVERLESS DATABASE IS NOT A BUILD FAILURE -- WAIT FOR IT.
 #

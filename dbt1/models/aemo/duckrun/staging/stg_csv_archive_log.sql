@@ -3,8 +3,8 @@
      fact models' file-selection logic identical across engines.
 
      A plain view: it is a thin read over the parquet log, so there is nothing to
-     materialize. (The iceberg copy has to be incremental instead — that catalog supports
-     neither CREATE VIEW nor the table materialization's temp-table RENAME.) --#}
+     materialize. (The iceberg copy is a view too, but has to name `database='memory'`:
+     its default database is the Iceberg catalog, which has no CREATE VIEW.) --#}
 {{ config(
     materialized='view',
     schema='landing'

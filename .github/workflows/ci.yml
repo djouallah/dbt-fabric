@@ -34,8 +34,10 @@ jobs:
           cache-dependency-path: requirements/dev.txt
       - run: pip install -r requirements/dev.txt
       - name: Unit tests
-        # Pins the shared column spec, the iceberg adapter overrides against the INSTALLED
-        # dbt-duckdb, and every singular test against its own SQL dialect.
+        # Pins the shared column spec, every singular test against its own SQL dialect, and
+        # the guards on the iceberg adapter overrides. The two tests that compare those
+        # overrides against dbt-duckdb's own macro bodies SKIP here -- this job installs no
+        # adapter on purpose (requirements/dev.txt) -- and run in the gating jobs below.
         run: python -m pytest tests_py/ -q
 
   # ONE JOB PER ENGINE, each installing only that engine's requirements.
@@ -47,12 +49,13 @@ jobs:
   #     dbt-fabric-samdebruyn fork this replaced instead made the spark profile fail
   #     validation with "'database' is a required property". Both were found here rather
   #     than locally.
-  #   * iceberg is dbt OSS 2 and the other four are dbt-core 1.x. They install a `dbt`
-  #     console script each; in one environment the last one wins and the other four (or
-  #     the one) get parsed by the wrong engine entirely.
+  #   * it keeps each engine honest about its own pins. iceberg and ducklake are both
+  #     dbt-duckdb but on different duckdb lines -- iceberg floats on `--pre`, ducklake is
+  #     pinned to 1.5.5 for its community extensions -- and one job would silently give
+  #     both whichever resolved last.
   #
   # Splitting the matrix is also more faithful — each engine is validated against exactly
-  # the dependencies it builds with. check_gating.py knows which project each engine is in.
+  # the dependencies it builds with.
   gating:
     # `label` is cosmetic — the only thing the Actions UI shows. `engine` is the real target
     # name that dbt, the folder layout and every script key on; do not rename those. The same
@@ -64,7 +67,7 @@ jobs:
       matrix:
         include:
           - {engine: duckrun,  label: "🦆 duckdb · delta-rs"}
-          - {engine: iceberg,  label: "🧊 dbt OSS 2 · iceberg"}
+          - {engine: iceberg,  label: "🧊 duckdb · iceberg"}
           - {engine: ducklake, label: "🌊 duckdb · ducklake"}
           - {engine: dwh,      label: "🏢 fabric · warehouse"}
           - {engine: spark,    label: "⚡ fabric · spark"}
@@ -82,3 +85,13 @@ jobs:
       - name: Gating (${{ matrix.label }})
         # The one check that catches "green run, built nothing".
         run: python .github/scripts/check_gating.py ${{ matrix.engine }}
+
+      # iceberg and ducklake are both type: duckdb, so dbt1/macros/iceberg_adapter_overrides.sql
+      # reaches BOTH and reproduces dbt-duckdb's own macro bodies for the non-iceberg path.
+      # These two jobs are the only ones with that adapter installed, so they are where the
+      # comparison against it can actually run; in the free `unit` job above it skips.
+      - name: Adapter overrides match the installed dbt-duckdb
+        if: contains(fromJSON('["iceberg", "ducklake"]'), matrix.engine)
+        run: |
+          pip install pytest
+          python -m pytest tests_py/test_adapter_overrides.py -q

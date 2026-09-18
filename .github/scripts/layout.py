@@ -77,7 +77,7 @@ WRITER = {"duckrun": "delta-rs", "iceberg": "duckdb (iceberg)", "ducklake": "duc
 # Display only, and the SAME five labels as pipeline.yml's `plan` step and ci.yml's gating
 # matrix: the headline table and the Actions graph should name a leg identically, because they
 # are read side by side. `engine` remains the key everywhere else.
-LABEL = {"duckrun": "🦆 duckdb · delta-rs", "iceberg": "🧊 dbt OSS 2 · iceberg",
+LABEL = {"duckrun": "🦆 duckdb · delta-rs", "iceberg": "🧊 duckdb · iceberg",
          "ducklake": "🌊 duckdb · ducklake", "dwh": "🏢 fabric · warehouse",
          "spark": "⚡ fabric · spark"}
 

@@ -23,7 +23,7 @@ exists to catch elsewhere. An empty result there is worse than a hard error.
 
 Probe 10 re-reads the table and compares it against the expected rows. A merge that returns
 without error but does not apply is exactly the kind of thing this repo has been bitten by
-(dbt2's getvariable() reading NULL instead of erroring), so "it did not raise" is not
+(dbt OSS 2's getvariable() reading NULL instead of erroring), so "it did not raise" is not
 accepted as "it worked".
 
 The connection shape is the one already proven by hand against Fabric: SAIL_CATALOG__LIST
@@ -31,7 +31,7 @@ must be in the environment BEFORE the server starts — it is read at startup, n
 
 Env (the workflow supplies all of these):
     WAREHOUSE_PATH   "{workspace_id}/{lakehouse_id}" — from provision.py's iceberg branch
-    ONELAKE_TOKEN    the https://storage.azure.com/ token, same one dbt2/profiles.yml uses
+    ONELAKE_TOKEN    the https://storage.azure.com/ token, the same one the iceberg leg uses
     SAIL_SMOKE_SCHEMA  schema to build in (default sail_smoke — deliberately outside the
                        <engine>_landing / <engine>_mart namespace the five engines share)
     SAIL_SMOKE_KEEP    "1" leaves the tables behind for inspection in Fabric
@@ -73,9 +73,10 @@ def catalog_cfg(token):
 os.environ["SAIL_CATALOG__LIST"] = catalog_cfg(TOKEN)
 os.environ.setdefault("SAIL_CATALOG__DEFAULT_CATALOG", CATALOG)
 
-# TWO CREDENTIALS, NOT ONE -- the same split dbt2/profiles.yml spells out for the iceberg leg
-# ("TWO SECRETS, NOT ONE": `azure` authorises the DATA files over abfss, `iceberg` authorises
-# the REST CATALOG). The catalog's bearer_token above covers only the catalog. Without this,
+# TWO CREDENTIALS, NOT ONE -- catalog and storage are separate, and Sail has no vending. The
+# iceberg leg gets its storage credential VENDED by the catalog per table (dbt1/profiles.yml);
+# Sail cannot, so the client brings both. The catalog's bearer_token above covers only the
+# catalog. Without this,
 # `show databases` and `create schema` both pass -- they are pure catalog calls -- and the
 # first statement that touches storage dies with
 #   Generic MicrosoftAzure error: ... GET http://169.254.169.254/metadata/identity/oauth2/token

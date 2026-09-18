@@ -113,9 +113,8 @@ def compare(in_dir: Path) -> int:
             "  * a string join key with a trailing space (T-SQL pads on comparison; the\n"
             "    others do not), which changes row counts, not just sums\n"
             "  * one engine's model drifting from the shared business logic — diff the\n"
-            "    <project>/models/aemo/<engine>/ copies against each other. The trees live in\n"
-            "    TWO projects: dbt1/ holds duckrun, ducklake, dwh and spark; dbt2/ holds\n"
-            "    iceberg. `diff -r dbt1/models/aemo/duckrun dbt2/models/aemo/iceberg` is the\n"
+            "    dbt1/models/aemo/<engine>/ copies against each other.\n"
+            "    `diff -r dbt1/models/aemo/duckrun dbt1/models/aemo/iceberg` is the\n"
             "    comparison that catches a drift inside the DuckDB family.",
             file=sys.stderr,
         )

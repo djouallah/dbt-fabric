@@ -1,14 +1,10 @@
 """Where each engine's files live, for the tests that walk the trees.
 
-The repo holds TWO dbt projects, split by dbt major version rather than by anything about
-the data: dbt1/ is dbt-core 1.x (duckrun, ducklake, dwh, spark) and dbt2/ is dbt OSS 2
-(iceberg). They cannot share a project root because catalogs.yml sits next to
-dbt_project.yml and dbt 1.x aborts on one -- see dbt2/dbt_project.yml.
-
-Everything comparing engines to each other has to cross that boundary, so the mapping lives
-here once instead of being re-derived (or, worse, silently half-applied: a test that globs
-the old flat models/aemo/<engine> path now matches NOTHING, and a parametrized test with no
-cases PASSES).
+ONE dbt project, dbt1/, holding all five engines. It was briefly two -- dbt2/ carried the
+iceberg engine on dbt OSS 2 between 2026-09-17 and 2026-09-18 -- and the mapping below is
+what is left of that: a single dict rather than a path recomputed in every test, because a
+test that globs a path no longer there matches NOTHING, and a parametrized test with no
+cases PASSES.
 """
 from __future__ import annotations
 
@@ -21,16 +17,16 @@ REPO = Path(__file__).resolve().parents[1]
 # .github/scripts/check_gating.py's ENGINES.
 PROJECT_OF = {
     "duckrun": "dbt1",
+    "iceberg": "dbt1",
     "ducklake": "dbt1",
     "dwh": "dbt1",
     "spark": "dbt1",
-    "iceberg": "dbt2",
 }
 
 ENGINES = list(PROJECT_OF)
 
-# The AEMO column layout and everything else both projects read. Shared on purpose: it is
-# the one thing that must not drift between the two.
+# The AEMO column layout and everything else the project reads from the REPO ROOT rather
+# than from dbt1/macros. Kept separate because it is shared data, not engine logic.
 SHARED_MACROS = REPO / "macros"
 
 
@@ -47,5 +43,7 @@ def singular_tests_dir(engine: str) -> Path:
 
 
 def patch_dir(engine: str) -> Path:
-    """The _staging/_dimensions/_marts.yml folder for this engine's project."""
+    """The _staging/_dimensions/_marts.yml folder. ONE per project, above the engine trees --
+    so every engine resolves to the same directory, and the argument is only there because
+    callers name an engine rather than a project."""
     return project_dir(engine) / "models" / "aemo"
