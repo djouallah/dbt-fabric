@@ -1,8 +1,11 @@
 #!/usr/bin/env python3
 """What each engine WROTE: table layout and row-count parity over every engine's output, read
-back through Delta with duckrun.get_stats(), pivoted to $GITHUB_STEP_SUMMARY and merged into
-the run record under `layout`. Run by the `layout` job of pipeline.yml. Ported from
-djouallah/direct-lake-parquet-layout's stats.py.
+back through Delta with duckrun.get_stats() and merged into the run record under `layout`. Run
+by the `layout` job of pipeline.yml. Ported from djouallah/direct-lake-parquet-layout's stats.py.
+
+$GITHUB_STEP_SUMMARY gets ONE table -- `headline_table`, one row per engine. Every other table
+here is printed to the job log and recorded as numbers in `layout`, never on the run page; see
+write_outputs for why.
 
     BUILD_ENGINES=duckrun,dwh python .github/scripts/layout.py
 
@@ -418,22 +421,32 @@ def engine_total(per_engine: dict, engine: str, key: str):
     return sum(d.get(key) or 0 for d in per_engine[engine].values())
 
 
-def headline_table(per_engine: dict, engines: list[str], ordering: dict, out: list[str]) -> None:
-    """THE TABLE THE RUN PAGE OPENS WITH: one row per engine, no per-table breakdown. The claim
-    it has to make in one glance is the repo's whole claim -- the engines are interchangeable
-    (same rows) and what comes out is a well-shaped parquet table (the geometry columns). The
-    eight-table and per-column tables below it are the evidence for this one.
+def headline_table(per_engine: dict, engines: list[str], encodings: dict,
+                   out: list[str]) -> None:
+    """THE ONLY TABLE ON THE RUN PAGE: one row per engine, no per-table breakdown. The claim it
+    has to make in one glance is the repo's whole claim -- the engines are interchangeable (same
+    rows) and what comes out is a well-shaped parquet table. Everything underneath it (per
+    table, per column, physical order) is in the run record's `layout` and in the job log; the
+    summary page carries this and nothing else.
 
-    `rows` and `size MB` are all of TABLES; the geometry is `fct_summary` alone, because that is
-    the table Power BI reads through Direct Lake. ⚠️ marks an engine whose row count differs
-    from the others -- the same disagreement parity_table shows per table, carried up here."""
+    `rows` and `size MB` are all of TABLES; the geometry and encoding are `fct_summary` alone,
+    because that is the table Power BI reads through Direct Lake. ⚠️ marks an engine whose row
+    count differs from the others.
+
+    NO V-ORDER COLUMN. It cannot be stated in one cell without lying: only the Fabric Spark
+    writer stamps `add.tags.VORDER`, the Warehouse V-Orders by DEFAULT and stamps nothing, and
+    the DuckDB writers neither stamp nor V-Order -- so the same blank cell would mean three
+    different things. `ordering_table` still reports the per-file tags where they exist."""
     out.append(f"## 🏁 {NUMBER.get(len(engines), str(len(engines)))} "
                f"{'engine' if len(engines) == 1 else 'engines'}, one gold layer\n")
-    out.append(f"<sub><b>rows</b> and <b>size</b> are all {len(TABLES)} tables; the geometry "
-               f"columns are <code>{MART}</code> alone, the table Power BI reads through Direct "
-               f"Lake. ⚠️ = this engine's row count differs from the others.</sub>\n")
+    out.append(f"<sub><b>rows</b> and <b>size</b> are all {len(TABLES)} tables; the geometry and "
+               f"encoding are <code>{MART}</code> alone, the table Power BI reads through Direct "
+               f"Lake. <b>encoding</b> counts its columns whose every chunk carries a dictionary "
+               f"page — Direct Lake remaps those straight into VertiPaq's dictionary and "
+               f"re-encodes a PLAIN one from raw values at load. ⚠️ = this engine's row count "
+               f"differs from the others.</sub>\n")
     heads = ["engine", "writer", "rows", "size MB", "files", "row groups", "avg RG rows",
-             "compression", "V-Order"]
+             "compression", "encoding"]
     out.append("| " + " | ".join(heads) + " |")
     out.append("| --- | --- | --: | --: | --: | --: | --: | --- | --- |")
 
@@ -451,26 +464,21 @@ def headline_table(per_engine: dict, engines: list[str], ordering: dict, out: li
         cells += [fmt(mart.get(k), kind)
                   for k, kind in (("num_files", "num"), ("num_row_groups", "num"),
                                   ("avg_row_group", "num"), ("compression", "left"))]
-        cells.append(vorder_cell(mart, (ordering or {}).get(e), e))
+        cells.append(encoding_cell((encodings or {}).get(e)))
         out.append(f"| {LABEL.get(e, e)} | `{WRITER.get(e, e)}` | " + " | ".join(cells) + " |")
     out.append("")
 
 
-def vorder_cell(mart: dict, ordering: dict | None, engine: str) -> str:
-    """V-Order for one engine, as the deep dive already reports it: the per-file Delta
-    `add.tags.VORDER` where a writer stamps it (only Fabric Spark does), the get_stats() flag
-    otherwise, and `n/a` for the Warehouse -- which V-Orders by default and writes no tag, so
-    neither a tag count nor a false flag would be true of it. See ordering_table."""
-    v = (ordering or {}).get("vorder_files") or {}
-    if v:
-        return f"{v['tagged']:,}/{v['files']:,}"
-    # Nothing measured is not a V-Order claim either way -- before the dwh branch, or an engine
-    # that failed would still assert something about its files.
-    if not mart:
+def encoding_cell(encodings: dict | None) -> str:
+    """`<n>/<total> dict` for one engine's MART columns, ⚠️ when any column is not fully
+    dictionary-encoded. A column counts only when EVERY chunk carries a dictionary page
+    (`dict_pages == chunks`): one PLAIN chunk is one chunk Direct Lake re-encodes from raw
+    values at load, and a column that is dictionary-encoded in nine files out of ten is not a
+    dictionary-encoded column. encoding_table has the per-column breakdown."""
+    if not encodings:
         return "—"
-    if engine == "dwh":
-        return "n/a (warehouse)"
-    return fmt(mart.get("vorder"), "bool")
+    full = sum(1 for c in encodings.values() if c.get("chunks") and c["dict_pages"] == c["chunks"])
+    return f"{full:,}/{len(encodings):,} dict" + ("" if full == len(encodings) else " ⚠️")
 
 
 def parity_table(per_engine: dict, engines: list[str], out: list[str]) -> None:
@@ -655,17 +663,23 @@ def one_item(guid: str, name: str, engines: list[str], prefixes: dict) -> dict:
     return out
 
 
-def write_outputs(doc: dict, markdown: str) -> None:
-    """Three sinks, one document: stdout (the job log), $GITHUB_STEP_SUMMARY (the run page),
-    and the run-record fragment under `layout` (what outlives both). LAYOUT_JSON optionally
-    names a file too, for a by-hand run."""
+def write_outputs(doc: dict, headline: str, detail: str) -> None:
+    """Three sinks, ONE document, and deliberately not the same slice of it in each.
+
+    $GITHUB_STEP_SUMMARY gets the HEADLINE ONLY. The run page is read by people who want to
+    know whether the engines agree and what shape the parquet came out in; four more tables of
+    per-table, per-column and per-row-group detail below it buries that. The detail is not lost
+    -- it goes to stdout (the job log, where it is being read for a reason) and, as numbers
+    rather than markdown, into the run record's `layout`, which is what outlives the run.
+    LAYOUT_JSON optionally names a file too, for a by-hand run."""
     import record
 
-    print(markdown)
+    print(headline)
+    print(detail)
     summary = os.environ.get("GITHUB_STEP_SUMMARY")
     if summary:
         with open(summary, "a", encoding="utf-8") as f:
-            f.write(markdown + "\n")
+            f.write(headline + "\n")
     record.merge({"layout": doc})
     path = os.environ.get("LAYOUT_JSON", "").strip()
     if path:
@@ -703,15 +717,17 @@ def main() -> int:
                 f"{len(enc)} {MART} column(s) profiled"
                 + (f", {v['tagged']}/{v['files']} V-Ordered file(s)" if v else ""))
 
-    out: list[str] = []
-    # FIRST, and deliberately: this is what the run page opens with.
-    headline_table(per_engine, engines, ordering, out)
-    parity_table(per_engine, engines, out)
-    detail_tables(per_engine, engines, out)
-    encoding_table(encodings, engines, out)
-    ordering_table(ordering, engines, out)
+    # The run page gets `head` and nothing else; `rest` goes to the log and, as numbers, to the
+    # run record. write_outputs.
+    head: list[str] = []
+    headline_table(per_engine, engines, encodings, head)
+    rest: list[str] = []
+    parity_table(per_engine, engines, rest)
+    detail_tables(per_engine, engines, rest)
+    encoding_table(encodings, engines, rest)
+    ordering_table(ordering, engines, rest)
     doc = build_doc(per_engine, engines, items, prefixes, encodings, ordering)
-    write_outputs(doc, "\n".join(out))
+    write_outputs(doc, "\n".join(head), "\n".join(rest))
 
     measured = [e for e in engines if per_engine.get(e)]
     log(f"layout: measured {measured}; not measured {[e for e in engines if e not in measured]}")

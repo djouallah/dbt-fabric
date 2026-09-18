@@ -130,7 +130,8 @@ def test_headline_table_flags_the_row_count_outlier():
            "spark": {"fct_summary": {"total_rows": 9, "size_mb": 1.0}},
            "iceberg": {}}
     out: list[str] = []
-    layout.headline_table(per, ["duckrun", "dwh", "spark", "iceberg"], {}, out)
+    layout.headline_table(per, ["duckrun", "dwh", "spark", "iceberg"], {}, out)  # no encodings
+
     rows = {e: next(l for l in out if l.startswith(f"| {layout.LABEL[e]} |"))
             for e in ("duckrun", "dwh", "spark", "iceberg")}
     assert "⚠️" in rows["spark"], "the engine 9 rows short is not flagged"
@@ -141,15 +142,26 @@ def test_headline_table_flags_the_row_count_outlier():
     assert out[0].startswith("## 🏁 Four engines")
 
 
-def test_headline_vorder_distinguishes_untagged_from_unmeasured():
-    """`·` (a writer that stamps no V-Order tag), `n/a (warehouse)` (V-Orders by default and
-    writes no tag) and `—` (not measured) are three different answers. The spark tag count comes
-    from the deep dive, which is the only per-file truth."""
-    mart = {"total_rows": 1, "vorder": False}
-    assert layout.vorder_cell(mart, {"vorder_files": {"tagged": 3, "files": 4}}, "spark") == "3/4"
-    assert layout.vorder_cell(mart, {}, "duckrun") == "·"
-    assert layout.vorder_cell(mart, {}, "dwh") == "n/a (warehouse)"
-    assert layout.vorder_cell({}, {}, "dwh") == "—"
+def test_headline_encoding_counts_only_fully_dictionary_encoded_columns():
+    """A column dictionary-encoded in some of its chunks and PLAIN in the rest is NOT a
+    dictionary-encoded column -- every PLAIN chunk is one Direct Lake re-encodes from raw values
+    at load. Counting `dict_pages` as a boolean would score that column as a win."""
+    enc = {"date": {"dict_pages": 4, "chunks": 4},
+           "duid": {"dict_pages": 4, "chunks": 4},
+           "mw": {"dict_pages": 3, "chunks": 4},    # partial -- does not count
+           "price": {"dict_pages": 0, "chunks": 4}}
+    assert layout.encoding_cell(enc) == "2/4 dict ⚠️"
+    assert layout.encoding_cell({k: {"dict_pages": 4, "chunks": 4} for k in enc}) == "4/4 dict"
+    assert layout.encoding_cell({}) == "—" and layout.encoding_cell(None) == "—"
+
+
+def test_headline_carries_no_vorder_column():
+    """V-Order cannot be one cell without lying: only the Fabric Spark writer stamps a tag, the
+    Warehouse V-Orders by default and stamps nothing, and the DuckDB writers do neither -- one
+    blank cell would mean three different things. It lives in ordering_table, per file."""
+    out: list[str] = []
+    layout.headline_table({"dwh": {"fct_summary": {"total_rows": 1}}}, ["dwh"], {}, out)
+    assert not any("V-Order" in l or "vorder" in l.lower() for l in out)
 
 
 def test_build_doc_omits_unmeasured_sections():
