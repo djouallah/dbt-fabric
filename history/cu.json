@@ -143,6 +143,14 @@
    "runs": 13,
    "since": "2026-09-17T16:00:00",
    "timed": 45
+  },
+  {
+   "at": "2026-09-18T08:31:01Z",
+   "changed": 7,
+   "pending": 0,
+   "runs": 14,
+   "since": "2026-09-17T16:00:00",
+   "timed": 50
   }
  ],
  "runs": {
@@ -760,10 +768,10 @@
    "engines": {
     "duckrun": {
      "cu": {
-      "Jupyter Notebook Scheduled Run": 6318.811
+      "Jupyter Notebook Scheduled Run": 8403.651
      },
      "seconds": {
-      "Jupyter Notebook Scheduled Run": 394.923
+      "Jupyter Notebook Scheduled Run": 525.225
      },
      "window": [
       "2026-09-18T07:46:59Z",
@@ -772,8 +780,75 @@
     }
    },
    "started": "2026-09-18T07:43:51Z"
+  },
+  "35322532878": {
+   "engines": {
+    "ducklake": {
+     "cu": {
+      "Jupyter Notebook Scheduled Run": 1338.774,
+      "Sql Usage": 1299.996
+     },
+     "seconds": {
+      "Jupyter Notebook Scheduled Run": 334.691,
+      "Sql Usage": 660.0
+     },
+     "window": [
+      "2026-09-18T08:09:00Z",
+      "2026-09-18T08:16:42Z"
+     ]
+    },
+    "duckrun": {
+     "cu": {
+      "Jupyter Notebook Scheduled Run": 1293.533
+     },
+     "seconds": {
+      "Jupyter Notebook Scheduled Run": 323.381
+     },
+     "window": [
+      "2026-09-18T08:08:54Z",
+      "2026-09-18T08:16:22Z"
+     ]
+    },
+    "dwh": {
+     "cu": {
+      "Warehouse Query": 5704.673
+     },
+     "seconds": {
+      "Warehouse Query": 782.069
+     },
+     "window": [
+      "2026-09-18T08:09:01Z",
+      "2026-09-18T08:15:26Z"
+     ]
+    },
+    "iceberg": {
+     "cu": {
+      "Jupyter Notebook Scheduled Run": 1260.909
+     },
+     "seconds": {
+      "Jupyter Notebook Scheduled Run": 315.225
+     },
+     "window": [
+      "2026-09-18T08:09:03Z",
+      "2026-09-18T08:16:35Z"
+     ]
+    },
+    "spark": {
+     "cu": {
+      "High Concurrency Session Livy Run": 9290.336
+     },
+     "seconds": {
+      "High Concurrency Session Livy Run": 798.315
+     },
+     "window": [
+      "2026-09-18T08:09:00Z",
+      "2026-09-18T08:19:35Z"
+     ]
+    }
+   },
+   "started": "2026-09-18T08:06:14Z"
   }
  },
  "schema": 1,
- "updated": "2026-09-18T08:00:42Z"
+ "updated": "2026-09-18T08:31:01Z"
 }
