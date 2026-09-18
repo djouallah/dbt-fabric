@@ -42,6 +42,11 @@ on:
         description: Files each fact model folds per run, oldest first (every engine honours it; a backlog converges over runs). The throttle for spark's first build.
         type: string
         default: "1000"
+      fabric_cores:
+        description: vCores for the in-Fabric notebook legs (duckrun, ducklake, iceberg). 8 is the steady-state size; a from-scratch rebuild of the whole daily archive OOM-kills the notebook at 8 and needs 16.
+        type: choice
+        default: "8"
+        options: ["4", "8", "16", "32"]
       deploy:
         description: Deploy the in-Fabric demo after the build? (the items are always provisioned) none = skip; no_model = everything except the semantic models; full = everything
         type: choice
@@ -208,7 +213,7 @@ jobs:
       ENGINE: ${{ matrix.engine }}
       # The three legs whose dbt runs inside Fabric. Exact match on the list, not a substring.
       REMOTE: ${{ contains(fromJSON('["duckrun", "ducklake", "iceberg"]'), matrix.engine) }}
-      FABRIC_CORES: "8"
+      FABRIC_CORES: ${{ inputs.fabric_cores }}
       DBT_SCHEMA: ${{ inputs.dbt_schema }}
       process_limit: ${{ inputs.process_limit }}
       SPARK_RESOURCE_PROFILE: ${{ inputs.spark_resource_profile }}
@@ -446,7 +451,7 @@ jobs:
       FABRIC_WORKSPACE_ID: ${{ secrets.FABRIC_WORKSPACE_ID }}
       DBT_SCHEMA: ${{ inputs.dbt_schema }}
       # Recorded under layout.config, not used here: what build.yml ran the notebook legs at.
-      FABRIC_CORES: "8"
+      FABRIC_CORES: ${{ inputs.fabric_cores }}
       SPARK_RESOURCE_PROFILE: ${{ inputs.spark_resource_profile }}
       # Only the engines this run built: reading an engine nobody rebuilt would record an
       # older generation's layout under this run's id.
