@@ -136,8 +136,10 @@ def test_headline_table_flags_the_row_count_outlier():
             for e in ("duckrun", "dwh", "spark", "iceberg")}
     assert "⚠️" in rows["spark"], "the engine 9 rows short is not flagged"
     assert "⚠️" not in rows["duckrun"] and "⚠️" not in rows["dwh"], "the agreeing majority is flagged"
-    # 40 = 10 + 30 summed over the tables, not fct_summary alone.
-    assert "| 40 |" in rows["duckrun"]
+    # 10 = fct_summary's own rows. NOTHING here is summed over the other tables: a total
+    # that mixes them is not the parity claim, and stg_csv_archive_log being a view on some
+    # engines made the sum differ where the data did not.
+    assert "| 10 |" in rows["duckrun"] and "| 40 |" not in rows["duckrun"]
     assert "⚠️" not in rows["iceberg"] and "| — | — | — |" in rows["iceberg"]
     assert out[0].startswith("## 🏁 Four engines")
 

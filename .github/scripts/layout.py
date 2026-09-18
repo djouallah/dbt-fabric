@@ -429,9 +429,12 @@ def headline_table(per_engine: dict, engines: list[str], encodings: dict,
     table, per column, physical order) is in the run record's `layout` and in the job log; the
     summary page carries this and nothing else.
 
-    `rows` and `size MB` are all of TABLES; the geometry and encoding are `fct_summary` alone,
-    because that is the table Power BI reads through Direct Lake. ⚠️ marks an engine whose row
-    count differs from the others.
+    EVERY COLUMN IS `fct_summary` -- the table Power BI reads through Direct Lake, the table
+    parity compares, the one this repo is about. Nothing here is summed over the other seven:
+    a row count that mixes tables is not the parity claim, and it was also wrong in a way that
+    read as a real difference -- `stg_csv_archive_log` is a VIEW on four engines and leaves
+    nothing to measure, so the two engines that DO materialize it looked like the outliers.
+    ⚠️ marks an engine whose row count differs from the others.
 
     NO V-ORDER COLUMN. It cannot be stated in one cell without lying: only the Fabric Spark
     writer stamps `add.tags.VORDER`, the Warehouse V-Orders by DEFAULT and stamps nothing, and
@@ -439,28 +442,26 @@ def headline_table(per_engine: dict, engines: list[str], encodings: dict,
     different things. `ordering_table` still reports the per-file tags where they exist."""
     out.append(f"## 🏁 {NUMBER.get(len(engines), str(len(engines)))} "
                f"{'engine' if len(engines) == 1 else 'engines'}, one gold layer\n")
-    out.append(f"<sub><b>rows</b> and <b>size</b> are all {len(TABLES)} tables; the geometry and "
-               f"encoding are <code>{MART}</code> alone, the table Power BI reads through Direct "
-               f"Lake. <b>encoding</b> counts its columns whose every chunk carries a dictionary "
-               f"page — Direct Lake remaps those straight into VertiPaq's dictionary and "
-               f"re-encodes a PLAIN one from raw values at load. ⚠️ = this engine's row count "
-               f"differs from the others.</sub>\n")
+    out.append(f"<sub>Every column is <code>{MART}</code>, the table Power BI reads through "
+               f"Direct Lake. <b>encoding</b> counts its columns whose every chunk carries a "
+               f"dictionary page — Direct Lake remaps those straight into VertiPaq's "
+               f"dictionary and re-encodes a PLAIN one from raw values at load. ⚠️ = this "
+               f"engine's row count differs from the others.</sub>\n")
     heads = ["engine", "writer", "rows", "size MB", "files", "row groups", "avg RG rows",
              "compression", "encoding"]
     out.append("| " + " | ".join(heads) + " |")
     out.append("| --- | --- | --: | --: | --: | --: | --: | --- | --- |")
 
-    totals = {e: engine_total(per_engine, e, "total_rows") for e in engines}
-    present = [v for v in totals.values() if v is not None]
+    marts = {e: (per_engine.get(e) or {}).get(MART) or {} for e in engines}
+    present = [m["total_rows"] for m in marts.values() if m.get("total_rows") is not None]
     # The majority row count, so the ⚠️ lands on the engine that disagrees rather than on all
     # of them. One engine measured, or all of them agreeing, flags nothing.
     agreed = Counter(present).most_common(1)[0][0] if present else None
     for e in engines:
-        mart = (per_engine.get(e) or {}).get(MART) or {}
-        rows = totals[e]
+        mart = marts[e]
+        rows = mart.get("total_rows")
         cells = [fmt(rows, "num") + ("" if rows is None or rows == agreed else " ⚠️"),
-                 fmt(None if not per_engine.get(e) else
-                     round(engine_total(per_engine, e, "size_mb"), 1), "num")]
+                 fmt(None if mart.get("size_mb") is None else round(mart["size_mb"], 1), "num")]
         cells += [fmt(mart.get(k), kind)
                   for k, kind in (("num_files", "num"), ("num_row_groups", "num"),
                                   ("avg_row_group", "num"), ("compression", "left"))]
