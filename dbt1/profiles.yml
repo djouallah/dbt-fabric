@@ -40,22 +40,37 @@ aemo_electricity:
       # to `memory` per model, because the catalog has no CREATE VIEW.
       database: onelake
       schema: "{{ env_var('DBT_SCHEMA', 'mart') }}"
-      threads: "{{ env_var('DBT_THREADS', '4') | int(4) }}"
+      # 2, NOT the DBT_THREADS default of 4 the other engines take. This is
+      # djouallah/dbt_fabric_python_iceberg's value and the leg is known to work at it; 4 was
+      # tried here and the notebook kernel was SIGKILLed folding fct_price and fct_scada
+      # concurrently (run 35344582441). An engine setting, not a convention to align.
+      threads: 2
       settings:
         preserve_insertion_order: false
         # NO temp_directory here. dbt-duckdb re-applies `settings:` on every cursor, and
         # DuckDB then throws "Cannot switch temporary directory after the current one has
         # been used" once anything has spilled. It is set once in on-run-start instead.
-      # THERE IS NO `secrets:` BLOCK, AND THAT IS THE POINT — CREDENTIAL VENDING ONLY. The
-      # token below authenticates to the REST CATALOG and nothing else; every data-file read
-      # and write runs on the storage credential the catalog hands back per table (OneLake
-      # IRC vends adls.sas-token.onelake.dfs.fabric.microsoft.com, usable since
-      # duckdb/duckdb-iceberg#1331). This is what .github/scripts/compact_iceberg.py has done
-      # since 2026-09-17; the leg could not, only because the dbt OSS 2 it briefly ran on
-      # bundles duckdb 1.5.3, which cannot consume a vended credential. requirements/
-      # iceberg.txt installs `--pre duckdb`, so `--pre` is load-bearing here: on a stable
-      # duckdb the vend fails and the fix is an `access_delegation_mode: 'none'` plus an
-      # `azure` secret with ONELAKE_TOKEN — do not reach for that without a failing run.
+        # No memory_limit either: DuckDB's default of 80% of host RAM is right for both a
+        # runner and a Fabric session, and a cap here would throttle the notebook too.
+      # TWO CREDENTIALS, AND THE CLIENT BRINGS BOTH. The `token:` on the ATTACH below
+      # authorises the REST CATALOG; this secret authorises the DATA FILES over abfss. Both
+      # take the same storage.azure.com token, minted by notebookutils on the remote leg
+      # (.github/scripts/remote_dbt.py) or by `az account get-access-token --resource
+      # https://storage.azure.com/` on a laptop.
+      #
+      # THIS IS THE SOURCE REPO'S CONFIGURATION, VERBATIM, AND THAT IS THE POINT.
+      # OneLake CAN vend a per-table storage credential instead (adls.sas-token.onelake.dfs.
+      # fabric.microsoft.com, since duckdb/duckdb-iceberg#1331), and .github/scripts/
+      # compact_iceberg.py deliberately does exactly that -- do not "align" the two. Vending
+      # was tried HERE, in run 35344582441: it did write (fct_price_today and fct_scada_today
+      # landed and their tests passed), but the run also changed the duckdb resolution and the
+      # thread count at the same time and failed, so the leg is back on the configuration that
+      # is known to work. Any return to vending is its own change, on its own run.
+      secrets:
+        - type: azure
+          name: onelake_storage
+          provider: access_token
+          access_token: "{{ env_var('ONELAKE_TOKEN') }}"
       attach:
         - path: "{{ env_var('WAREHOUSE_PATH') }}"
           alias: onelake
@@ -63,20 +78,23 @@ aemo_electricity:
           options:
             endpoint: "{{ env_var('ONELAKE_ENDPOINT') }}"
             token: "{{ env_var('ONELAKE_TOKEN') }}"
+            # 'none' = the client brings its own storage credential (the secret above) rather
+            # than waiting for a vend. Anything else makes DuckDB wait for one.
+            access_delegation_mode: 'none'
             # int 0/1, NOT false/true: dbt-duckdb silently DROPS boolean-false attach options,
-            # so `stage_create_tables: false` would vanish. Both are still required under
-            # vending, because both are about what OneLake does rather than about credentials:
-            # it vends nothing on createTable, so a STAGED create-table-as cannot write its
-            # data files (0 splits CTAS into create-then-insert), and it rejects the follow-up
-            # metadata update — "Only one instance of each update type is allowed per request".
+            # so `stage_create_tables: false` would vanish. OneLake vends nothing on
+            # createTable, so a STAGED create-table-as cannot write its data files (0 splits
+            # CTAS into create-then-insert), and it rejects the follow-up metadata update --
+            # "Only one instance of each update type is allowed per request".
             stage_create_tables: 0
             skip_create_table_metadata_updates: 1
             # Must name a namespace that EXISTS: OneLake refuses namespace creation (422 on
             # POST .../namespaces), and `dbo` always exists in a Fabric lakehouse.
             default_schema: dbo
-      # No `extensions:` list: azure / iceberg / avro auto-install and auto-load from the
-      # core repo. The extension binary is keyed to the duckdb build, so whatever `--pre`
-      # resolves to brings its own matching iceberg extension.
+      # No `extensions:` list: azure / iceberg / avro auto-install and auto-load from the core
+      # repo on duckdb >= 1.5.4 (the secret and the ATTACH are what trigger it). The extension
+      # binary is keyed to the duckdb build, so the pin in requirements/iceberg.txt pins the
+      # iceberg extension with it.
 
     # ---------------------------------------------------------------- ducklake -----------
     # DuckDB compute over a DuckLake catalog whose metadata lives in a Fabric SQL DB, with

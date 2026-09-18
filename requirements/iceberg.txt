@@ -6,23 +6,28 @@
 # twin any more: dbt-duckdb and duckrun share an environment happily, it was dbt-oss that
 # could not (duckrun pins dbt-core<2 and lays a 1.x `dbt` script over v2's).
 #
-# LATEST PRE-RELEASE duckdb, UNPINNED, and `--pre` IS LOAD-BEARING TWICE OVER:
-#   * the profile attaches the catalog with VENDED CREDENTIALS and no azure secret. The
-#     vended adls.sas-token.onelake.dfs.fabric.microsoft.com is only usable since
-#     duckdb/duckdb-iceberg#1331 (merged 2026-08-19), which is not in a stable duckdb yet.
-#     dbt OSS 2 bundling duckdb 1.5.3 is exactly why IT had to bring its own secret.
-#   * .github/scripts/compact_iceberg.py needs iceberg_rewrite_data_files(), same line.
-# Without `--pre` pip resolves the newest STABLE duckdb and the vend fails at the first write.
-# dbt-duckdb declares `duckdb>=1.0.0` with no upper cap and duckrun `duckdb>=1.5.4`, so
-# nothing here holds the resolution back to the stable line.
+# duckdb IS HAND-PINNED TO ONE DEV BUILD, the way the source repo hand-pins (it sits on
+# 1.6.0.dev365). The dev line is required, not preferred: iceberg_rewrite_data_files(), which
+# .github/scripts/compact_iceberg.py calls, exists nowhere else. This particular build is the
+# one this repo has actually run -- it is what the floating spelling resolved in ci.yml's
+# gating job AND what the compact job reports installing -- so the dbt leg and compaction land
+# on ONE engine build instead of two. Bump it by hand; nothing floats it for you.
 #
-# The DuckDB extension binaries (azure/iceberg/avro) are keyed to the duckdb build, so
-# whatever this resolves to pins the iceberg extension with it.
+# NOT `--pre duckdb`. An exact `==` pin to a pre-release needs no `--pre`, and `--pre` is a
+# GLOBAL flag in a requirements file, not a per-package one. The floating spelling was tried on
+# 2026-09-18 and the Fabric notebook's install log shows what it costs:
+#   WARNING: Requested dbt-core>=1.8.0 from .../dbt_core-2.0.0rc7.tar.gz (from dbt-duckdb),
+#            but installing version 2.0.0rc7
+# -- pip considering a dbt-core 2 sdist for a dbt 1.x leg, because nothing in the file capped
+# it. dbt-duckdb declares `duckdb>=1.0.0` with no upper cap and duckrun `duckdb>=1.5.4`, so
+# there is no constraint here to lean on either.
+#
+# The DuckDB extension binaries (azure/iceberg/avro) are keyed to the duckdb build, so this pin
+# pins the iceberg extension with it.
 #
 # WHO INSTALLS THIS: the runner (pipeline.yml), the Fabric notebook (remote_dbt.py reads this
 # file and pip-installs it there) and the free gating job in ci.yml -- one list for all three.
 # duckrun is in it for provisioning and for launching the notebook, not for dbt.
---pre
-duckdb
+duckdb==2.0.0.dev2609121639
 dbt-duckdb
 duckrun

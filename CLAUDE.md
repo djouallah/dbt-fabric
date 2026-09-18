@@ -100,23 +100,27 @@ cd dbt1 && dbt build --target duckrun --profiles-dir .
   job in `pipeline.yml` is duckrun end to end (storage, Fabric and Power BI tokens all from
   the assertion), so it has no login step either.
 
-- **The iceberg leg attaches with VENDED CREDENTIALS and carries NO storage secret.** The
-  `token:` on its ATTACH authorises the REST CATALOG only; every data-file read and write runs
-  on the credential the catalog hands back per table (OneLake IRC vends
-  `adls.sas-token.onelake.dfs.fabric.microsoft.com`, usable since duckdb/duckdb-iceberg#1331,
-  merged 2026-08-19). `compact_iceberg.py` has done this since 2026-09-17 and the dbt leg does
-  it too now. **`--pre duckdb` in `requirements/iceberg.txt` is therefore load-bearing**: on a
-  stable duckdb the vend fails at the first write. The fallback, if it ever does, is
-  `access_delegation_mode: 'none'` plus an `azure` secret with `ONELAKE_TOKEN` — that is what
-  the leg used to carry, and what dbt OSS 2 was stuck with because it bundles duckdb 1.5.3.
-  Do not put it back without a failing run to point at. `ducklake` still needs its own
-  `azure` secret: DuckLake has no catalog to vend one.
-- **`stage_create_tables: 0` and `skip_create_table_metadata_updates: 1` survive the move to
-  vending.** Neither is about credentials: OneLake vends nothing on `createTable`, so a STAGED
-  create-table-as cannot write its data files (`0` splits CTAS into create-then-insert), and it
-  rejects the follow-up metadata update — "Only one instance of each update type is allowed per
-  request". `default_schema: dbo` must name a namespace that EXISTS; OneLake 422s on namespace
-  creation and `dbo` always exists in a lakehouse.
+- **THE ICEBERG LEG IS `djouallah/dbt_fabric_python_iceberg`'S PROFILE, VERBATIM.** Two
+  credentials, both brought by the client: the `token:` on the ATTACH authorises the REST
+  CATALOG, an `azure` secret with the same `ONELAKE_TOKEN` authorises the DATA FILES, and
+  `access_delegation_mode: 'none'` is what says "do not wait for a vend". `threads: 2`, and
+  duckdb hand-pinned in `requirements/iceberg.txt`. **Port from that repo rather than deriving
+  the leg from ducklake plus an idea.** Three deviations shipped together on 2026-09-18
+  (vending, a floating `--pre duckdb`, `threads: 4`) and the run failed; the leg is back on the
+  configuration that works.
+- **OneLake CAN vend a per-table storage credential, and `compact_iceberg.py` uses it — the dbt
+  leg deliberately does not.** `adls.sas-token.onelake.dfs.fabric.microsoft.com`, usable since
+  duckdb/duckdb-iceberg#1331 (merged 2026-08-19). It is not a latent bug that the two differ:
+  the compact job is a metadata rewrite with its own duckdb install and it works, so leave it.
+  Vending in the dbt leg did write (run 35344582441 landed `fct_price_today` and
+  `fct_scada_today` with tests passing), so it is a live option — but it is its own change, on
+  its own run, and not something to fold into an unrelated one.
+- **`stage_create_tables: 0` and `skip_create_table_metadata_updates: 1` are about what OneLake
+  DOES, not about credentials.** It vends nothing on `createTable`, so a STAGED create-table-as
+  cannot write its data files (`0` splits CTAS into create-then-insert), and it rejects the
+  follow-up metadata update — "Only one instance of each update type is allowed per request".
+  `default_schema: dbo` must name a namespace that EXISTS; OneLake 422s on namespace creation
+  and `dbo` always exists in a lakehouse.
 - **dbt-duckdb silently drops boolean-false attach options.** Use int `0`/`1`, or
   `stage_create_tables: false` vanishes and the catalog gets the staged path it rejects.
 - **`iceberg` and `ducklake` are both `type: duckdb`, so a `duckdb__` macro override reaches
@@ -145,12 +149,16 @@ cd dbt1 && dbt build --target duckrun --profiles-dir .
   `iceberg`'s `dim_duid` uses `append_new_columns`; a type change there means dropping the
   table by hand. Do not "align" it with ducklake's `sync_all_columns`.
 - **duckdb versions per leg (2026-09-18):** ducklake is PINNED to 1.5.5 (its community
-  extensions, `mssql_ducklake` and `delta_export`, publish for that line); duckrun AND iceberg
-  track the latest PRE-RELEASE (`--pre duckdb`). Never pin `deltalake` for duckrun: the adapter
-  pins it itself. For iceberg the pre-release is not a preference — see the credential-vending
-  bullet above. The compact job installs `--pre duckdb` by itself and nothing else, since
-  `iceberg_rewrite_data_files()` exists only on that line, and takes the catalog location from
-  the `land` job's output instead of re-running `provision.py`.
+  extensions, `mssql_ducklake` and `delta_export`, publish for that line); iceberg is PINNED by
+  hand to one dev build, `2.0.0.dev2609121639`, the way the source repo pins; duckrun alone
+  tracks the latest PRE-RELEASE (`--pre duckdb`). Never pin `deltalake` for duckrun: the adapter
+  pins it itself. The dev line is required for iceberg, not preferred —
+  `iceberg_rewrite_data_files()` exists nowhere else — but **`--pre` is a GLOBAL flag in a
+  requirements file**, and floating it there had pip considering a `dbt-core 2.0.0rc7` sdist for
+  a dbt 1.x leg (seen in the notebook's install log, 2026-09-18). An exact `==` pin to a
+  pre-release needs no `--pre`. The compact job installs `--pre duckdb` by itself and nothing
+  else, and resolves that same build; it takes the catalog location from the `land` job's output
+  instead of re-running `provision.py`.
 - **There is ONE requirements file per engine.** `requirements/iceberg_runner.txt` existed only
   while that leg was `dbt-oss`, which cannot share an environment with `duckrun` (duckrun pins
   `dbt-core<2` and lays a 1.x `dbt` console script over v2's). `dbt-duckdb` and `duckrun` share

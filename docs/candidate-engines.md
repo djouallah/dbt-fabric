@@ -72,7 +72,7 @@ found by a failed run and each a cost a real leg would carry:
 | what | why |
 |---|---|
 | the catalog url as `<workspace-id>/<lakehouse-id>` | a name comes back `Failed to load config: 400 Bad Request` |
-| `AZURE_STORAGE_TOKEN` as well as the catalog's `bearer_token` | the catalog token authorises the CATALOG; the data files are a separate credential. Sail has no credential vending, so the client brings both — where the `iceberg` leg's storage credential is vended by the catalog per table. Without it Sail falls through to the instance metadata endpoint |
+| `AZURE_STORAGE_TOKEN` as well as the catalog's `bearer_token` | the catalog token authorises the CATALOG; the data files are a separate credential. The same split `dbt1/profiles.yml` spells out for the `iceberg` leg, which brings both too. Without it Sail falls through to the instance metadata endpoint |
 | `USING iceberg` + `tblproperties('write.merge.mode'='merge-on-read')` | Sail's `CREATE TABLE` defaults to parquet, which the REST catalog refuses; and it will not merge a copy-on-write table. dbt-spark spells both in config, on every merged model |
 
 ---
