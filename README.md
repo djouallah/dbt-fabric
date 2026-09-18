@@ -9,77 +9,19 @@ One dbt project that builds the **same AEMO gold layer** on five adapters:
 | `duckrun` | `duckrun` | DuckDB | single node | Delta Lake on OneLake, via delta-rs |
 | `iceberg` | `dbt-oss` 2 | DuckDB | single node | Iceberg, through the OneLake Iceberg REST catalog |
 | `ducklake` | `dbt-duckdb` | DuckDB | single node | DuckLake parquet + a Delta export, catalog in a Fabric SQL DB |
-| `dwh` | `dbt-fabric` | Fabric Warehouse | distributed | Delta tables in the Warehouse, written with T-SQL |
+| `dwh` | `dbt-fabric` | Fabric Warehouse | distributed | Delta tables in the Warehouse |
 | `spark` | `dbt-fabricspark` | Fabric Spark | distributed | Delta in a Fabric Lakehouse |
 
 ### Candidate engines
 
-**Sail** ([LakeSail](https://github.com/lakehq/sail)) was evaluated as a sixth and **is not
-being built**, for a reason that has nothing to do with the engine: `dbt-sail`'s declared
-dependency is `dbt-spark[session]`, which pulls **full PySpark with its jars** (and conflicts
-with `pyspark-client`). Shipping the entire Spark distribution in order to avoid Spark is the
-opposite of the point — a JVM need never run, but it is in the image. That is a packaging
-choice, fixable upstream, so the evaluation below stands for whenever it is.
+Two have been looked at as a sixth leg and neither is being built. **Sail** passes on the
+engine and fails on the packaging — `dbt-sail` declares `dbt-spark[session]`, so avoiding
+Spark ships all of Spark. **Polars** has no dbt adapter to point a `--target` at yet, and its
+SQL runs through `pl.SQLContext` rather than a database, so the gold layer would have to
+become Python models either way.
 
-The engine itself is a Rust Spark replacement with no JVM, and its native OneLake catalog
-takes the same bearer token the `iceberg` leg mints, so a sail leg would be a second Iceberg
-writer against the same gold layer.
-`.github/workflows/sail_smoke.yml` probes it — `workflow_dispatch` only, gates nothing — in
-two phases, because "the catalog accepts SQL" and "this repo's models could run on it" are
-different claims.
-
-**Phase A, the adapter contract: all green** on Sail 0.7.1. Schema and table creation, insert,
-both `MERGE INTO` shapes dbt-spark emits, `show table extended` (how dbt-spark decides an
-incremental model exists), and a read-back proving the merges applied rather than merely
-returning.
-
-**Phase B, what the models actually do: everything, bar one design decision.** Sail reads the real
-ragged AEMO CSVs off OneLake — 666k rows across two `PUBLIC_DAILY` files — keeps one record
-type, parses the slash date, counts DUIDs, and does `sequence()`/`explode()`, window
-functions, a 130-column record, a multi-column merge key and a genuinely temporary view.
-
-Reading a ragged file takes two things **together**, and either alone fails:
-
-| | |
-|---|---|
-| a schema **padded to at least the widest record** in the file | a `PUBLIC_DAILY` holds many record types — DUNIT is 53 columns, DREGION 130 — so a narrower schema is `expected 4, got 10` |
-| **`allowTruncatedRows`** for every row narrower than that | without it the padded schema fails the other way: `expected 131, got 14` |
-
-`mode 'PERMISSIVE'`, which is how the spark leg says this, does **not** do it on Sail. The
-probe keeps a control (probe 24) that is identical but for the option, so the read's success
-is attributable to it rather than to the padding.
-
-**The one Sail limitation: it cannot name the source file.** `input_file_name()` is
-`UnsupportedOperationException` and `_metadata.file_name` is `cannot resolve attribute`
-([lakehq/sail#1210](https://github.com/lakehq/sail/issues/1210), open). Every other engine
-here has one — DuckDB's `filename`, Fabric's `src.filepath()`, Spark's `input_file_name()`,
-which is why `macros/parse_filename.sql` has a dialect branch at all.
-
-Not a blocker: `file` is a *choice* of `unique_key`, and within a `source_type`
-`(DUID|REGIONID, SETTLEMENTDATE, INTERVENTION)` is already the natural grain, so a sail leg
-keys its facts on those instead. That is the sail leg's own workaround for a Sail gap —
-the same kind of per-engine operational difference this repo already carries five of.
-
-A direct ``csv.`path`` read also fails, since that form carries no options and so cannot pass
-`allowTruncatedRows` — but the view form is what `spark_read_csv.sql` emits anyway.
-
-Two dialect facts fell out as well: Sail rounds `DOUBLE` → `DECIMAL` **HALF_UP** (like Spark,
-unlike DuckDB), and a bare `CAST` of AEMO's `yyyy/MM/dd` is a hard parse error rather than
-Spark's silent `NULL` — strictly better, since it cannot reach the gold layer unnoticed.
-
-Three things the probe had to get right before any of the above was measurable, each
-found by a failed run and each a cost a real leg would carry:
-
-| what | why |
-|---|---|
-| the catalog url as `<workspace-id>/<lakehouse-id>` | a name comes back `Failed to load config: 400 Bad Request` |
-| `AZURE_STORAGE_TOKEN` as well as the catalog's `bearer_token` | the catalog token authorises the CATALOG; the data files are a separate credential, the same split `dbt2/profiles.yml` documents. Without it Sail falls through to the instance metadata endpoint |
-| `USING iceberg` + `tblproperties('write.merge.mode'='merge-on-read')` | Sail's `CREATE TABLE` defaults to parquet, which the REST catalog refuses; and it will not merge a copy-on-write table. dbt-spark spells both in config, on every merged model |
-
-**dbt-polars** is not a candidate. Its SQL runs through `pl.SQLContext` rather than a
-database — no `dateadd`/`datediff`/`current_timestamp`/`hash`, `date_trunc` limited to
-day/hour/minute/month/year — so the gold layer would have to become Python models. That is
-the one-gold-layer rule breaking, which is the thing this repo exists to prevent.
+What `sail_smoke.yml` actually proved, and what each would cost a leg:
+**[docs/candidate-engines.md](docs/candidate-engines.md)**.
 
 ## The thesis, and what the repo actually found
 
@@ -161,6 +103,7 @@ download_aemo.py                           one downloader, one landing zone, pla
 .github/scripts/layout.py                  what each engine wrote: files, row groups, encodings, order
 .github/scripts/measure_cu.py              what each engine cost: capacity units per run and engine
 history/                                   parity/ fingerprints, runs/ records, cu.json ledger
+docs/candidate-engines.md                  Sail and Polars: what stopped a sixth leg
 deploy.py                                  the in-Fabric demo: repo copy, notebook + pipeline, semantic model
 fabric_items/                              the scheduled notebook, its variable library, the pipeline
 semantic_model/                            one Direct Lake model, deployed once per engine
