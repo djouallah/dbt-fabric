@@ -151,6 +151,14 @@
    "runs": 14,
    "since": "2026-09-17T16:00:00",
    "timed": 50
+  },
+  {
+   "at": "2026-09-18T10:09:13Z",
+   "changed": 8,
+   "pending": 0,
+   "runs": 15,
+   "since": "2026-09-17T16:00:00",
+   "timed": 55
   }
  ],
  "runs": {
@@ -786,11 +794,11 @@
     "ducklake": {
      "cu": {
       "Jupyter Notebook Scheduled Run": 1338.774,
-      "Sql Usage": 1299.996
+      "Sql Usage": 2515.669
      },
      "seconds": {
       "Jupyter Notebook Scheduled Run": 334.691,
-      "Sql Usage": 660.0
+      "Sql Usage": 1320.0
      },
      "window": [
       "2026-09-18T08:09:00Z",
@@ -811,10 +819,10 @@
     },
     "dwh": {
      "cu": {
-      "Warehouse Query": 5704.673
+      "Warehouse Query": 5967.877
      },
      "seconds": {
-      "Warehouse Query": 782.069
+      "Warehouse Query": 872.233
      },
      "window": [
       "2026-09-18T08:09:01Z",
@@ -847,8 +855,75 @@
     }
    },
    "started": "2026-09-18T08:06:14Z"
+  },
+  "35330930133": {
+   "engines": {
+    "ducklake": {
+     "cu": {
+      "Jupyter Notebook Scheduled Run": 1135.149,
+      "Sql Usage": 1114.104
+     },
+     "seconds": {
+      "Jupyter Notebook Scheduled Run": 283.785,
+      "Sql Usage": 600.0
+     },
+     "window": [
+      "2026-09-18T09:46:32Z",
+      "2026-09-18T09:53:24Z"
+     ]
+    },
+    "duckrun": {
+     "cu": {
+      "Jupyter Notebook Scheduled Run": 1374.483
+     },
+     "seconds": {
+      "Jupyter Notebook Scheduled Run": 343.618
+     },
+     "window": [
+      "2026-09-18T09:46:28Z",
+      "2026-09-18T09:54:19Z"
+     ]
+    },
+    "dwh": {
+     "cu": {
+      "Warehouse Query": 6562.574
+     },
+     "seconds": {
+      "Warehouse Query": 631.536
+     },
+     "window": [
+      "2026-09-18T09:46:28Z",
+      "2026-09-18T09:52:47Z"
+     ]
+    },
+    "iceberg": {
+     "cu": {
+      "Jupyter Notebook Scheduled Run": 1092.953
+     },
+     "seconds": {
+      "Jupyter Notebook Scheduled Run": 273.236
+     },
+     "window": [
+      "2026-09-18T09:46:24Z",
+      "2026-09-18T09:53:06Z"
+     ]
+    },
+    "spark": {
+     "cu": {
+      "High Concurrency Session Livy Run": 7805.434
+     },
+     "seconds": {
+      "High Concurrency Session Livy Run": 748.725
+     },
+     "window": [
+      "2026-09-18T09:46:24Z",
+      "2026-09-18T09:59:22Z"
+     ]
+    }
+   },
+   "started": "2026-09-18T09:43:43Z"
   }
  },
  "schema": 1,
- "updated": "2026-09-18T08:31:01Z"
+ "updated": "2026-09-18T10:09:13Z"
 }
