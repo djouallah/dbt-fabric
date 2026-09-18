@@ -135,6 +135,14 @@
    "runs": 12,
    "since": "2026-09-17T16:00:00",
    "timed": 44
+  },
+  {
+   "at": "2026-09-18T08:00:42Z",
+   "changed": 3,
+   "pending": 0,
+   "runs": 13,
+   "since": "2026-09-17T16:00:00",
+   "timed": 45
   }
  ],
  "runs": {
@@ -684,11 +692,11 @@
     "ducklake": {
      "cu": {
       "Jupyter Notebook Scheduled Run": 1540.954,
-      "Sql Usage": 9752.35
+      "Sql Usage": 10763.629
      },
      "seconds": {
       "Jupyter Notebook Scheduled Run": 192.618,
-      "Sql Usage": 5040.0
+      "Sql Usage": 5580.0
      },
      "window": [
       "2026-09-18T06:56:18Z",
@@ -709,10 +717,10 @@
     },
     "dwh": {
      "cu": {
-      "Warehouse Query": 24281.18
+      "Warehouse Query": 24283.082
      },
      "seconds": {
-      "Warehouse Query": 3167.875
+      "Warehouse Query": 3197.976
      },
      "window": [
       "2026-09-18T06:56:17Z",
@@ -747,8 +755,25 @@
     }
    },
    "started": "2026-09-18T06:53:18Z"
+  },
+  "35320739440": {
+   "engines": {
+    "duckrun": {
+     "cu": {
+      "Jupyter Notebook Scheduled Run": 6318.811
+     },
+     "seconds": {
+      "Jupyter Notebook Scheduled Run": 394.923
+     },
+     "window": [
+      "2026-09-18T07:46:59Z",
+      "2026-09-18T07:57:55Z"
+     ]
+    }
+   },
+   "started": "2026-09-18T07:43:51Z"
   }
  },
  "schema": 1,
- "updated": "2026-09-18T07:42:59Z"
+ "updated": "2026-09-18T08:00:42Z"
 }
