@@ -175,6 +175,14 @@
    "runs": 17,
    "since": "2026-09-17T16:00:00",
    "timed": 61
+  },
+  {
+   "at": "2026-09-18T13:24:37Z",
+   "changed": 2,
+   "pending": 0,
+   "runs": 18,
+   "since": "2026-09-17T16:00:00",
+   "timed": 62
   }
  ],
  "runs": {
@@ -1010,10 +1018,10 @@
    "engines": {
     "iceberg": {
      "cu": {
-      "Jupyter Notebook Scheduled Run": 2573.686
+      "Jupyter Notebook Scheduled Run": 2941.097
      },
      "seconds": {
-      "Jupyter Notebook Scheduled Run": 643.417
+      "Jupyter Notebook Scheduled Run": 735.269
      },
      "window": [
       "2026-09-18T12:30:12Z",
@@ -1022,8 +1030,25 @@
     }
    },
    "started": "2026-09-18T12:26:40Z"
+  },
+  "35348481644": {
+   "engines": {
+    "iceberg": {
+     "cu": {
+      "Jupyter Notebook Scheduled Run": 2195.114
+     },
+     "seconds": {
+      "Jupyter Notebook Scheduled Run": 274.387
+     },
+     "window": [
+      "2026-09-18T13:13:06Z",
+      "2026-09-18T13:20:43Z"
+     ]
+    }
+   },
+   "started": "2026-09-18T13:10:18Z"
   }
  },
  "schema": 1,
- "updated": "2026-09-18T12:48:08Z"
+ "updated": "2026-09-18T13:24:37Z"
 }
