@@ -13,7 +13,17 @@
      keeps rows the parquet no longer has (download_aemo.py rewrites it delete-then-copy, and
      starts an EMPTY log if it cannot read the old one) -- and iceberg would then fold a CSV
      no other engine can see. --#}
-{{ config(materialized='table', schema='landing') }}
+{#-- The pre_hook is what makes it DROP then CREATE rather than create-and-rename. dbt has no
+     materialization for that: `table` builds <model>__dbt_tmp and RENAMES it over the target,
+     and the rename is the one step this catalog cannot do. With the target already gone the
+     create has nothing to swap over, whichever path v2's macros take. Safe to drop first
+     because this model is a pure read of csv_raw_archive_log.parquet -- a failed run leaves
+     no table, and the next run rebuilds it whole. --#}
+{{ config(
+    materialized='table',
+    schema='landing',
+    pre_hook="DROP TABLE IF EXISTS {{ this }}"
+) }}
 
 SELECT
   source_type,
