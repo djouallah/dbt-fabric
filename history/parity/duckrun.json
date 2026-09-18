@@ -1,0 +1,12 @@
+{
+  "engine": "duckrun",
+  "adapter": "duckrun",
+  "model": "fct_summary",
+  "rows_total": 74428598,
+  "duids": 397,
+  "days": 1567,
+  "date_min": "2018-04-01",
+  "date_max": "2026-09-18",
+  "mw_sum": 9450652296.175531,
+  "price_sum": 6871886178.642336
+}
