@@ -12,17 +12,6 @@ One dbt project that builds the **same AEMO gold layer** on five adapters:
 | `dwh` | `dbt-fabric` | Fabric Warehouse | distributed | Delta tables in the Warehouse |
 | `spark` | `dbt-fabricspark` | Fabric Spark | distributed | Delta in a Fabric Lakehouse |
 
-### Candidate engines
-
-Two have been looked at as a sixth leg and neither is being built. **Sail** passes on the
-engine and fails on the packaging — `dbt-sail` declares `dbt-spark[session]`, so avoiding
-Spark ships all of Spark. **Polars** has no dbt adapter to point a `--target` at yet, and its
-SQL runs through `pl.SQLContext` rather than a database, so the gold layer would have to
-become Python models either way.
-
-What `sail_smoke.yml` actually proved, and what each would cost a leg:
-**[docs/candidate-engines.md](docs/candidate-engines.md)**.
-
 ## The thesis, and what the repo actually found
 
 **In theory the engine is abstract.** dbt's promise is that a model is a `SELECT` and the
