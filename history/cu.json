@@ -191,6 +191,14 @@
    "runs": 18,
    "since": "2026-09-17T16:00:00",
    "timed": 62
+  },
+  {
+   "at": "2026-09-18T13:50:31Z",
+   "changed": 1,
+   "pending": 0,
+   "runs": 19,
+   "since": "2026-09-17T16:00:00",
+   "timed": 63
   }
  ],
  "runs": {
@@ -1055,8 +1063,25 @@
     }
    },
    "started": "2026-09-18T13:10:18Z"
+  },
+  "35350150404": {
+   "engines": {
+    "iceberg": {
+     "cu": {
+      "Jupyter Notebook Scheduled Run": 5499.846
+     },
+     "seconds": {
+      "Jupyter Notebook Scheduled Run": 687.476
+     },
+     "window": [
+      "2026-09-18T13:30:05Z",
+      "2026-09-18T13:43:44Z"
+     ]
+    }
+   },
+   "started": "2026-09-18T13:26:57Z"
   }
  },
  "schema": 1,
- "updated": "2026-09-18T13:26:38Z"
+ "updated": "2026-09-18T13:50:31Z"
 }
