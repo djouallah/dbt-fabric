@@ -6,11 +6,11 @@ One dbt project that builds the **same AEMO gold layer** on five adapters:
 
 | target | adapter | engine | shape | writes |
 |---|---|---|---|---|
+| `dwh` | `dbt-fabric` | Fabric Warehouse | distributed | Delta tables in the Warehouse |
+| `spark` | `dbt-fabricspark` | Fabric Spark | distributed | Delta in a Fabric Lakehouse |
 | `duckrun` | `duckrun` | DuckDB | single node | Delta Lake on OneLake, via delta-rs |
 | `iceberg` | `dbt-oss` 2 | DuckDB | single node | Iceberg, through the OneLake Iceberg REST catalog |
 | `ducklake` | `dbt-duckdb` | DuckDB | single node | DuckLake parquet + a Delta export, catalog in a Fabric SQL DB |
-| `dwh` | `dbt-fabric` | Fabric Warehouse | distributed | Delta tables in the Warehouse |
-| `spark` | `dbt-fabricspark` | Fabric Spark | distributed | Delta in a Fabric Lakehouse |
 
 ## The thesis, and what the repo actually found
 
