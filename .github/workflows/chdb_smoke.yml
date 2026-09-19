@@ -1,0 +1,151 @@
+name: chdb smoke (candidate engine)
+
+# A FEASIBILITY PROBE, NOT A LEG. It builds nothing this repo depends on, it is not in
+# pipeline.yml, and it never gates anything — `continue-on-error: true` and the script exits 0
+# whatever it finds, because a red result is the point: it becomes the upstream bug report.
+#
+# THE QUESTION. chDB is ClickHouse in-process — the same embedded shape as the duckrun,
+# iceberg and ducklake legs, on a different core. What has blocked every candidate here is
+# OneLake auth, and chDB has exactly one route that takes an Entra bearer token: a
+# `DataLakeCatalog` database with `catalog_type='onelake'` and `onelake_bearer_token`, pointed
+# at the same Fabric Iceberg REST endpoint and the same `<workspace>/<lakehouse>` warehouse
+# the iceberg leg already uses. Its table functions — azureBlobStorage, icebergAzure,
+# deltaLakeAzure — have no bearer-token argument at all, which puts `Files/` (the landing zone
+# every model reads) out of reach. And `DatabaseDataLake::createTable` has an EMPTY BODY
+# upstream, so a CREATE TABLE through the catalog succeeds and registers nothing.
+#
+# All three are readings of chdb-core's source. This job measures them against the real
+# lakehouse, so what lands in docs/candidate-engines.md is a result.
+#
+# workflow_dispatch ONLY. No push trigger, no call from pipeline.yml: it touches Fabric, so it
+# costs capacity, and it should cost it only when somebody asks.
+#
+# NOTHING IN THE FIVE-ENGINE LAYOUT IS TOUCHED by this job, and it PROVISIONS NOTHING. The
+# shared `dbt` lakehouse is assumed to be there already — every real leg creates it, and a
+# probe has no business creating Fabric items to answer a question about engine support. So
+# the warehouse path is composed from the workspace secret and the lakehouse's known name
+# rather than resolved through provision.py: one `az` token, one read-only Fabric GET, and
+# nothing else.
+#
+# That also keeps a `chdb` key out of provision.py's ENGINES, which is the five-engine
+# contract check_gating.py and deploy.py key off.
+#
+# AND IT NEVER WRITES. DatabaseDataLake::dropTable calls table->drop() on the real Iceberg
+# table, so the script issues no DROP, INSERT, ALTER or OPTIMIZE against the catalog — the
+# one CREATE it does attempt is the no-op probe, and a table that somehow appears is left in
+# place and flagged rather than dropped. tests_py/test_chdb_smoke.py pins that.
+
+on:
+  workflow_dispatch:
+    inputs:
+      schema:
+        description: Namespace for the CREATE TABLE probe. Deliberately outside the <engine>_landing / <engine>_mart namespace the five engines share.
+        required: false
+        default: chdb_smoke
+        type: string
+      table:
+        description: Pin the read probes to one catalog table (e.g. iceberg_mart.fct_price). Leave empty to let the probe pick from the catalog listing.
+        required: false
+        default: ""
+        type: string
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    # The whole job is best-effort. A failure here is a finding about chDB, not a broken repo.
+    continue-on-error: true
+    env:
+      CHDB_SMOKE_SCHEMA: ${{ inputs.schema }}
+      CHDB_SMOKE_TABLE: ${{ inputs.table }}
+      AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+      AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+      FABRIC_WORKSPACE_ID: ${{ secrets.FABRIC_WORKSPACE_ID }}
+      PYTHONUNBUFFERED: "1"
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v6
+        with:
+          # chdb publishes for 3.9-3.13; 3.12 keeps this on the same interpreter as every
+          # other job in the repo.
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements/chdb_smoke.txt
+
+      - run: pip install -r requirements/chdb_smoke.txt
+
+      # The ONLY thing this job asks Azure for. Not duckrun, so it cannot mint its own
+      # OneLake token off the OIDC assertion the way that leg does — it needs a real `az`
+      # session for the steps below, and for nothing else.
+      - uses: azure/login@v3
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          allow-no-subscriptions: true
+
+      - name: Mint OneLake token
+        # storage.azure.com, the same audience dbt1/profiles.yml hands the Iceberg REST
+        # catalog and the same one pipeline.yml's compact job mints. chDB's OneLake catalog
+        # takes a bearer token and explicitly will NOT take an account key or a SAS — and it
+        # uses this ONE token for both the catalog REST calls and the blob reads, which is
+        # what probe 4 exists to confirm.
+        run: |
+          TOKEN=$(az account get-access-token --resource https://storage.azure.com/ --query accessToken -o tsv)
+          echo "::add-mask::$TOKEN"
+          echo "ONELAKE_TOKEN=$TOKEN" >> "$GITHUB_ENV"
+
+      - name: Resolve the dbt lakehouse
+        # GUID/GUID. chDB's OneLake catalog calls this `warehouse`, and it is the same
+        # "{workspace_id}/{lakehouse_id}" the iceberg leg hands the REST endpoint. A name
+        # there does not resolve.
+        #
+        # ONE GET, AND IT CREATES NOTHING. `dbt` is the shared lakehouse every real leg makes;
+        # a probe about engine support has no business provisioning Fabric items, so if it is
+        # not there this fails loudly rather than conjuring one.
+        run: |
+          T=$(az account get-access-token --resource https://api.fabric.microsoft.com --query accessToken -o tsv)
+          ID=$(curl -sf -H "Authorization: Bearer $T" \
+                  "https://api.fabric.microsoft.com/v1/workspaces/$FABRIC_WORKSPACE_ID/lakehouses" \
+                | jq -r '.value[] | select(.displayName=="dbt") | .id')
+          if [ -z "$ID" ]; then
+            echo "::error::no lakehouse named 'dbt' in this workspace -- run a real leg first"
+            exit 1
+          fi
+          echo "resolved dbt lakehouse: $ID"
+          echo "WAREHOUSE_PATH=$FABRIC_WORKSPACE_ID/$ID" >> "$GITHUB_ENV"
+          # And the LANDING zone, for phase B. The AEMO CSVs the probe reads are the ones
+          # download_aemo.py actually landed -- ragged, quoted, many record types per file --
+          # because a CSV this script wrote itself would prove nothing about the real shape.
+          # A missing landing lakehouse is not fatal: the probe reports those four as SKIP.
+          LID=$(curl -sf -H "Authorization: Bearer $T" \
+                  "https://api.fabric.microsoft.com/v1/workspaces/$FABRIC_WORKSPACE_ID/lakehouses" \
+                | jq -r '.value[] | select(.displayName=="dbt_landing") | .id')
+          if [ -n "$LID" ]; then
+            echo "resolved dbt_landing lakehouse: $LID"
+            echo "LANDING_PATH=abfss://$FABRIC_WORKSPACE_ID@onelake.dfs.fabric.microsoft.com/$LID/Files" >> "$GITHUB_ENV"
+          else
+            echo "::warning::no lakehouse named 'dbt_landing' -- the CSV probes will SKIP"
+          fi
+
+      - name: Probe chdb
+        # A BACKSTOP. chDB is in-process and has no server threads to hang on, unlike the
+        # sail probe -- but the probes themselves take well under a minute, so anything
+        # approaching this is a hung network read against OneLake and is better killed than
+        # left to eat the job's 30.
+        timeout-minutes: 10
+        run: python .github/scripts/chdb_smoke.py 2>&1 | tee chdb_smoke.log
+
+      - uses: actions/upload-artifact@v6
+        if: always()
+        with:
+          # This log IS the deliverable — it is the body of the issue for chdb-io/chdb or
+          # ClickHouse/ClickHouse if something did not work, and the source for the
+          # docs/candidate-engines.md entry if it did.
+          name: chdb-smoke-log
+          path: chdb_smoke.log
+          if-no-files-found: warn

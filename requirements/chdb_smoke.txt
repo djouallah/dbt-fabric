@@ -1,0 +1,25 @@
+# The chDB SMOKE TEST, not an engine.
+#
+# DELIBERATELY NOT NAMED requirements/chdb.txt. That stem is how pipeline.yml resolves an
+# ENGINE's dependencies (`requirements/${ENGINE}.txt`), and how ci.yml's gating matrix names
+# its jobs. chDB is a candidate sixth engine, not a sixth engine — giving it an engine-shaped
+# requirements file is the first step toward something picking it up as one.
+#
+# Standalone environment: no duckrun, no dbt, no adapter. .github/scripts/chdb_smoke.py issues
+# raw SQL through the embedded engine, because the question it answers (does the OneLake
+# catalog take the Entra bearer token this repo already mints, and what can chDB do once it
+# has) is about the ENGINE. There is no dbt adapter pointing at chDB over a OneLake catalog to
+# exercise, which is itself part of the answer.
+#
+# A FLOOR, NOT A PIN — and a deliberate difference from requirements/sail_smoke.txt, which is
+# unpinned outright. `onelake_bearer_token` does not exist below chdb-core 26.7, which chdb
+# 4.4.0 is the first release to require. Resolve onto anything older and probe 1 comes back
+# "Unknown setting onelake_bearer_token", which reads like a finding about OneLake support
+# rather than about the wheel that got installed. Above the floor it stays unpinned for
+# sail_smoke's reason: the point of a probe is to measure whatever upstream shipped most
+# recently, and the log records what resolved.
+#
+# chdb pulls its own chdb-core (the ClickHouse fork); nothing else is needed. The script is
+# stdlib besides — the landing-zone listing goes through urllib against the OneLake DFS API,
+# the same shape sail_smoke.py uses, rather than adding `requests`.
+chdb>=4.4.0
