@@ -1,0 +1,299 @@
+{
+ "inputs": {
+  "daily_download_limit": "60",
+  "dbt_schema": "mart",
+  "download_limit": "6",
+  "engines": "ducklake",
+  "process_limit": "3000",
+  "spark_resource_profile": "readHeavyForPBI"
+ },
+ "items": {
+  "5650B720-B2B4-431F-B8BB-E3BBD5CFC871": {
+   "engine": "ducklake",
+   "kind": "Notebook",
+   "name": "dbt-ducklake-35426070763",
+   "role": "compute"
+  },
+  "6D98F882-D360-4636-8247-B03DA73A9013": {
+   "kind": "Lakehouse",
+   "name": "dbt",
+   "role": "data"
+  },
+  "935C5EB7-1965-4DAC-BF1A-1B6406945F9A": {
+   "kind": "Lakehouse",
+   "name": "dbt_landing",
+   "role": "landing"
+  },
+  "ECCEF667-B6FB-47FE-8E8F-CE8FDDE0D8D0": {
+   "kind": "Folder",
+   "name": "dbt",
+   "role": "folder"
+  },
+  "FE0F13F2-139C-45D6-A668-C5F05473E6A9": {
+   "engine": "ducklake",
+   "kind": "SQLDatabase",
+   "name": "dbt_ducklake_meta",
+   "role": "catalog"
+  }
+ },
+ "layout": {
+  "config": {
+   "vcores": "8"
+  },
+  "detail_keys": [
+   "schema",
+   "total_rows",
+   "num_files",
+   "num_row_groups",
+   "avg_row_group",
+   "size_mb",
+   "vorder",
+   "compression"
+  ],
+  "encodings": {
+   "ducklake": {
+    "DUID": {
+     "chunks": 765,
+     "dict_pages": 765,
+     "encodings": [
+      "PLAIN_DICTIONARY"
+     ],
+     "mb": 129.67,
+     "type": "BYTE_ARRAY"
+    },
+    "_ducklake_internal_snapshot_id": {
+     "chunks": 765,
+     "dict_pages": 765,
+     "encodings": [
+      "PLAIN_DICTIONARY"
+     ],
+     "mb": 0.04,
+     "type": "INT64"
+    },
+    "cutoff": {
+     "chunks": 765,
+     "dict_pages": 765,
+     "encodings": [
+      "PLAIN_DICTIONARY"
+     ],
+     "mb": 0.04,
+     "type": "INT64"
+    },
+    "date": {
+     "chunks": 765,
+     "dict_pages": 765,
+     "encodings": [
+      "PLAIN_DICTIONARY"
+     ],
+     "mb": 0.11,
+     "type": "INT32"
+    },
+    "mw": {
+     "chunks": 765,
+     "dict_pages": 0,
+     "encodings": [
+      "PLAIN"
+     ],
+     "mb": 516.88,
+     "type": "INT64"
+    },
+    "price": {
+     "chunks": 765,
+     "dict_pages": 764,
+     "encodings": [
+      "PLAIN",
+      "PLAIN_DICTIONARY"
+     ],
+     "mb": 192.45,
+     "type": "INT64"
+    },
+    "time": {
+     "chunks": 765,
+     "dict_pages": 765,
+     "encodings": [
+      "PLAIN_DICTIONARY"
+     ],
+     "mb": 12.24,
+     "type": "INT32"
+    }
+   }
+  },
+  "engines": {
+   "ducklake": {
+    "guid": "6d98f882-d360-4636-8247-b03da73a9013",
+    "item": "dbt",
+    "kind": "Lakehouse",
+    "schema_prefix": "ducklake",
+    "writer": "duckdb (ducklake)"
+   }
+  },
+  "ordering": {
+   "ducklake": {
+    "columns": {
+     "DUID": {
+      "rg_overlap_pct": 100.0,
+      "rgs": 765,
+      "runs": 3999594
+     },
+     "_ducklake_internal_snapshot_id": {
+      "rg_overlap_pct": 0.0,
+      "rgs": 765,
+      "runs": 1
+     },
+     "cutoff": {
+      "rg_overlap_pct": 0.0,
+      "rgs": 765,
+      "runs": 1
+     },
+     "date": {
+      "rg_overlap_pct": 2.6,
+      "rgs": 765,
+      "runs": 158
+     },
+     "mw": {
+      "rg_overlap_pct": 100.0,
+      "rgs": 765,
+      "runs": 3988910
+     },
+     "price": {
+      "rg_overlap_pct": 100.0,
+      "rgs": 765,
+      "runs": 3123784
+     },
+     "time": {
+      "rg_overlap_pct": 100.0,
+      "rgs": 765,
+      "runs": 36948
+     }
+    },
+    "sample": {
+     "file": "ducklake-01a0b336-a26c-77ba-9654-22f24f81a38f.parquet",
+     "rows": 4000000
+    },
+    "table": "ducklake_mart.fct_summary"
+   }
+  },
+  "run": {
+   "id": "35426070763",
+   "sha": "d4c341de375712337616f8b2af0b89f41c4af1d3",
+   "written": "2026-09-19T06:32:59Z"
+  },
+  "stats": {
+   "ducklake": {
+    "dim_calendar": {
+     "avg_row_group": 3197.0,
+     "compression": "SNAPPY",
+     "num_files": 1,
+     "num_row_groups": 1,
+     "schema": "ducklake_mart",
+     "size_mb": 0.01,
+     "total_rows": 3197,
+     "vorder": false
+    },
+    "dim_duid": {
+     "avg_row_group": 689.0,
+     "compression": "SNAPPY",
+     "num_files": 1,
+     "num_row_groups": 1,
+     "schema": "ducklake_mart",
+     "size_mb": 0.02,
+     "total_rows": 689,
+     "vorder": false
+    },
+    "fct_price": {
+     "avg_row_group": 142615.0,
+     "compression": "SNAPPY",
+     "num_files": 4,
+     "num_row_groups": 27,
+     "schema": "ducklake_landing",
+     "size_mb": 536.72,
+     "total_rows": 3850605,
+     "vorder": false
+    },
+    "fct_price_today": {
+     "avg_row_group": 1260.0,
+     "compression": "SNAPPY",
+     "num_files": 1,
+     "num_row_groups": 1,
+     "schema": "ducklake_landing",
+     "size_mb": 0.11,
+     "total_rows": 1260,
+     "vorder": false
+    },
+    "fct_scada": {
+     "avg_row_group": 147352.6,
+     "compression": "SNAPPY",
+     "num_files": 44,
+     "num_row_groups": 2178,
+     "schema": "ducklake_landing",
+     "size_mb": 6176.94,
+     "total_rows": 320933890,
+     "vorder": false
+    },
+    "fct_scada_today": {
+     "avg_row_group": 69687.0,
+     "compression": "SNAPPY",
+     "num_files": 1,
+     "num_row_groups": 1,
+     "schema": "ducklake_landing",
+     "size_mb": 0.45,
+     "total_rows": 69687,
+     "vorder": false
+    },
+    "fct_summary": {
+     "avg_row_group": 161680.0,
+     "compression": "SNAPPY",
+     "num_files": 5,
+     "num_row_groups": 765,
+     "schema": "ducklake_mart",
+     "size_mb": 860.08,
+     "total_rows": 123685209,
+     "vorder": false
+    }
+   }
+  },
+  "tables": [
+   "stg_csv_archive_log",
+   "dim_calendar",
+   "dim_duid",
+   "fct_price",
+   "fct_price_today",
+   "fct_scada",
+   "fct_scada_today",
+   "fct_summary"
+  ]
+ },
+ "legs": {
+  "ducklake": {
+   "compute": [
+    "FE0F13F2-139C-45D6-A668-C5F05473E6A9",
+    "5650B720-B2B4-431F-B8BB-E3BBD5CFC871"
+   ],
+   "finished": "2026-09-19T06:30:30Z",
+   "outcome": "success",
+   "started": "2026-09-19T06:18:47Z"
+  }
+ },
+ "parity": {
+  "ducklake": {
+   "adapter": "duckdb",
+   "date_max": "2026-09-19",
+   "date_min": "2018-04-01",
+   "days": 2525,
+   "duids": 397,
+   "engine": "ducklake",
+   "model": "fct_summary",
+   "mw_sum": 15058796522.208138,
+   "price_sum": 12082343630.977491,
+   "rows_total": 123685209
+  }
+ },
+ "run": {
+  "finished": "2026-09-19T06:33:11Z",
+  "id": "35426070763",
+  "sha": "d4c341de375712337616f8b2af0b89f41c4af1d3",
+  "started": "2026-09-19T06:16:02Z",
+  "url": "https://github.com/djouallah/dbt-fabric/actions/runs/35426070763"
+ },
+ "schema": 1
+}
