@@ -256,6 +256,12 @@ def test_the_only_write_attempt_is_the_no_op_probe(smoke):
     creates = [sql for _, _, sql, _ in smoke.phase_a_probes("some_mart.some_table", [])
                if isinstance(sql, str) and "CREATE TABLE" in sql]
     assert len(creates) == 1, f"the write attempts changed: {creates}"
+    # AND IT MUST NAME AN ENGINE. Without one chDB falls back to MergeTree and dies on
+    # "MergeTree storages require data path" before the statement reaches the database, so the
+    # no-op goes unmeasured and the probe reports a failure about storage engines instead
+    # (run 35433920589). Memory constructs without touching a disk or the lake, which leaves
+    # the DATABASE's handling of the create as the only thing under test.
+    assert "ENGINE = Memory" in creates[0], creates[0]
     assert smoke.PROBE_TABLE.startswith(smoke.SCHEMA + "."), (
         "probe 7 must create inside the probe's own namespace, not a leg's"
     )
@@ -434,9 +440,30 @@ def test_unreachable_files_is_reported_as_blocked_ingest(smoke):
     """Files/ is where every model starts. The catalog covers Tables/ and nothing else, so a
     reader verdict that stayed silent about the landing zone would be half an answer."""
     blocked = [(1, "x", "PASS"), (2, "x", "PASS (8 table(s))"), (4, "x", "PASS (1 row(s))"),
-               (7, "x", "SILENT NO-OP"), (10, "x", "FAIL - 400 Bad Request")]
+               (7, "x", "SILENT NO-OP"),
+               (10, "x", "FAIL - 400 Bad Request"), (11, "x", "FAIL - 400 Bad Request")]
     v = smoke.read_verdict(blocked)
     assert "INGEST: BLOCKED" in v
 
-    skipped = [x for x in blocked if x[0] != 10] + [(10, "x", "SKIP - no landing files")]
+    skipped = [x for x in blocked if x[0] not in (10, 11)] + [
+        (10, "x", "SKIP - no landing files"), (11, "x", "SKIP - no landing files")]
     assert "INGEST: UNPROVEN" in smoke.read_verdict(skipped)
+
+
+def test_a_read_that_worked_cannot_be_called_blocked(smoke):
+    """THE REGRESSION. Run 35433920589 announced "INGEST: BLOCKED -- Files/ is unreachable"
+    on a run where probes 11 and 12 had both read 334k rows off the very same url. Probe 10
+    had died inside the script's own JSON parsing, and the verdict keyed off 10 alone.
+
+    A headline that survives its own evidence is the bug -- the same one the sail probe was
+    hardened against -- so the ragged read decides and probe 10 only corroborates.
+    """
+    real = [(1, "x", "PASS"), (2, "x", "PASS (21 table(s))"), (4, "x", "PASS (1 row(s))"),
+            (7, "x", "SILENT NO-OP"),
+            (10, "x", "FAIL - JSONDecodeError: Extra data"),
+            (11, "x", "PASS (1 row(s))"), (12, "x", "PASS - _file resolves")]
+    v = smoke.read_verdict(real)
+    assert "BLOCKED" not in v, v
+    assert "one file at a time" in v
+    # ... and it must say that probe 10's failure is about probe 10, not about Files/.
+    assert "about probe 10" in v

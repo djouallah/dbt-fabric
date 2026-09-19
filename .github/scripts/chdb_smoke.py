@@ -79,8 +79,12 @@ LANDING_PATH = os.environ.get("LANDING_PATH", "")
 # attachment is the kind of thing that reads as shared state when it is not.
 DB = "onelake_probe"
 
-# Fabric's Iceberg table API. Delta tables show up here only when they carry Iceberg
-# metadata, which is why this probe can see the `iceberg` leg and none of the other four.
+# Fabric's Iceberg table API, and it covers MORE THAN THE ICEBERG LEG. The first run listed
+# 21 tables across BOTH `duckrun_*` and `iceberg_*` (run 35433920589): Fabric exposes the
+# Delta tables duckrun writes through this endpoint too, so the read probes below ran against
+# a Delta mart and counted 109M rows. Worth stating because the obvious assumption -- an
+# Iceberg endpoint shows Iceberg tables -- is wrong here and would have had this probe
+# reporting on one leg when it can see two.
 CATALOG_URL = "https://onelake.table.fabric.microsoft.com/iceberg"
 
 # THE GATE. The catalog database engine is BETA upstream and refuses to be created without
@@ -163,7 +167,7 @@ def phase_a_probes(table, cols):
 
     Probes 1 and 2 are run by main() before this: the table these read has to be DISCOVERED
     from the catalog listing, and a probe list that hardcoded one would report FAIL for a
-    workspace where the iceberg leg simply names its marts differently.
+    workspace whose marts are simply named differently.
 
     `cols` is DESCRIBE's answer as [(name, type), ...]. The aggregate probes pick a date-like
     and a string column out of it rather than assuming settlementdate/duid, so this measures
@@ -198,13 +202,19 @@ def phase_a_probes(table, cols):
         (5, "aggregate over real data", agg, why_agg),
         (6, "filtered read", pred, why_pred),
         (7, "CREATE TABLE through the catalog",
-         f"CREATE TABLE {DB}.{quoted(PROBE_TABLE)} (k Int64, v Int64)",
+         f"CREATE TABLE {DB}.{quoted(PROBE_TABLE)} (k Int64, v Int64) ENGINE = Memory",
          "EXPECTED TO BE A SILENT NO-OP. DatabaseDataLake::createTable has an empty body "
          "upstream, so this returns success and registers nothing -- main() re-lists the "
-         "catalog afterwards rather than believing the statement"),
+         "catalog afterwards rather than believing the statement. THE ENGINE MUST BE NAMED "
+         "and must be Memory: without one chDB falls back to MergeTree and dies on 'MergeTree "
+         "storages require data path' (run 35433920589) BEFORE the statement ever reaches the "
+         "database, so the no-op went unmeasured and the probe reported a failure about "
+         "storage engines instead. Memory is the one that constructs without touching a disk "
+         "or the lake, which leaves the DATABASE's handling of the create as the only thing "
+         "being tested"),
         (8, "INSERT INTO", "",
          "SKIPPED, and not for want of trying: probe 7 cannot leave a table to insert into, "
-         "and the only other tables here belong to the iceberg leg's gold layer"),
+         "and the only other tables here are the duckrun and iceberg legs' gold layers"),
     ]
 
 
@@ -260,11 +270,13 @@ def model_shape_probes(files):
              "measurement instead of a reading of Configuration.cpp"))
         out.append(
             (10, "url() + Authorization header -- the escape hatch",
-             f"SELECT count() AS n FROM url('{u}', LineAsString, 'line String', {h})",
+             f"SELECT count() AS n FROM url('{u}', LineAsString, {h})",
              "the ONLY way a bearer token reaches Files/. LineAsString on purpose: this "
              "probe asks whether the BYTES arrive, so a CSV parsing failure cannot be "
-             "mistaken for an auth failure. x-ms-version is required -- Azure Blob's REST "
-             "API rejects an OAuth request without it, and a 400 there reads like a bad token"))
+             "mistaken for an auth failure -- and with NO explicit structure, because "
+             "LineAsString's is fixed at one column and naming it is the documented way to "
+             "confuse the argument list. x-ms-version is required -- Azure Blob's REST API "
+             "rejects an OAuth request without it, and a 400 there reads like a bad token"))
         out.append(
             (11, "ragged AEMO CSV through url()",
              f"SELECT count() AS n FROM url('{u}', CSV, '{CSV_STRUCTURE}', {h}) "
@@ -408,11 +420,20 @@ def interpret(n, rows):
 
 
 def run(sess, sql):
-    """Execute and materialise. Returns rows as tuples; DDL returns []."""
-    out = str(sess.query(sql, "JSONCompact")).strip()
+    """Execute and materialise. Returns rows as tuples; DDL returns [].
+
+    JSONCompactEachRow, NOT JSONCompact, AND THE DIFFERENCE IS NOT COSMETIC. JSONCompact
+    wraps everything in ONE document with meta/data/rows/statistics, and probe 10 died on
+    `json.loads` with "Extra data: line 24 column 1" (run 35433920589) -- a second document
+    trailing the first -- while probes 11 and 12 parsed fine off the same url. A result
+    reader that fails for some queries and not others turns a working probe into a FAIL and
+    then into a wrong verdict, which is what happened. One JSON array per line cannot have
+    extra data after it.
+    """
+    out = str(sess.query(sql, "JSONCompactEachRow")).strip()
     if not out:
         return []
-    return [tuple(r) for r in json.loads(out).get("data", [])]
+    return [tuple(json.loads(line)) for line in out.splitlines() if line.strip()]
 
 
 def oneline(e):
@@ -482,7 +503,7 @@ def main():
 
     # ---- 2: what does the catalog list -----------------------------------------------
     listing = []
-    print(f"[2] list the catalog - does it see the iceberg leg's tables", flush=True)
+    print(f"[2] list the catalog - does it see the legs' tables", flush=True)
     print(f"    SHOW TABLES FROM {DB}", flush=True)
     try:
         listing = run(sess, f"SHOW TABLES FROM {DB}")
@@ -492,7 +513,7 @@ def main():
             print(f"    -> ... {len(listing) - 10} more", flush=True)
         status = f"PASS ({len(listing)} table(s))"
         if not listing:
-            status = ("EMPTY - the catalog answered and listed NOTHING; has the iceberg leg "
+            status = ("EMPTY - the catalog answered and listed NOTHING; has ANY leg "
                       "ever run in this workspace?")
             print(f"    ::warning::{status}", flush=True)
         results.append((2, "list the catalog", status))
@@ -648,7 +669,7 @@ def read_verdict(results):
         return ("VERDICT: INCONCLUSIVE -- the token works and the catalog answered, but it "
                 "listed no tables. The OneLake catalog is the ICEBERG table API: it shows "
                 "Iceberg tables and Delta tables carrying Iceberg metadata, so a workspace "
-                "where the iceberg leg has never run looks exactly like this. Run that leg "
+                "where no leg has ever run looks exactly like this. Run one "
                 "first, then re-dispatch.")
 
     reads = by_n.get(4, "")
@@ -660,30 +681,38 @@ def read_verdict(results):
                 f"StaticCredential for both.")
 
     created = by_n.get(7, "")
-    files_ok = by_n.get(10, "").startswith("PASS")
+    # PROBE 11 IS THE INGEST SIGNAL, NOT PROBE 10. This keyed off 10 alone and announced
+    # "INGEST: BLOCKED -- Files/ is unreachable" on a run where 11 and 12 had both read
+    # 334k rows off the very same url (run 35433920589); 10 had died in the probe's own JSON
+    # parsing. A headline that survives its own evidence is the bug, so the ragged read --
+    # the thing a leg would actually do -- decides, and 10 only corroborates.
     csv_ok = by_n.get(11, "").startswith("PASS")
-    skipped = by_n.get(10, "").startswith("SKIP")
+    reach_ok = by_n.get(10, "").startswith("PASS")
+    skipped = by_n.get(11, "").startswith("SKIP")
 
     if skipped:
         ingest = (" INGEST: UNPROVEN -- the Files/ probes were skipped for want of landing "
                   "files, so whether chDB can read the AEMO CSVs at all is unmeasured.")
-    elif not files_ok:
-        ingest = (" INGEST: BLOCKED -- Files/ is unreachable. azureBlobStorage() has no "
-                  "bearer-token argument and url()+Authorization did not work either, so "
-                  "there is no path to the landing zone every model reads.")
-    elif not csv_ok:
-        ingest = (" INGEST: PARTIAL -- url()+Authorization reaches Files/ one file at a time, "
-                  "but the ragged AEMO CSV did not parse. A leg would need that read working "
-                  "before anything downstream matters.")
-    else:
+    elif csv_ok:
         ingest = (" INGEST: one file at a time. url()+Authorization reads the real ragged "
                   "AEMO CSV, but it takes ONE url with no glob and no listing, so a leg would "
                   "carry its own file enumeration -- the DFS list API this script already "
                   "uses -- where the other engines pass a pattern.")
+        if not reach_ok:
+            ingest += (" (Probe 10 did not pass, which given 11 and 12 did is about probe 10 "
+                       "and not about Files/.)")
+    elif reach_ok:
+        ingest = (" INGEST: PARTIAL -- url()+Authorization reaches Files/ one file at a time, "
+                  "but the ragged AEMO CSV did not parse. A leg would need that read working "
+                  "before anything downstream matters.")
+    else:
+        ingest = (" INGEST: BLOCKED -- Files/ is unreachable. azureBlobStorage() has no "
+                  "bearer-token argument and url()+Authorization did not work either, so "
+                  "there is no path to the landing zone every model reads.")
 
     if created.startswith("SILENT NO-OP"):
         return ("VERDICT: READER ONLY -- chDB reaches OneLake on the Entra bearer token this "
-                "repo already mints, lists the iceberg leg's tables and reads them, and "
+                "repo already mints, lists the legs' tables and reads them, and "
                 "CANNOT WRITE THEM: CREATE TABLE through a DataLakeCatalog returns success "
                 "and registers nothing (DatabaseDataLake::createTable has an empty body), so "
                 "a chdb leg has no way to materialise a model. That rules out a sixth ENGINE "
