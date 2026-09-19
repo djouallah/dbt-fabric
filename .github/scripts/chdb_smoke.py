@@ -324,11 +324,34 @@ def model_shape_probes(files):
          "SELECT k, row_number() OVER (PARTITION BY k % 2 ORDER BY v DESC) AS rn "
          "FROM (SELECT 1 AS k, 10 AS v UNION ALL SELECT 2, 20 UNION ALL SELECT 3, 30)",
          "used across the marts"),
+        (18, "brace glob over this run's files",
+         (f"SELECT _file AS f, count() AS n FROM url('{brace_glob(files)}', CSV, "
+          f"'{CSV_STRUCTURE}', {h}) GROUP BY 1 ORDER BY 1 SETTINGS {RAGGED}")
+         if len(files) >= 2 else "",
+         "THE ONE THAT DECIDES WHAT A LEG'S READ LOOKS LIKE. url() expands *, {a,b}, {N..M} "
+         "and ** in the path, and {a,b} is client-side -- which is exactly the shape "
+         "spark_read_csv.sql already emits, naming this run's files explicitly so a backlog "
+         "converges instead of restarting. If this works the leg's read is ONE statement over "
+         "the files it chose; if it does not, it is one url per file and the leg carries its "
+         "own enumeration. GROUP BY _file because a glob that reads only the first file would "
+         "otherwise look identical to one that read both"),
     ]
     return out
 
 
-def landing_files(limit=1):
+def brace_glob(files):
+    """<folder>/{a.CSV,b.CSV} -- the same construction spark_read_csv.sql renders.
+
+    A FOLDER GLOB WOULD BE A DIFFERENT QUESTION and an easier one: `*` against a remote
+    listing is not what the models do, because a run folds exactly the files it decided to
+    fold. So the alternation is built from the real names, not from a wildcard.
+    """
+    urls = [blob_url(f) for f in files]
+    folder = urls[0].rsplit("/", 1)[0]
+    return folder + "/{" + ",".join(u.rsplit("/", 1)[1] for u in urls) + "}"
+
+
+def landing_files(limit=2):
     """Up to `limit` real AEMO CSV paths from the landing zone, newest name first.
 
     REAL files, not ones this script writes: the question is whether chDB can read what
@@ -336,8 +359,11 @@ def landing_files(limit=1):
     OneLake DFS list API over urllib (stdlib; the probe env has no `requests` and should not
     need one) and returns [] on any failure, which the probes report as SKIP rather than FAIL.
 
-    limit=1, unlike the sail probe's 2: url() takes ONE url and there is no brace-glob form
-    to exercise here, so a second file would be read and not measured.
+    TWO, because probe 18 needs two. This was 1, on the stated grounds that "url() takes ONE
+    url and there is no brace-glob form to exercise here" -- which was never measured and is
+    wrong: url() expands *, {a,b}, {N..M} and ** in the path, and {a,b} is exactly the shape
+    spark_read_csv.sql already emits. A probe that asserts a limit it never tested is the
+    thing this file exists to not do, and the verdict repeated the claim for a whole run.
     """
     if not LANDING_PATH:
         return []
@@ -415,6 +441,16 @@ def interpret(n, rows):
         if any(not nm or nm == "None" for nm in names):
             return f"FAIL - _file came back empty: {sorted(names)}"
         return f"PASS - _file resolves: {sorted(names)}"
+
+    if n == 18:
+        # A GLOB THAT READ ONE FILE IS NOT A GLOB, and from the row count alone it looks
+        # exactly like one that read both -- which is why the statement groups by _file.
+        if len(rows) < 2:
+            got = sorted(str(r[0]) for r in rows)
+            return (f"PARTIAL - the statement ran but only {len(rows)} file(s) came back "
+                    f"({got}); the alternation did not expand")
+        return (f"PASS - ONE statement read {len(rows)} files: "
+                f"{sorted(str(r[0]) for r in rows)}")
 
     return f"PASS ({len(rows)} row(s))"
 
@@ -583,14 +619,21 @@ def main():
     print("=" * 100 + "\n", flush=True)
 
     files = landing_files()
+    for f in files:
+        print(f"landing file: {f}", flush=True)
     if files:
-        print(f"landing file: {files[0]}\n", flush=True)
+        print(flush=True)
 
     for n, name, sql, why in model_shape_probes(files):
         print(f"[{n}] {name} - {why}", flush=True)
         if not sql:
+            # Probe 18 needs TWO files, so "no landing files" would be the wrong reason when
+            # the zone holds exactly one -- and a wrong skip reason sends the next person
+            # looking at the landing zone instead of at the probe.
+            reason = ("needs two landing files, found "
+                      f"{len(files)}") if n == 18 else "no landing files"
             print("    SKIP\n", flush=True)
-            results.append((n, name, "SKIP - no landing files"))
+            results.append((n, name, f"SKIP - {reason}"))
             continue
         for line in sql.split("\n"):
             print(f"    {redact(line)[:200]}", flush=True)
@@ -694,10 +737,23 @@ def read_verdict(results):
         ingest = (" INGEST: UNPROVEN -- the Files/ probes were skipped for want of landing "
                   "files, so whether chDB can read the AEMO CSVs at all is unmeasured.")
     elif csv_ok:
-        ingest = (" INGEST: one file at a time. url()+Authorization reads the real ragged "
-                  "AEMO CSV, but it takes ONE url with no glob and no listing, so a leg would "
-                  "carry its own file enumeration -- the DFS list API this script already "
-                  "uses -- where the other engines pass a pattern.")
+        # WHAT THE READ COSTS IS PROBE 18's ANSWER, NOT AN ASSUMPTION. This said "it takes ONE
+        # url with no glob and no listing" for a whole run without ever having tried a glob --
+        # and url() expands {a,b} client-side, which is the shape spark_read_csv.sql already
+        # emits. Asserting an untested limit is the thing this file exists to not do.
+        glob = by_n.get(18, "")
+        if glob.startswith("PASS"):
+            shape = ("and a brace glob of this run's files reads them in ONE statement, which "
+                     "is the same shape spark_read_csv.sql emits -- so the leg's read ports "
+                     "rather than being rebuilt")
+        elif glob.startswith("PARTIAL") or glob.startswith("FAIL"):
+            shape = ("but the brace glob did not expand, so it is one url per file and a leg "
+                     "would carry its own enumeration -- the DFS list API this script already "
+                     "uses -- where the other engines pass a pattern")
+        else:
+            shape = ("and whether a brace glob of this run's files reads in one statement is "
+                     "UNMEASURED (probe 18 needs two landing files)")
+        ingest = f" INGEST: url()+Authorization reads the real ragged AEMO CSV, {shape}."
         if not reach_ok:
             ingest += (" (Probe 10 did not pass, which given 11 and 12 did is about probe 10 "
                        "and not about Files/.)")

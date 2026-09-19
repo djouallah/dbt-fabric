@@ -464,6 +464,53 @@ def test_a_read_that_worked_cannot_be_called_blocked(smoke):
             (11, "x", "PASS (1 row(s))"), (12, "x", "PASS - _file resolves")]
     v = smoke.read_verdict(real)
     assert "BLOCKED" not in v, v
-    assert "one file at a time" in v
+    assert "reads the real ragged AEMO CSV" in v
     # ... and it must say that probe 10's failure is about probe 10, not about Files/.
     assert "about probe 10" in v
+
+
+def test_the_read_shape_is_probe_18s_answer_not_an_assumption(smoke):
+    """The verdict asserted "ONE url with no glob and no listing" for a whole run without ever
+    having tried a glob -- and url() expands {a,b} client-side, which is exactly the shape
+    spark_read_csv.sql emits. An untested limit stated as a finding is what this file exists
+    to not do, so the three outcomes have to read differently.
+    """
+    base = [(1, "x", "PASS"), (2, "x", "PASS (21 table(s))"), (4, "x", "PASS (1 row(s))"),
+            (7, "x", "SILENT NO-OP"), (10, "x", "PASS"), (11, "x", "PASS (1 row(s))")]
+
+    worked = smoke.read_verdict(base + [(18, "x", "PASS - ONE statement read 2 files")])
+    assert "ONE statement" in worked and "ports" in worked
+
+    didnt = smoke.read_verdict(base + [(18, "x", "PARTIAL - the alternation did not expand")])
+    assert "one url per file" in didnt and "own enumeration" in didnt
+
+    # And with no answer it must say UNMEASURED rather than pick one.
+    unknown = smoke.read_verdict(base + [(18, "x", "SKIP - needs two landing files, found 1")])
+    assert "UNMEASURED" in unknown
+
+
+def test_the_brace_glob_names_the_files_rather_than_wildcarding(smoke):
+    """A folder wildcard would be a different and easier question.
+
+    spark_read_csv.sql names this run's files explicitly so a run folds exactly what it decided
+    to fold and a backlog converges instead of restarting. A `*` here would pass while proving
+    nothing about that shape.
+    """
+    g = smoke.brace_glob(["item/Files/csv_raw/daily/A.CSV", "item/Files/csv_raw/daily/B.CSV"])
+    assert g.endswith("/{A.CSV,B.CSV}"), g
+    assert "*" not in g
+
+    # It must also be SKIPPED, not faked, when the zone holds only one file -- a one-file
+    # "glob" is indistinguishable from no glob at all.
+    one = {n: sql for n, _, sql, _ in smoke.model_shape_probes(["item/Files/csv_raw/A.CSV"])}
+    assert one[18] == ""
+    two = {n: sql for n, _, sql, _ in
+           smoke.model_shape_probes(["item/Files/csv_raw/A.CSV", "item/Files/csv_raw/B.CSV"])}
+    assert "{A.CSV,B.CSV}" in two[18]
+    # GROUP BY _file, because a glob that read only the first file returns a plausible count.
+    assert "_file" in two[18] and "GROUP BY" in two[18]
+
+
+def test_a_one_file_glob_is_not_reported_as_a_working_glob(smoke):
+    assert smoke.interpret(18, [("A.CSV", 10)]).startswith("PARTIAL")
+    assert smoke.interpret(18, [("A.CSV", 10), ("B.CSV", 20)]).startswith("PASS")
