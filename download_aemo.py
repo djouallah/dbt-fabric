@@ -196,11 +196,18 @@ def download_aemo(session, files_path, download_limit, daily_download_limit):
                     raise
 
     def new_files(table, source_type):
+        # ORDER BY filename DESC -- NEWEST FIRST, so a limit smaller than the backlog lands the
+        # recent end of the archive and the gap fills backwards over runs. The intraday candidate
+        # tables below are already built newest-first (ORDER BY full_url DESC LIMIT 500); the
+        # daily one is not ordered at all -- it is the nemweb listing with the GitHub-mirror
+        # backfill (years ascending) appended -- so without this the daily backlog landed in
+        # whatever order DuckDB happened to return. Same direction the fact models fold in.
         limit = daily_download_limit if source_type == "daily" else download_limit
         return session.sql(
             f"""SELECT full_url, filename FROM {table}
                 WHERE '{source_type}::' || filename NOT IN (
                     SELECT source_type || '::' || source_filename FROM _csv_archive_log)
+                ORDER BY filename DESC
                 LIMIT {limit}"""
         ).fetchall()
 

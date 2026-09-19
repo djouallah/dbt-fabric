@@ -9,8 +9,11 @@ Nothing else in the repo catches that.
 ONE PROJECT, dbt1/, FIVE ENGINES: duckrun, iceberg, ducklake, dwh, spark. It was briefly two
 -- iceberg spent a day in a dbt2/ on dbt OSS 2, whose catalogs.yml cannot sit in a dbt 1.x
 project root -- and ENGINES below is what is left of that: the engine -> project mapping,
-kept because run_in_fabric.py and tests_py/_layout.py hold the same dict and the three must
-agree.
+kept because tests_py/_layout.py's PROJECT_OF holds the same dict and the two must agree.
+run_dbt.py holds a THIRD copy, but of the DuckDB SUBSET only (duckrun, iceberg, ducklake):
+dwh and spark never go through it, and tests_py/test_local_runner.py asserts that subset and
+pipeline.yml's dwh/spark build step partition these five between them -- an engine in neither
+reaches no build step at all, which is silent and green.
 
 Runs `dbt parse` once per engine with dummy env vars and asserts, for each:
   * the ENABLED model set is exactly the canonical eight

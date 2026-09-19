@@ -45,7 +45,8 @@ cd dbt1 && dbt build --target duckrun --profiles-dir .
 - **ONE dbt PROJECT, `dbt1/`, five engines.** Every dbt command runs from inside it
   (`--profiles-dir .`), which is why `.github/scripts/check_gating.py`'s `ENGINES` dict still
   maps engine → project dir — keep `tests_py/_layout.py` and
-  `.github/scripts/run_in_fabric.py`'s `PROJECT` in step with it. The name `dbt1` is a scar:
+  `.github/scripts/run_dbt.py`'s `PROJECT` in step with it (that one holds the three
+  DuckDB engines only — dwh and spark never go through it). The name `dbt1` is a scar:
   iceberg spent 2026-09-17 to 2026-09-18 in a sibling `dbt2/` on dbt OSS 2, because
   `catalogs.yml` cannot sit in a dbt 1.x project root. **Do not try that again without
   reading "Why iceberg is not on dbt OSS 2" below.**
@@ -149,7 +150,9 @@ cd dbt1 && dbt build --target duckrun --profiles-dir .
   log reports `Catalog Error: Table with name "iceberg_landing.stg_csv_archive_log" does not
   exist because schema "iceberg_landing" does not exist` instead of whatever actually failed
   (seen in run 35427665396's four backlog assertions). It applies on the Fabric path too --
-  `run_in_fabric.py` retries as well. **On iceberg, re-run a failed build as a BUILD, not a
+  `run_dbt.py` retries wherever it runs. Those four assertions are `severity: warn` now, so
+  this no longer reddens a run on its own, but it still REPLACES the real error text on any
+  retried node that reads the log. **On iceberg, re-run a failed build as a BUILD, not a
   retry**, and read the FIRST `Completed with N errors` block for the real cause.
 - **`on_schema_change='sync_all_columns'` costs a manual DROP if a TYPE ever changes.** It
   performs a type change as add-copy-rename (`<col>__dbt_alter`), which is not atomic on the
@@ -181,21 +184,38 @@ cd dbt1 && dbt build --target duckrun --profiles-dir .
   scales with the target's partition span, not the batch, which is what OOM-kills big facts.
   `partition_by` + `incremental_predicates` on `month_key` is what makes the probe prune.
 - **duckrun, ducklake and iceberg run dbt INSIDE Fabric** (`.github/scripts/remote_dbt.py` →
-  duckrun's `run_python`, 8 vCores; `run_in_fabric.py` is what runs there, invoking dbt
-  in-process via `dbtRunner`). Do not move them
-  back onto the runner: DuckDB folds the archive in memory and the 7 GB hosted runner was shut
-  down mid-`fct_scada` twice in one day. **The one sanctioned exception is `pipeline.yml`'s
-  `local_runner` input**, off by default: it builds duckrun and iceberg on the runner so the
-  iceberg leg's credential vending can be proven on an `az`-minted token, which an in-Fabric run
-  cannot do because the notebook injects the token itself. Verification only, and it wants a
-  small `process_limit`. ducklake is excluded on purpose — only `run_in_fabric.py` carries the
-  40613 loop for its auto-paused catalog SQL DB — which is also why `local` is NOT a value of
-  `fabric_cores`: `remote_dbt.py` reads that as `int()`, and the still-remote ducklake leg would
-  die on `int('local')`. A local leg writes no notebook GUID, so `measure_cu.py` skips it and it
-  is ABSENT from `cu.json` rather than zero; `RUNIN_LOCAL_RUNNER` in the run record is what says
-  why. Tokens are minted in the notebook by `notebookutils`
-  (the `setup` hook); only the `FORWARD` allowlist of config travels, never anything
-  token-shaped. `DATA_LAKEHOUSE_ID` from provision.py is what run_python needs.
+  duckrun's `run_python`, 8 vCores; `run_dbt.py` is what runs there, invoking dbt in-process via
+  `dbtRunner`). Do not move them back onto the runner as the steady state: DuckDB folds the
+  archive in memory and the 7 GB hosted runner was shut down mid-`fct_scada` twice in one day.
+  **The one sanctioned exception is `pipeline.yml`'s `local_runner` input**, off by default: it
+  builds ALL THREE on the runner so a leg's own credentials can be proven on `az`-minted tokens,
+  which an in-Fabric run cannot do because the notebook injects them itself. Verification only,
+  and it wants a small `process_limit`.
+  **Both places run the same `.github/scripts/run_dbt.py`** — build, the 40613 resume loop, a
+  `dbt retry` guarded on `run_results.json` existing, then the fingerprint — which is what makes
+  a local leg and a Fabric leg one sequence rather than two implementations that agree by
+  inspection. That is also what let ducklake join the toggle on 2026-09-19: it used to be carved
+  out because only the in-Fabric script had the 40613 loop while the runner ran a bare
+  `dbt build || dbt retry`. Two things follow. (1) `run_dbt.py` no longer pops
+  `AZURE_TRANSPORT_OPTION_TYPE` / `CURL_CA_INFO` out of its environment — on the runner those
+  are set ON PURPOSE — so `remote_dbt.py`'s `FORWARD` allowlist is now the ONLY thing keeping
+  them out of Fabric. (2) The runner step passes `--no-fingerprint`, because on that path the
+  fingerprint is a step of its own; in the notebook it must be in the same process, since its
+  JSON is lifted back out of the streamed log.
+  **ducklake needs two runner-minted tokens**: OneLake storage, and a `database.windows.net`
+  bearer for its catalog SQL DB. Both are minted in `pipeline.yml` steps rather than by
+  `provision.py`, because that script's stdout is redirected into `$GITHUB_ENV` and a token
+  emitted there never passes through `::add-mask::` — which is exactly why `provision.py` still
+  refuses to emit `DBT_ENV_SECRET_SQL_TOKEN` under `GITHUB_ACTIONS`.
+  `local` is still NOT a value of `fabric_cores`: that is a SIZE and this is a PLACE, and
+  `remote_dbt.py` does `int()` on it on every run with the toggle OFF.
+  **In `cu.json` a local leg is three-way, not two:** duckrun and iceberg write no notebook GUID
+  so `measure_cu.py` skips them and they are ABSENT rather than zero, while ducklake is PRESENT
+  with `Sql Usage` alone — `provision.py` records its catalog SQL DB as a compute item either
+  way. `RUNIN_LOCAL_RUNNER` in the run record is what says why.
+  In Fabric the tokens are minted by `notebookutils` (the `setup` hook); only the `FORWARD`
+  allowlist of config travels, never anything token-shaped. `DATA_LAKEHOUSE_ID` from
+  provision.py is what run_python needs.
 - **ducklake's catalog SQL DB auto-pauses, and the first connection after that FAILS.** A
   Fabric SQL DB is serverless: idle long enough and it pauses, then the next connection gets
   SQL error 40613 ("Database ... is not currently available. Please retry the connection
@@ -204,8 +224,8 @@ cd dbt1 && dbt build --target duckrun --profiles-dir .
   because a crash at connection open writes no `run_results.json`. Run 35294987062 lost the
   whole ducklake leg this way, 12 hours after the previous run, with NO code change involved;
   every earlier run had been close enough behind the last to find the database awake. So a
-  40613 is not a red build: `run_in_fabric.py` waits and re-runs `build`, keyed on that code
-  alone (`RESUME_SIGNATURE`, pinned by `tests_py/test_fabric_resume_retry.py`). Retrying the
+  40613 is not a red build: `run_dbt.py` waits and re-runs `build`, keyed on that code alone
+  (`RESUME_SIGNATURE`, pinned by `tests_py/test_run_dbt.py`), on BOTH paths. Retrying the
   whole build rather than probing the database first is the point — the connection that has to
   succeed is dbt's own, with its own token and extension. Only ducklake has a serverless
   database in its path, which is why only it is ever affected.
@@ -246,6 +266,32 @@ cd dbt1 && dbt build --target duckrun --profiles-dir .
   there is nothing to run by hand. The source repo still carries the manual patch
   (`scripts/ducklake_schema_versions_pk.sql` + `ensure_catalog_pk_fix()` in its notebook); that
   was never ported here and must not be. The extension also wants the `mssql` extension >= 0.2.5.
+- **`dbt retry` REBUILDS THE ORIGINAL COMMAND'S FLAGS, so `flags.WHICH` is `'build'` inside a
+  retried build.** dbt 1.11's `dbt/task/retry.py` calls
+  `set_flags(Flags.from_dict(CMD_DICT[previous_command], ...))` before it parses or runs
+  anything, and the `retry` command carries no `@requires.manifest` — so every hook and every
+  parse-time guard gated on `flags.WHICH in ['run', 'build']` DOES fire during a retry today.
+  The `'retry'` those guards also name (the eight ducklake hooks in `dbt1/dbt_project.yml`, the
+  fifteen model-level `run_query` guards) is INSURANCE, not a live fix; do not read it as a bug
+  being worked around, and do not remove it either. If dbt ever stops rebuilding the flags, a
+  retried ducklake build would silently skip `CALL delta_export()` and leave the retried tables
+  with no refreshed `_delta_log` — Direct Lake serving the previous generation with every test
+  green.
+- **Every engine folds files NEWEST FIRST, and the direction is load-bearing.**
+  `process_limit` caps how many unprocessed archive-log files a fact model ingests per run;
+  `ORDER BY archive_path DESC` is what decides WHICH. Until 2026-09-19 the three DuckDB
+  pre-hooks had no `ORDER BY` at all while `new_source_files.sql` (dwh) and
+  `spark_new_files.sql` (spark) ordered ascending, so on any run with a `process_limit` smaller
+  than the backlog the five engines folded DIFFERENT FILES and `parity.py` reported that as a
+  logic difference. Change the direction in one place and you must change it in all five plus
+  `download_aemo.py`'s `new_files()`; `tests_py/test_process_order.py` pins it.
+  Newest first is also what makes a partial load *recent* data, which is why the four
+  `assert_all_*_files_processed_*` tests and `assert_summary_covers_all_scada_days` are
+  `{{ config(severity='warn') }}` on every engine: a backlog is not a defect — the data is
+  correct, just incomplete, and it converges run by run. **Investigate a count that stops
+  falling, not a count that is non-zero.** Relaxed per FILE and not in `dbt_project.yml`'s
+  `data_tests:` section, because that key is per engine and would also relax the grain and join
+  assertions, which are real correctness checks.
 - **`delta_export()` takes no arguments** and writes each DuckLake table's `_delta_log` in
   place, which is why ducklake's `data_path` is the shared lakehouse's `Tables/` section
   (`Tables/ducklake_mart/<table>` is then a real lakehouse table). A two-argument call was
@@ -395,7 +441,7 @@ and is not here.
   deploying any, so one stray folder makes the whole deploy ship nothing. The model is
   deployed as a FILE, once per engine, as `aemo_<engine>`.
 - **The demo notebook (`fabric_items/run.Notebook`) runs the CI scripts** — `provision.py`,
-  `download_aemo.py`, `run_in_fabric.py` — from the repo copy `deploy.py` puts in the `dbt`
+  `download_aemo.py`, `run_dbt.py` — from the repo copy `deploy.py` puts in the `dbt`
   lakehouse's `Files/dbt`, on the engine the `deploy_config` Variable Library names. Never
   fork dbt logic into it; change the scripts and redeploy. `tests_py/test_fabric_items.py`
   pins the notebook's variables against `variables.json`. The pipeline's `pipelinecore`

@@ -19,10 +19,16 @@ also install dbt-oss; both are gone.
 HOW. duckrun.workspace(...).run_python(...) ships this repo to a throwaway Fabric Python
 notebook of FABRIC_CORES vCores, pip-installs requirements/<engine>.txt there, mints the tokens
 the profile needs from notebookutils (the kernel-side `setup` hook below), runs
-.github/scripts/run_in_fabric.py as a subprocess with the config env forwarded, streams the log
+.github/scripts/run_dbt.py as a subprocess with the config env forwarded, streams the log
 back as `[remote]` lines, and deletes the notebook. This script then lifts the parity
 fingerprint out of that log so history/parity/<engine>.json lands where the upload step finds
 it for the local legs too.
+
+run_dbt.py is the SAME script pipeline.yml runs on the GitHub runner when the `local_runner`
+input is on -- one build/resume/retry sequence, two places to run it. The only difference is
+the flag: the runner passes --no-fingerprint and takes the fingerprint in a step of its own,
+because there it can pipe a run-operation straight into parity.py; here the fingerprint has to
+happen in the same process, which is why it is the tail of the log this script parses.
 
 TOKENS NEVER TRAVEL. ONELAKE_TOKEN (and DBT_ENV_SECRET_SQL_TOKEN for ducklake) are minted
 INSIDE Fabric by notebookutils -- the same calls the original ducklake notebook made -- and
@@ -49,10 +55,14 @@ CORES = int(os.environ.get("FABRIC_CORES", "8"))
 
 # Config the profile and macros read at run time, and NOTHING token-shaped. LANDING_PATH and
 # the download limits stay behind: only download_aemo.py reads them, and it never runs here.
-# Also not forwarded, on purpose: AZURE_TRANSPORT_OPTION_TYPE /
-# CURL_CA_INFO (inside Fabric DuckDB's default OneLake transport is the one that works, and the
-# on-run-start hook renders to nothing when the variable is unset) and DUCKDB_TEMP_DIR
-# (run_in_fabric.py points it at the notebook's 135 GiB work disk, not the 19 GiB /tmp overlay).
+#
+# THIS ALLOWLIST IS NOW THE ONLY THING keeping the runner's environment out of the notebook:
+# run_dbt.py used to pop these on arrival and no longer does, because the same script runs on
+# the runner, where they are set ON PURPOSE. Not forwarded, and it must stay that way:
+# AZURE_TRANSPORT_OPTION_TYPE / CURL_CA_INFO (inside Fabric DuckDB's default OneLake transport
+# is the one that works, and the on-run-start hook renders to nothing when the variable is
+# unset) and DUCKDB_TEMP_DIR (run_dbt.py then derives it from the notebook's 135 GiB work disk
+# via TMPDIR, not the 19 GiB /tmp overlay). tests_py/test_local_runner.py pins all three.
 FORWARD = (
     "FILES_PATH", "ONELAKE_TABLES_PATH",
     "WAREHOUSE_PATH", "ONELAKE_ENDPOINT",
@@ -133,7 +143,7 @@ def main() -> int:
     try:
         result = ws.run_python(
             str(REPO),
-            entry=".github/scripts/run_in_fabric.py",
+            entry=".github/scripts/run_dbt.py",
             args=[engine],
             cores=CORES,
             lakehouse=os.environ["DATA_LAKEHOUSE_ID"],
@@ -150,7 +160,7 @@ def main() -> int:
         raise
     _record_notebook(result.item_id, engine, name)
 
-    # The fingerprint JSON is in the streamed log (run_in_fabric.py runs the run-operation
+    # The fingerprint JSON is in the streamed log (run_dbt.py runs the run-operation
     # last). Same capture as the local legs' `| parity.py capture`, so the artifact is identical.
     capture = subprocess.run(
         [sys.executable, str(REPO / ".github/scripts/parity.py"), "capture", "history/parity"],

@@ -331,9 +331,12 @@ def main() -> int:
         # override of FILES_PATH: overriding that is what used to send this leg's downloader
         # off to a private copy of the CSVs.
         emit("DUCKLAKE_DATA_PATH", abfss(data_id, "Tables"))
-        # For a LOCAL run of the ducklake target only. On CI the leg runs inside Fabric, where
-        # remote_dbt.py's setup hook mints this from notebookutils; a runner-side copy would
-        # land unmasked in $GITHUB_ENV and never be read.
+        # NOT ON CI, even though a `local_runner` ducklake leg now needs this token: THIS
+        # SCRIPT'S STDOUT IS REDIRECTED INTO $GITHUB_ENV, so anything emitted here never passes
+        # through ::add-mask:: and would sit unmasked in the job's environment. pipeline.yml's
+        # "Mint the DuckLake catalog token" step mints the same audience with the mask. Off CI
+        # (a laptop, the in-Fabric demo notebook) this is the only thing that provides it, and
+        # in Fabric remote_dbt.py's setup hook mints it from notebookutils.
         if not os.environ.get("GITHUB_ACTIONS"):
             try:
                 emit("DBT_ENV_SECRET_SQL_TOKEN", token("https://database.windows.net/"))

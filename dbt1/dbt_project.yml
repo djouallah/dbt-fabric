@@ -68,8 +68,19 @@ on-run-start:
   - "{% if target.name == 'duckrun' %}SET GLOBAL preserve_insertion_order = false{% endif %}"
   - "{% if target.name == 'duckrun' %}SET GLOBAL temp_directory = '{{ env_var('DUCKDB_TEMP_DIR', '/tmp/duckdb_spill') }}'{% endif %}"
   # DuckLake compaction knobs, applied per run rather than per table.
-  - "{% if target.name == 'ducklake' and flags.WHICH in ['run', 'build'] %}CALL ducklake.set_option('rewrite_delete_threshold', 0){% endif %}"
-  - "{% if target.name == 'ducklake' and flags.WHICH in ['run', 'build'] %}CALL ducklake.set_option('target_file_size', '128MB'){% endif %}"
+  #
+  # `'retry'` in flags.WHICH, which is easy to get backwards: on dbt 1.11 `dbt retry` rebuilds
+  # the ORIGINAL command's flags before it parses or runs anything (dbt/task/retry.py --
+  # set_flags(Flags.from_dict(CMD_DICT[previous_command], ...)), and the `retry` command carries
+  # no @requires.manifest), so WHICH is ALREADY 'build' inside a retried build and these hooks
+  # fire today. The name is here as insurance for if that stops being true, because the failure
+  # would be silent and green: a retried ducklake build that skipped these writes DuckLake's
+  # default 122,880-row row groups and -- far worse -- leaves the retried tables with no
+  # refreshed _delta_log from the delta_export() in on-run-end, i.e. Direct Lake serving the
+  # PREVIOUS generation with every dbt test passing. The model-level parse guards carry it for
+  # the same reason. Do not "fix" this by removing it, and do not read it as a live bug.
+  - "{% if target.name == 'ducklake' and flags.WHICH in ['run', 'build', 'retry'] %}CALL ducklake.set_option('rewrite_delete_threshold', 0){% endif %}"
+  - "{% if target.name == 'ducklake' and flags.WHICH in ['run', 'build', 'retry'] %}CALL ducklake.set_option('target_file_size', '128MB'){% endif %}"
   # Row groups. DuckLake's default parquet_row_group_size is 122,880 rows, and that default
   # is the ENTIRE reason this leg reported 844 row groups on fct_summary where delta-rs
   # reported 27 and spark 13 -- nothing about DuckDB or the Delta export forces it. 2M puts
@@ -82,8 +93,8 @@ on-run-start:
   # are rewritten, and run-end's rewrite/merge only touches files with deletes or files
   # under target_file_size -- so a table already written stays at 122,880 until it is reset
   # (DROP, the same reset the marts document).
-  - "{% if target.name == 'ducklake' and flags.WHICH in ['run', 'build'] %}CALL ducklake.set_option('parquet_row_group_size', 2000000){% endif %}"
-  - "{% if target.name == 'ducklake' and flags.WHICH in ['run', 'build'] %}CALL ducklake.set_option('expire_older_than', '2 day'){% endif %}"
+  - "{% if target.name == 'ducklake' and flags.WHICH in ['run', 'build', 'retry'] %}CALL ducklake.set_option('parquet_row_group_size', 2000000){% endif %}"
+  - "{% if target.name == 'ducklake' and flags.WHICH in ['run', 'build', 'retry'] %}CALL ducklake.set_option('expire_older_than', '2 day'){% endif %}"
   # Fabric Warehouse does not auto-create schemas, and CREATE SCHEMA must be alone in its
   # batch — hence the EXEC() inside the macro.
   - "{% if target.name == 'dwh' %}{{ create_schemas_if_not_exists(['landing', 'mart']) }}{% endif %}"
@@ -91,16 +102,16 @@ on-run-start:
 on-run-end:
   # DuckLake writes many small parquet files and needs an explicit Delta export before a
   # Direct Lake model can read the result.
-  - "{% if target.name == 'ducklake' and flags.WHICH in ['run', 'build'] %}CALL ducklake_rewrite_data_files('ducklake'){% endif %}"
-  - "{% if target.name == 'ducklake' and flags.WHICH in ['run', 'build'] %}CALL ducklake_merge_adjacent_files('ducklake'){% endif %}"
-  - "{% if target.name == 'ducklake' and flags.WHICH in ['run', 'build'] %}CALL ducklake_cleanup_old_files('ducklake', cleanup_all => true){% endif %}"
+  - "{% if target.name == 'ducklake' and flags.WHICH in ['run', 'build', 'retry'] %}CALL ducklake_rewrite_data_files('ducklake'){% endif %}"
+  - "{% if target.name == 'ducklake' and flags.WHICH in ['run', 'build', 'retry'] %}CALL ducklake_merge_adjacent_files('ducklake'){% endif %}"
+  - "{% if target.name == 'ducklake' and flags.WHICH in ['run', 'build', 'retry'] %}CALL ducklake_cleanup_old_files('ducklake', cleanup_all => true){% endif %}"
   # delta_export() takes NO arguments (community extension delta_export 0.1.0 -- the only
   # signature it has, and what the original ducklake repo called). It exports every table of
   # the attached DuckLake catalog by writing a _delta_log next to that table's parquet, IN
   # PLACE under data_path -- which is why data_path is the lakehouse's Tables section (see
   # profiles.yml). A two-argument form was invented here once and failed every run with
   # "No function matches the given name and argument types 'delta_export(VARCHAR, VARCHAR)'".
-  - "{% if target.name == 'ducklake' and flags.WHICH in ['run', 'build'] %}CALL delta_export(){% endif %}"
+  - "{% if target.name == 'ducklake' and flags.WHICH in ['run', 'build', 'retry'] %}CALL delta_export(){% endif %}"
 
 models:
   aemo_electricity:

@@ -1,5 +1,10 @@
--- Every landed daily file must appear in fct_price. Rows returned = files the
--- downloader recorded but the model never ingested.
+{{ config(severity='warn') }}
+-- Rows returned = landed daily files the model has not folded into fct_price YET.
+-- A WARNING, not a failure: with a process_limit smaller than the backlog an initial load
+-- cannot fold everything, and what it did fold is correct -- just incomplete. Files are
+-- selected NEWEST first on every engine, so a row here is older data still queued, and the
+-- count falls run by run until it reaches zero. Investigate a count that STOPS falling, not
+-- a count that is non-zero.
 SELECT
   csv_filename
 FROM {{ ref('stg_csv_archive_log') }}

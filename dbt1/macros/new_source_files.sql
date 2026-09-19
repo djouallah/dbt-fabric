@@ -21,9 +21,12 @@
   {%- set log_path = get_root_path() ~ '/csv_raw_archive_log.parquet' -%}
   {#-- Fabric OPENROWSET allows at most 1024 explicit BULK file paths PER STATEMENT (chunking via
        UNION ALL doesn't help — the limit is per statement). So cap each run to process_limit files,
-       OLDEST first: a from-scratch backfill (e.g. fresh warehouse, ~3000 files in the log) then
-       converges over a few runs instead of blowing the limit. Steady-state new files (<= the daily
-       download limit) are well under the cap. --#}
+       NEWEST first: a from-scratch backfill (e.g. fresh warehouse, ~3000 files in the log) then
+       converges over a few runs instead of blowing the limit, and what it has folded meanwhile is
+       the RECENT end of the archive. Steady-state new files (<= the daily download limit) are well
+       under the cap. The direction must match every other engine's to the letter -- parity.py
+       compares the five gold tables, so five engines folding different subsets of one backlog
+       reads as a logic difference rather than as a backlog. --#}
   {%- set process_limit = env_var('process_limit', '1000') | int -%}
   {%- if this_relation is not none -%}
     {%- set q -%}
@@ -31,14 +34,14 @@
       FROM OPENROWSET(BULK '{{ log_path }}', FORMAT = 'PARQUET') AS l
       WHERE l.source_type = '{{ source_type }}'
         AND l.csv_filename NOT IN (SELECT DISTINCT [file] FROM {{ this_relation }})
-      ORDER BY l.archive_path
+      ORDER BY l.archive_path DESC
     {%- endset -%}
   {%- else -%}
     {%- set q -%}
       SELECT TOP {{ process_limit }} l.archive_path
       FROM OPENROWSET(BULK '{{ log_path }}', FORMAT = 'PARQUET') AS l
       WHERE l.source_type = '{{ source_type }}'
-      ORDER BY l.archive_path
+      ORDER BY l.archive_path DESC
     {%- endset -%}
   {%- endif -%}
   {%- set archive_paths = run_query(q).columns[0].values() -%}

@@ -15,14 +15,18 @@ record: the Fabric items each leg touched, what it wrote, and what it cost in ca
   compute** — a throwaway Python notebook of 8 vCores through duckrun's `run_python`
   (`.github/scripts/remote_dbt.py`); tokens are minted inside Fabric by `notebookutils` and
   never travel. dwh and spark run dbt on the runner, where it is only a client of the
-  Warehouse / Livy. The `local_runner` input (off by default) moves duckrun and iceberg onto the
-  runner too — a verification mode, because the notebook is what injects their tokens, so an
-  in-Fabric run cannot show whether the iceberg leg's credential vending works on an `az`-minted
-  one. Pair it with a small `process_limit`: the runner has 7 GB, and being shut down
-  mid-`fct_scada` is why these legs went to Fabric in the first place. ducklake opts out and
-  always goes to Fabric — only `run_in_fabric.py` waits out its auto-paused catalog. A `compact` job folds the Iceberg catalog's small files afterwards, before
+  Warehouse / Livy. The `local_runner` input (off by default) moves all three DuckDB legs onto
+  the runner — a verification mode, because the notebook is what injects their tokens, so an
+  in-Fabric run cannot show whether a leg's own credentials work on `az`-minted ones. Pair it
+  with a small `process_limit`: the runner has 7 GB, and being shut down mid-`fct_scada` is why
+  these legs went to Fabric in the first place. Both places run the same
+  `.github/scripts/run_dbt.py` — build, the 40613 loop that waits out ducklake's auto-paused
+  catalog SQL DB, a guarded `dbt retry`, then the fingerprint — so a local leg and a Fabric leg
+  are one sequence on different compute; ducklake's catalog token is minted on the runner for
+  the local case. A `compact` job folds the Iceberg catalog's small files afterwards, before
   `layout` measures them. `process_limit` is a dispatch input: files each fact model folds per
-  run, oldest first, on every engine. `deploy` (`none` / `no_model` / `full`) deploys the
+  run, **newest first**, on every engine — so a partial load is recent data, and the backlog
+  shows up as test WARNINGS that fall run by run rather than as a failed build. `deploy` (`none` / `no_model` / `full`) deploys the
   in-Fabric demo after the build (next section).
 - `capacity.yml` — fires after every pipeline run and once a day: reads capacity units per
   run and engine from the Fabric Capacity Metrics model and commits `history/cu.json`.
@@ -69,7 +73,7 @@ into the `dbt` lakehouse's `Files/dbt`, deploys `fabric_items/` (a notebook, its
 schedules the pipeline every 12 hours.
 
 The notebook is the scheduled form of one CI leg: it runs the same `provision.py` →
-`download_aemo.py` → `run_in_fabric.py` from that copy, on the engine `dbt_target` in
+`download_aemo.py` → `run_dbt.py` from that copy, on the engine `dbt_target` in
 `fabric_items/deploy_config.VariableLibrary/variables.json` names (edit the file to change
 it). The pipeline runs it at 2 vCores and again at 8 if that fails (`pipelinecore`). Do not
 run it alongside `pipeline.yml`; both land into `dbt_landing`.

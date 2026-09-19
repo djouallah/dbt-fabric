@@ -69,7 +69,7 @@ def test_check_gating_does_not_know_about_sail():
     assert "sail" not in block.group(1)
 
 
-@pytest.mark.parametrize("script", ["provision.py", "remote_dbt.py", "run_in_fabric.py"])
+@pytest.mark.parametrize("script", ["provision.py", "remote_dbt.py", "run_dbt.py"])
 def test_ci_scripts_do_not_know_about_sail(script):
     src = (REPO / ".github" / "scripts" / script).read_text(encoding="utf-8")
     assert not re.search(r"""["']sail["']""", src), (

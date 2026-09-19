@@ -39,7 +39,7 @@ on:
         default: readHeavyForPBI
         options: [readHeavyForPBI, writeHeavy]
       process_limit:
-        description: Files each fact model folds per run, oldest first (every engine honours it; a backlog converges over runs). The throttle for spark's first build.
+        description: Files each fact model folds per run, NEWEST first (every engine honours it; a backlog converges over runs and shows as test WARNINGS, not failures). The throttle for spark's first build.
         type: string
         default: "1000"
       fabric_cores:
@@ -141,9 +141,12 @@ jobs:
       RUNIN_SPARK_RESOURCE_PROFILE: ${{ inputs.spark_resource_profile }}
       RUNIN_DOWNLOAD_LIMIT: ${{ inputs.download_limit }}
       RUNIN_DAILY_DOWNLOAD_LIMIT: ${{ inputs.daily_download_limit }}
-      # Load-bearing for reading the record afterwards, not decoration: a local leg writes no
-      # notebook GUID, so measure_cu.py skips it and the leg is ABSENT from cu.json rather than
-      # zero. This is the only thing that says why.
+      # Load-bearing for reading the record afterwards, not decoration, and it is three-way.
+      # duckrun and iceberg have no compute item but the notebook, so a local leg writes no GUID,
+      # measure_cu.py skips it and the leg is ABSENT from cu.json rather than zero. ducklake is
+      # the exception: provision.py records its catalog SQL DB as a compute item either way, so a
+      # local ducklake leg is PRESENT with `Sql Usage` alone and no notebook. This is the only
+      # thing that says why.
       RUNIN_LOCAL_RUNNER: ${{ inputs.local_runner }}
       AZURE_TRANSPORT_OPTION_TYPE: curl
       CURL_CA_INFO: /etc/ssl/certs/ca-certificates.crt
@@ -195,8 +198,13 @@ jobs:
   #                                internet twice"). Here the runner only provisions, launches
   #                                and collects the log. Cancelling the GitHub job does NOT stop
   #                                the notebook -- it runs, and bills, to completion.
-  #   dwh, spark                   on the runner. dbt is only a client there; the compute is the
-  #                                Warehouse / the Livy session.
+  #                                UNLESS `local_runner` is on: all three then build HERE instead,
+  #                                through the same .github/scripts/run_dbt.py the notebook runs.
+  #                                A verification mode -- it is the only way to exercise these
+  #                                profiles' OWN credentials, since a notebook's identity already
+  #                                authorises OneLake -- so pair it with a small process_limit.
+  #   dwh, spark                   on the runner, always. dbt is only a client there; the compute
+  #                                is the Warehouse / the Livy session.
   #
   # Deliberately NO `--select` anywhere: model selection is entirely +enabled in
   # dbt_project.yml, keyed on the target name.
@@ -221,16 +229,17 @@ jobs:
       ENGINE: ${{ matrix.engine }}
       # The legs whose dbt runs inside Fabric. Exact match on the list, not a substring.
       #
-      # `local_runner` takes duckrun and iceberg off Fabric and onto this runner -- see that
-      # input's description for why it exists. DUCKLAKE STAYS REMOTE EITHER WAY: only
-      # run_in_fabric.py has the 40613 loop that waits out its auto-paused catalog SQL DB, and
-      # the runner path below is a bare `dbt build || dbt retry` with nothing of the sort, so a
-      # paused catalog would kill the leg at the ATTACH with no run_results.json to retry from.
-      # Keeping it remote also means no DBT_ENV_SECRET_SQL_TOKEN has to be minted here.
-      REMOTE: ${{ contains(fromJSON('["duckrun", "ducklake", "iceberg"]'), matrix.engine) && (!inputs.local_runner || matrix.engine == 'ducklake') }}
-      # Stays a NUMBER whatever local_runner says: remote_dbt.py reads it as int(), and the
-      # ducklake leg still launches a notebook with it. That is why `local` is not a value of
-      # fabric_cores.
+      # `local_runner` takes ALL THREE off Fabric and onto this runner -- see that input's
+      # description. ducklake used to be carved out of it whatever the toggle said, because only
+      # the in-Fabric script carried the 40613 loop that waits out its auto-paused catalog SQL DB
+      # while the runner ran a bare `dbt build || dbt retry` with nothing of the sort. Both
+      # places run the same .github/scripts/run_dbt.py now, so there is nothing left to pin, and
+      # the two tokens the notebook used to inject are minted below.
+      REMOTE: ${{ contains(fromJSON('["duckrun", "ducklake", "iceberg"]'), matrix.engine) && !inputs.local_runner }}
+      # A SIZE. `local_runner` is a PLACE, which is why it is a boolean input of its own and not
+      # a `local` option here: remote_dbt.py reads this as int(), so folding the place into the
+      # size would put a non-numeric value in front of that int() on every run with the toggle
+      # OFF -- a ValueError before anything starts, in the mode nobody was testing.
       FABRIC_CORES: ${{ inputs.fabric_cores }}
       DBT_SCHEMA: ${{ inputs.dbt_schema }}
       process_limit: ${{ inputs.process_limit }}
@@ -306,19 +315,38 @@ jobs:
           echo "FABRIC_ACCESS_TOKEN=$TOKEN" >> "$GITHUB_ENV"
 
       - name: Mint OneLake token
-        # Only for a LOCAL iceberg leg, and only because the notebook is what normally provides
-        # it: remote_dbt.py's setup hook mints it in the kernel from notebookutils, so nothing
-        # token-shaped travels. On the runner nothing does, and the profile's
+        # For a LOCAL leg whose profile carries an `azure` secret, and only because the notebook
+        # is what normally provides it: remote_dbt.py's setup hook mints it in the kernel from
+        # notebookutils, so nothing token-shaped travels. On the runner nothing does, and
         # env_var('ONELAKE_TOKEN') has NO default -- dbt dies at profile render without this.
-        # The catalog bearer is now the leg's ONLY credential (storage is vended per table), so
-        # this one line is the whole thing under test. Same incantation as the compact job.
-        # duckrun needs nothing (it mints from the OIDC assertion and gets no azure/login);
-        # ducklake never runs locally.
-        if: env.REMOTE != 'true' && matrix.engine == 'iceberg'
+        # On iceberg the catalog bearer is the leg's ONLY credential for Tables/ (storage is
+        # vended per table) and this line authorises the landing zone, which is the whole thing
+        # under test. ducklake needs the same secret for its parquet and its Delta export.
+        # Same incantation as the compact job. duckrun needs nothing: it mints from the OIDC
+        # assertion and gets no azure/login.
+        if: env.REMOTE != 'true' && (matrix.engine == 'iceberg' || matrix.engine == 'ducklake')
         run: |
           TOKEN=$(az account get-access-token --resource https://storage.azure.com/ --query accessToken -o tsv)
           echo "::add-mask::$TOKEN"
           echo "ONELAKE_TOKEN=$TOKEN" >> "$GITHUB_ENV"
+
+      - name: Mint the DuckLake catalog token
+        # ducklake's catalog is a Fabric SQL DB, so a local leg needs a database.windows.net
+        # bearer as well -- the same audience the dwh leg captures above, handed to the catalog
+        # connection by the profile's meta_access_token. In Fabric remote_dbt.py's setup hook
+        # mints it from notebookutils instead.
+        # HERE AND NOT IN provision.py: that script's stdout is redirected straight into
+        # $GITHUB_ENV, so a token emitted there would never pass through ::add-mask:: and would
+        # sit unmasked in the job's environment. That is why provision.py emits this only when
+        # GITHUB_ACTIONS is unset. Minted AFTER provisioning, like the dwh one: creating the SQL
+        # DB can outlive a token. And unlike ONELAKE_TOKEN this one HAS a '' default in the
+        # profile, so forgetting it does not fail at render -- the leg dies later at the DuckLake
+        # ATTACH, on a login error that reads like a catalog fault.
+        if: env.REMOTE != 'true' && matrix.engine == 'ducklake'
+        run: |
+          TOKEN=$(az account get-access-token --resource https://database.windows.net/ --query accessToken -o tsv)
+          echo "::add-mask::$TOKEN"
+          echo "DBT_ENV_SECRET_SQL_TOKEN=$TOKEN" >> "$GITHUB_ENV"
 
       # NO LANDING STEP HERE, on purpose. download_aemo.py rewrites
       # csv_raw_archive_log.parquet with a delete-then-copy, so five legs landing at once would
@@ -337,16 +365,37 @@ jobs:
       # ---- build -------------------------------------------------------------------
       - name: dbt build on Fabric compute
         if: env.REMOTE == 'true'
-        # build || retry, then the fingerprint, all inside one Fabric Python notebook; the
-        # fingerprint is lifted out of the streamed log into history/parity/<engine>.json.
+        # run_dbt.py inside one throwaway Fabric Python notebook -- build, the resume loop,
+        # retry, then the fingerprint, all in one session; the fingerprint is lifted out of the
+        # streamed log into history/parity/<engine>.json.
         run: python .github/scripts/remote_dbt.py "$ENGINE"
 
+      - name: dbt build on this runner
+        # THE SAME SCRIPT the notebook runs, which is what makes a local leg and a Fabric leg one
+        # sequence on different compute rather than two implementations that agree by inspection:
+        # build, the 40613 loop that waits out ducklake's auto-paused catalog, then `dbt retry`
+        # ONLY if the build got far enough to write run_results.json. It chdir's into dbt1/
+        # itself, hence no working-directory here.
+        # --no-fingerprint: on this path the fingerprint is the step below, the one every local
+        # leg shares; in the notebook it has to be in the same process because its JSON is read
+        # back out of the streamed log.
+        # THE COMPLEMENT of the two client engines, deliberately, rather than a second copy of
+        # REMOTE's list: an engine added to that list above reaches this step automatically, and
+        # an engine run_dbt.py does not know dies on its usage line instead of quietly building
+        # nothing while the fingerprint step publishes the previous run's numbers.
+        if: env.REMOTE != 'true' && matrix.engine != 'dwh' && matrix.engine != 'spark'
+        env:
+          # A long build whose log only appears at the end is not a verification mode.
+          PYTHONUNBUFFERED: "1"
+        run: python .github/scripts/run_dbt.py "$ENGINE" --no-fingerprint
+
       - name: dbt build
-        if: env.REMOTE != 'true'
-        # dbt1/ is the only project. Normally the engines that reach this step are dwh and
-        # spark, since the three DuckDB legs are in the REMOTE list and build inside the
-        # notebook instead (.github/scripts/run_in_fabric.py) -- but `local_runner` sends
-        # duckrun and iceberg here too, which is the point of that input.
+        # dwh and spark. dbt is only a CLIENT here -- the compute is the Warehouse / the Livy
+        # session -- so they have no in-Fabric path and no divergence to close; they stay a plain
+        # `dbt` subprocess, which is also what keeps check_gating.py's DBT_BIN escape hatch
+        # working off CI. Moving them onto run_dbt.py is a change with its own question behind it
+        # and nothing offline can judge it.
+        if: matrix.engine == 'dwh' || matrix.engine == 'spark'
         working-directory: dbt1
         # `dbt retry` needs --target too, or it renders the profile's default target.
         run: |
@@ -357,8 +406,9 @@ jobs:
       - name: Fingerprint gold layer
         if: env.REMOTE != 'true'
         working-directory: dbt1
-        # parity.py is addressed through $GITHUB_WORKSPACE: this step's cwd is the project,
-        # not the repo root, and the artifact path below is repo-relative.
+        # EVERY local leg, all five -- the DuckDB ones pass --no-fingerprint above precisely so
+        # this stays the only one. parity.py is addressed through $GITHUB_WORKSPACE: this step's
+        # cwd is the project, not the repo root, and the artifact path below is repo-relative.
         run: |
           dbt run-operation parity_fingerprint --target "$ENGINE" --profiles-dir . \
             | python "$GITHUB_WORKSPACE/.github/scripts/parity.py" capture "$GITHUB_WORKSPACE/history/parity"
