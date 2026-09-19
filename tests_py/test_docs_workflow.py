@@ -11,11 +11,14 @@ Run: python -m pytest tests_py/ -q
 """
 from __future__ import annotations
 
+import re
+
 import yaml
 
 from _layout import REPO, models_dir
 
 DOCS = REPO / ".github" / "workflows" / "docs.yml"
+PIPELINE = REPO / ".github" / "workflows" / "pipeline.yml"
 ENGINE = "duckrun"
 
 
@@ -98,3 +101,62 @@ def test_it_chains_off_the_pipeline_and_checks_out_that_branch():
     assert on["workflow_run"]["workflows"] == ["pipeline"]
     checkout = next(s for s in steps("site") if "actions/checkout" in str(s.get("uses", "")))
     assert "github.event.workflow_run.head_branch" in checkout["with"]["ref"]
+
+
+def test_it_only_publishes_when_the_pipeline_built_duckrun():
+    """The page is duckrun's CATALOG, so a pipeline run that built only iceberg (or dwh, or
+    spark) leaves nothing on it to republish. A `workflow_run` trigger cannot be filtered on
+    the triggering run's inputs -- the payload does not carry them -- so the gate reads the
+    engine selection back off `display_title`, and a manual dispatch bypasses it."""
+    gate = doc()["jobs"]["site"]["if"]
+    assert "github.event.workflow_run.display_title" in gate, gate
+    assert "github.event_name != 'workflow_run'" in gate, (
+        "a manual dispatch has no triggering run to read an engine list off, and must still "
+        "publish"
+    )
+    publish = doc()["jobs"]["publish"]
+    assert "if" not in publish, (
+        "publish must inherit the skip through `needs: site` -- an `if:` of its own would "
+        "run it on a skipped generate and deploy the previous run's artifact"
+    )
+
+
+def test_the_gate_matches_what_pipeline_run_name_actually_says():
+    """THE COUPLING, and the reason it is worth a test. `display_title` is pipeline.yml's
+    `run-name`, which is documented THERE as display only -- so this renders that template
+    for each of the six engine selections and checks the gate's verdict on the title it
+    produces. Reword the run-name and the gate stops matching: the docs job would skip every
+    time, green, and the page would freeze at whatever it last published."""
+    run_name = yaml.safe_load(PIPELINE.read_text(encoding="utf-8"))["run-name"]
+    gate = doc()["jobs"]["site"]["if"]
+
+    # The one expression in the run-name, and the label it substitutes for `all`. Pulling the
+    # label out rather than hard-coding it is what lets the run-name be reworded freely as
+    # long as the gate is reworded with it.
+    expr = re.search(r"\$\{\{(.+?)\}\}", run_name)
+    assert expr, f"pipeline.yml's run-name no longer computes anything: {run_name!r}"
+    branch = re.search(
+        r"inputs\.engines\s*==\s*'all'\s*&&\s*'([^']+)'\s*\|\|\s*inputs\.engines", expr.group(1)
+    )
+    assert branch, (
+        f"run-name no longer renders `all` as a label and every other selection as the raw "
+        f"engine name; the gate cannot read the selection off it: {expr.group(1)!r}"
+    )
+    head, tail = run_name.split("${{", 1)[0], run_name.split("}}", 1)[1]
+    tokens = re.findall(r"display_title,\s*'([^']+)'\)", gate)
+    assert tokens, f"the gate matches nothing against display_title: {gate!r}"
+
+    def publishes(engines):
+        title = head + (branch.group(1) if engines == "all" else engines) + tail
+        return any(t in title for t in tokens)
+
+    assert publishes("all"), (
+        f"a five-engine run renders {head + branch.group(1) + tail!r}, which the gate does "
+        f"not match -- the page would never be published again"
+    )
+    assert publishes(ENGINE), f"an engines: {ENGINE} run does not publish the page"
+    for other in ("iceberg", "ducklake", "dwh", "spark"):
+        assert not publishes(other), (
+            f"engines: {other} builds none of duckrun's tables, but the gate matches the "
+            f"title it renders -- the page would be republished unchanged"
+        )

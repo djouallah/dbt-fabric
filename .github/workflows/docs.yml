@@ -52,6 +52,10 @@ on:
     # build matrix is `fail-fast: false`, so the run's conclusion is "failure" if ANY of the
     # five legs failed -- including four that have nothing to do with duckrun's tables. The
     # catalog is a snapshot of what is in the lakehouse either way.
+    #
+    # A `workflow_run` trigger cannot be filtered on the triggering run's inputs, so this
+    # fires for all five engines and the `site` job's `if:` is what drops the runs that did
+    # not build duckrun. That is a SKIPPED job, not a runner, not a Pages deploy.
 
 # Pages serialises deploys on its own side; queue behind an in-flight publish rather than
 # racing it, and never cancel one -- a half-replaced page is the one outcome worth avoiding.
@@ -67,6 +71,27 @@ jobs:
   # would quietly go stale at whatever it last published.
   site:
     name: generate the docs
+    # ONLY WHEN THE PIPELINE ACTUALLY BUILT duckrun. The page is duckrun's catalog (see the
+    # header); a run dispatched with engines: iceberg — or dwh, or spark — leaves every
+    # duckrun table byte-for-byte where it was, so republishing it is a pointless deploy that
+    # queues behind the `pages` concurrency group and republishes an identical file.
+    #
+    # `inputs` IS EMPTY ON A `workflow_run` EVENT and the payload does not carry the
+    # triggering run's dispatch inputs either, so the engine selection is read back off
+    # `display_title` -- which is pipeline.yml's `run-name`, and that is computed from
+    # `inputs.engines` and nothing else. The coupling is cosmetic text in another file, so
+    # tests_py/test_docs_workflow.py pins the two spellings this matches against the two
+    # branches of that ternary; change the run-name and the test fails rather than the page
+    # silently freezing.
+    #
+    # A manual dispatch always runs: it is a human asking for a republish, and there is no
+    # triggering run to read an engine list off.
+    # `>-` with every line at the SAME indent: a more-indented continuation is a literal block
+    # to YAML and keeps its newlines inside the `${{ }}`.
+    if: >-
+      ${{ github.event_name != 'workflow_run'
+      || contains(github.event.workflow_run.display_title, 'all five engines')
+      || contains(github.event.workflow_run.display_title, 'duckrun') }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
