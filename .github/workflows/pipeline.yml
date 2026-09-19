@@ -48,7 +48,7 @@ on:
         default: "8"
         options: ["4", "8", "16", "32"]
       local_runner:
-        description: Build duckrun and iceberg on the GitHub runner instead of a Fabric notebook. The only way to prove the iceberg leg's credential vending works on an `az`-minted token, since inside Fabric notebookutils injects one at runtime. A VERIFICATION MODE — the runner has 7 GB, so pair it with a small process_limit. ducklake ignores this and always goes to Fabric.
+        description: local runner
         type: boolean
         default: false
       deploy:
