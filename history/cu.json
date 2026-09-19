@@ -207,6 +207,14 @@
    "runs": 20,
    "since": "2026-09-17T16:00:00",
    "timed": 64
+  },
+  {
+   "at": "2026-09-19T06:33:44Z",
+   "changed": 2,
+   "pending": 0,
+   "runs": 21,
+   "since": "2026-09-17T16:00:00",
+   "timed": 65
   }
  ],
  "runs": {
@@ -1105,8 +1113,27 @@
     }
    },
    "started": "2026-09-19T05:49:42Z"
+  },
+  "35426070763": {
+   "engines": {
+    "ducklake": {
+     "cu": {
+      "Jupyter Notebook Scheduled Run": 1573.726,
+      "Sql Usage": 53.94
+     },
+     "seconds": {
+      "Jupyter Notebook Scheduled Run": 393.429,
+      "Sql Usage": 60.0
+     },
+     "window": [
+      "2026-09-19T06:18:47Z",
+      "2026-09-19T06:30:30Z"
+     ]
+    }
+   },
+   "started": "2026-09-19T06:16:02Z"
   }
  },
  "schema": 1,
- "updated": "2026-09-19T06:04:43Z"
+ "updated": "2026-09-19T06:33:44Z"
 }
