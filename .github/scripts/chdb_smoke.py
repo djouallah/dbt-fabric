@@ -233,7 +233,15 @@ def phase_a_probes(table, cols):
          "IcebergMetadata::createInitial writes a v1.metadata.json into the lake and then "
          "registers it with catalog->createTable. main() re-lists the catalog afterwards "
          "rather than believing the statement. "
-         "THE ENGINE ARGUMENT IS THE WHOLE TRICK, and it took three runs to find. A "
+         "WHAT IT ACTUALLY MEASURED, after four runs: there is no SQL statement that can do "
+         "it. The bearer token reaches a configuration only through "
+         "setInitializationAsOneLake, whose single caller is "
+         "DatabaseDataLake::getConfiguration -- the path that resolves a table the catalog "
+         "ALREADY LISTS. A user-issued CREATE builds its configuration through the storage "
+         "factory instead, so is_onelake stays false and it falls into the one-argument "
+         "'lightweight loading' branch that carries no credentials at all. That is the "
+         "broken-URI failure below, and no engine argument fixes it. "
+         "THE ENGINE ARGUMENT WAS STILL WORTH FINDING. A "
          "catalog-backed create needs an EXPLICIT engine and path -- ClickHouse's own "
          "tests/integration/test_database_iceberg writes `ENGINE = IcebergS3('<url>', key, "
          "secret)` -- and the Azure spelling looks like a dead end, because IcebergAzure's "
@@ -249,7 +257,10 @@ def phase_a_probes(table, cols):
         (8, "INSERT INTO",
          f"INSERT INTO {DB}.{quoted(PROBE_TABLE)} VALUES (1, 10), (2, 20) "
          f"SETTINGS {WRITE_GATE}=1, {FULL_PATH}=1",
-         "the append every insert-only fact in this repo would take. INTO THE PROBE'S OWN "
+         "the append every insert-only fact in this repo would take -- and the one that "
+         "SHOULD work where the create cannot, since an existing catalog table gets its "
+         "configuration from the database and so carries the bearer token. It cannot be "
+         "measured until probe 7 leaves a table behind. INTO THE PROBE'S OWN "
          "TABLE, in a namespace no leg uses -- the legs' marts are not a test fixture. "
          "main() reads the rows back afterwards, because a write that returns is not a write "
          "that landed"),
@@ -464,7 +475,9 @@ def interpret(n, rows):
         listed = {str(r[0]) for r in rows}
         if PROBE_TABLE in listed:
             return (f"PASS -- {PROBE_TABLE} is registered in the catalog, so a chdb leg could "
-                    f"materialise a model. Left in place: nothing here drops anything")
+                    f"materialise a model. Left in place: nothing here drops anything. NOTE "
+                    f"this contradicts the source reading below; believe the run, and check "
+                    f"what actually landed in Fabric")
         return ("SILENT NO-OP -- the statement succeeded and the table is NOT in the catalog. "
                 "The failure mode to distrust, and the one that produced a wrong verdict "
                 "once: check allow_insert_into_iceberg is on and that the ENGINE reached the "
@@ -860,10 +873,17 @@ def read_verdict(results):
                 f"not ({inserted or 'no result'}). Every fact model in this repo is an "
                 f"incremental append, so a leg is blocked on exactly this." + ingest)
 
-    return (f"VERDICT: READS WORK, WRITE DID NOT -- the catalog and the storage read are both "
-            f"green, but the create failed ({created or 'no result'}). If the error names a "
-            f"storage engine rather than the catalog, it is the statement and not chDB."
-            + ingest)
+    return (f"VERDICT: READER, AND THE WRITE GAP IS NARROW AND NAMED -- the catalog, the "
+            f"storage read and the whole ingest path are green; the create failed "
+            f"({created or 'no result'}). The cause is credential plumbing, not a missing "
+            f"feature: the bearer token reaches a configuration only via "
+            f"setInitializationAsOneLake, called only from DatabaseDataLake::getConfiguration "
+            f"for tables the catalog ALREADY LISTS, so a user-issued CREATE gets the "
+            f"no-credential 'lightweight loading' branch. INSERT into an existing catalog "
+            f"table should therefore work where CREATE cannot -- unmeasured here, because "
+            f"probe 7 leaves nothing to insert into and the legs' marts are not a fixture. "
+            f"Worth an upstream issue: ClickHouse's support matrix lists OneLake CREATE TABLE "
+            f"as supported." + ingest)
 
 
 if __name__ == "__main__":
