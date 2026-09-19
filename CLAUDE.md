@@ -100,21 +100,24 @@ cd dbt1 && dbt build --target duckrun --profiles-dir .
   job in `pipeline.yml` is duckrun end to end (storage, Fabric and Power BI tokens all from
   the assertion), so it has no login step either.
 
-- **THE ICEBERG LEG IS `djouallah/dbt_fabric_python_iceberg`'S PROFILE, VERBATIM.** Two
-  credentials, both brought by the client: the `token:` on the ATTACH authorises the REST
-  CATALOG, an `azure` secret with the same `ONELAKE_TOKEN` authorises the DATA FILES, and
-  `access_delegation_mode: 'none'` is what says "do not wait for a vend". `threads: 2`, and
-  duckdb hand-pinned in `requirements/iceberg.txt`. **Port from that repo rather than deriving
-  the leg from ducklake plus an idea.** Three deviations shipped together on 2026-09-18
-  (vending, a floating `--pre duckdb`, `threads: 4`) and the run failed; the leg is back on the
-  configuration that works.
-- **OneLake CAN vend a per-table storage credential, and `compact_iceberg.py` uses it — the dbt
-  leg deliberately does not.** `adls.sas-token.onelake.dfs.fabric.microsoft.com`, usable since
-  duckdb/duckdb-iceberg#1331 (merged 2026-08-19). It is not a latent bug that the two differ:
-  the compact job is a metadata rewrite with its own duckdb install and it works, so leave it.
-  Vending in the dbt leg did write (run 35344582441 landed `fct_price_today` and
-  `fct_scada_today` with tests passing), so it is a live option — but it is its own change, on
-  its own run, and not something to fold into an unrelated one.
+- **THE ICEBERG LEG RUNS ON CREDENTIAL VENDING, AND THAT IS PROVEN FOR WRITES.** It holds ONE
+  credential — the `token:` on the ATTACH, for the REST catalog — and every data file is read
+  and written on the storage credential the catalog vends per table
+  (`adls.sas-token.onelake.dfs.fabric.microsoft.com`, usable since duckdb/duckdb-iceberg#1331,
+  merged 2026-08-19). **There is no `secrets:` block and no `access_delegation_mode`**; vending
+  is the default mode and `'none'` is what turns it OFF. Run 35424929721 (2026-09-19) built all
+  eight models green — `fct_price` 16.5s, `fct_scada` 31.3s, `fct_summary` 18.0s — so a LONG
+  write survives it, not just `compact_iceberg.py`'s metadata rewrite. The duckdb pin is what
+  makes it possible: before #1331 the vended credential is unusable.
+  The fallback, if a credential error ever appears, is exactly two things back —
+  `access_delegation_mode: 'none'` plus an `azure` secret with `ONELAKE_TOKEN`, which is what
+  `djouallah/dbt_fabric_python_iceberg` still carries. Do not put them back without a failing
+  run to point at.
+- **OTHERWISE THE LEG IS THAT SOURCE REPO'S PROFILE.** `threads: 2` and a hand-pinned duckdb
+  come straight from it. **Port from that repo rather than deriving the leg from ducklake plus
+  an idea:** three deviations shipped together on 2026-09-18 (vending, a floating
+  `--pre duckdb`, `threads: 4`) and the run failed, and because they moved at once none of them
+  could be judged. Vending only became a fact once it went in on its own.
 - **`stage_create_tables: 0` and `skip_create_table_metadata_updates: 1` are about what OneLake
   DOES, not about credentials.** It vends nothing on `createTable`, so a STAGED create-table-as
   cannot write its data files (`0` splits CTAS into create-then-insert), and it rejects the
@@ -191,6 +194,43 @@ cd dbt1 && dbt build --target duckrun --profiles-dir .
   whole build rather than probing the database first is the point — the connection that has to
   succeed is dbt's own, with its own token and extension. Only ducklake has a serverless
   database in its path, which is why only it is ever affected.
+- **`dbt1/profiles.yml` CARRIES NO COMMENTS — the non-obvious options are documented here
+  instead.** Do not "tidy" any of these away; each one is load-bearing:
+  - **iceberg `database: onelake` with `path: ':memory:'`** is legal ONLY because an `attach`
+    entry below it has `alias: onelake`. Without the matching alias dbt-duckdb's
+    `credentials.__pre_deserialize__` raises "Inconsistency detected between 'path' and
+    'database' fields in profile; the 'database' property must be set to 'memory'". The key is
+    also what makes the ATTACHED CATALOG the default database for every model, which is what
+    sends the gold layer to OneLake at all.
+  - **ducklake's three `mssql_*_timeout: 600`** — shaping a fresh catalog takes a couple of
+    minutes, well past the 30 s default, and a timeout part-way through leaves the catalog
+    half-built so the NEXT attach fails on a missing object.
+  - **ducklake `metadata_catalog: "__ducklake_metadata_ducklake"`** is required for
+    `delta_export()`: without it the exporter cannot find the catalog. Not mssql-specific — the
+    sqlite backend failed the same way.
+  - **ducklake `data_path`** is recorded in the catalog on FIRST attach and refuses a different
+    one afterwards ("DATA_PATH parameter ... does not match existing data path"). Do NOT reach
+    for `OVERRIDE_DATA_PATH`: per the DuckLake docs it overrides for that connection only and
+    leaves the stored value alone, so writes moved while `delta_export()` — which reads the
+    catalog — kept writing every `_delta_log` under the old path. Change the STORED value
+    (`dbo.ducklake_metadata`, key `data_path`); every schema, table and file path is relative
+    to it.
+  - **any ducklake attach option prefixed `meta_`** is forwarded to the CATALOG connection, and
+    the `DBT_ENV_SECRET_` prefix on its value is what keeps the token out of the dbt logs.
+  - **`temp_directory` is never in `settings:`** on any DuckDB leg — dbt-duckdb re-applies
+    settings on every cursor and DuckDB refuses to switch it once anything has spilled. It is
+    an `on-run-start` hook in `dbt_project.yml`, which still comments the reason at its site.
+- **DuckLake is MULTI-WRITER, and `mssql_ducklake` must be >= 0.1.1.** ducklake ran on
+  `threads: 1` until 2026-09-19, and neither reason survives: the catalog used to be a SQLite
+  file, which really is single-writer, and after it moved to a Fabric SQL DB the remaining
+  reason was an upstream bug — 0.1.0 keyed `ducklake_schema_versions` on
+  `(begin_snapshot, schema_version)` while DuckLake writes one row per table per snapshot, so
+  any commit touching two or more tables died on "Violation of PRIMARY KEY constraint
+  'pk_ducklake_schema_versions'" (hugr-lab/mssql-ducklake#30). v0.1.1 widened the key to include
+  `table_id` and **rebuilds it in place on attach**, so an existing catalog repairs itself and
+  there is nothing to run by hand. The source repo still carries the manual patch
+  (`scripts/ducklake_schema_versions_pk.sql` + `ensure_catalog_pk_fix()` in its notebook); that
+  was never ported here and must not be. The extension also wants the `mssql` extension >= 0.2.5.
 - **`delta_export()` takes no arguments** and writes each DuckLake table's `_delta_log` in
   place, which is why ducklake's `data_path` is the shared lakehouse's `Tables/` section
   (`Tables/ducklake_mart/<table>` is then a real lakehouse table). A two-argument call was

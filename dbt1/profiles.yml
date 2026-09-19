@@ -1,77 +1,20 @@
-# One profile, five outputs — one per adapter. Always invoked as
-#   dbt build --target <engine> --profiles-dir .
-#
-# THE TARGET NAME IS THE ENGINE SELECTOR. dbt_project.yml gates each models/aemo/<engine>/
-# tree on `target.name`, so these five names are load-bearing and must match the folder
-# names exactly: duckrun, iceberg, ducklake, dwh, spark. An output whose name is not one of
-# those enables NOTHING, and `dbt build` then reports "Nothing to do" and exits 0 — a broken
-# selection looks exactly like a clean run. That is what check_gating.py is for.
-#
-# Gating cannot key off `target.type`, the way direct-lake-parquet-layout does, because
-# `iceberg` and `ducklake` are BOTH `type: duckdb` here.
-
 aemo_electricity:
   target: duckrun
   outputs:
-
-    # ---------------------------------------------------------------- duckrun (Delta) ----
-    # DuckDB compute, written to OneLake as Delta Lake by delta-rs. The adapter mints every
-    # token it needs itself, which is why there is no secrets/extensions/attach block here
-    # and no login step in CI either.
     duckrun:
       type: duckrun
       schema: "{{ env_var('DBT_SCHEMA', 'mart') }}"
       root_path: "{{ env_var('ONELAKE_TABLES_PATH') }}"
-      # int(4), not a bare int filter: Jinja's bare `int` yields 0 on a non-numeric value and
-      # dbt accepts threads: 0.
       threads: "{{ env_var('DBT_THREADS', '4') | int(4) }}"
 
-    # ---------------------------------------------------------------- iceberg -----------
-    # DuckDB compute on dbt-duckdb, written through the OneLake Iceberg REST catalog.
-    # Runs on Fabric compute in CI (remote_dbt.py), like the other two DuckDB legs.
     iceberg:
       type: duckdb
       path: ':memory:'
-      # Legal alongside ':memory:' ONLY because an attach alias below matches it —
-      # dbt-duckdb's credentials.__pre_deserialize__ otherwise raises "Inconsistency detected
-      # between 'path' and 'database' fields in profile; the 'database' property must be set
-      # to 'memory'". It also makes the ATTACHED CATALOG the default database for every model,
-      # which is what sends the gold layer to OneLake; stg_csv_archive_log overrides it back
-      # to `memory` per model, because the catalog has no CREATE VIEW.
       database: onelake
       schema: "{{ env_var('DBT_SCHEMA', 'mart') }}"
-      # 2, NOT the DBT_THREADS default of 4 the other engines take. This is
-      # djouallah/dbt_fabric_python_iceberg's value and the leg is known to work at it; 4 was
-      # tried here and the notebook kernel was SIGKILLed folding fct_price and fct_scada
-      # concurrently (run 35344582441). An engine setting, not a convention to align.
       threads: 2
       settings:
         preserve_insertion_order: false
-        # NO temp_directory here. dbt-duckdb re-applies `settings:` on every cursor, and
-        # DuckDB then throws "Cannot switch temporary directory after the current one has
-        # been used" once anything has spilled. It is set once in on-run-start instead.
-        # No memory_limit either: DuckDB's default of 80% of host RAM is right for both a
-        # runner and a Fabric session, and a cap here would throttle the notebook too.
-      # CREDENTIAL VENDING: ONE credential, and the CATALOG hands out the other. The `token:`
-      # on the ATTACH below authorises the REST CATALOG, and that is the only thing this
-      # profile holds; every data-file read and write runs on the storage credential the
-      # catalog vends per table (OneLake IRC vends adls.sas-token.onelake.dfs.fabric.
-      # microsoft.com, usable since duckdb/duckdb-iceberg#1331, merged 2026-08-19).
-      # `.github/scripts/compact_iceberg.py` has attached this way since 2026-09-17.
-      #
-      # THERE IS DELIBERATELY NO `secrets:` BLOCK, and no `access_delegation_mode` either --
-      # vending is the default mode, and 'none' is what turns it OFF.
-      #
-      # WHAT IS AND IS NOT PROVEN. The source repo (djouallah/dbt_fabric_python_iceberg) brings
-      # its own `azure` secret with `access_delegation_mode: 'none'`, and that configuration is
-      # known to work end to end here (run 35350150404, green). Vending was tried once before,
-      # in run 35344582441, and it DID write -- fct_price_today and fct_scada_today landed with
-      # their tests passing -- but that run also moved the duckdb pin and `threads`, and it
-      # failed for unrelated reasons, so vending itself was never judged. THIS is that judgement:
-      # one change, nothing else touched, so the run reads cleanly either way. What it has to
-      # prove is a LONG write -- a full fct_scada / fct_price fold, not compaction's metadata
-      # rewrite. If it fails, put the secret and `access_delegation_mode: 'none'` back and
-      # nothing else.
       attach:
         - path: "{{ env_var('WAREHOUSE_PATH') }}"
           alias: onelake
@@ -79,58 +22,27 @@ aemo_electricity:
           options:
             endpoint: "{{ env_var('ONELAKE_ENDPOINT') }}"
             token: "{{ env_var('ONELAKE_TOKEN') }}"
-            # int 0/1, NOT false/true: dbt-duckdb silently DROPS boolean-false attach options,
-            # so `stage_create_tables: false` would vanish. OneLake vends nothing on
-            # createTable, so a STAGED create-table-as cannot write its data files (0 splits
-            # CTAS into create-then-insert), and it rejects the follow-up metadata update --
-            # "Only one instance of each update type is allowed per request".
             stage_create_tables: 0
             skip_create_table_metadata_updates: 1
-            # Must name a namespace that EXISTS: OneLake refuses namespace creation (422 on
-            # POST .../namespaces), and `dbo` always exists in a Fabric lakehouse.
             default_schema: dbo
-      # No `extensions:` list: azure / iceberg / avro auto-install and auto-load from the core
-      # repo on duckdb >= 1.5.4 (the ATTACH is what triggers it). The extension binary is keyed
-      # to the duckdb build, so the pin in requirements/iceberg.txt pins the iceberg extension
-      # with it -- and that pin is what makes vending possible at all, since the vended
-      # credential is unusable before duckdb-iceberg#1331.
 
-    # ---------------------------------------------------------------- ducklake -----------
-    # DuckDB compute over a DuckLake catalog whose metadata lives in a Fabric SQL DB, with
-    # the tables exported to Delta on run end. Runs on Fabric compute in CI (remote_dbt.py).
     ducklake:
       type: duckdb
       path: ':memory:'
       database: ducklake
       schema: "{{ env_var('DBT_SCHEMA', 'mart') }}"
-      # 1, deliberately, where every other engine uses 4: the DuckLake catalog is a
-      # single-writer metadata store. An engine constraint, not a convention.
-      threads: 1
-      config_options:
-        allow_unsigned_extensions: true
+      threads: "{{ env_var('DBT_THREADS', '4') | int(4) }}"
       settings:
         preserve_insertion_order: false
         mssql_query_timeout: 600
         mssql_metadata_timeout: 600
         mssql_connection_timeout: 120
-      # An explicit storage secret, unlike the iceberg output above -- DuckLake has no catalog
-      # to vend one, so the client must bring it. The original ducklake repo ran
-      # dbt INSIDE a Fabric notebook, where DuckDB got no OneLake token from the profile and
-      # did not need one; anywhere else that is an unauthenticated abfss:// write. ONELAKE_TOKEN
-      # is minted by notebookutils on the remote leg (see .github/scripts/remote_dbt.py) or by
-      # `az account get-access-token --resource https://storage.azure.com/` on a laptop.
       secrets:
         - type: azure
           name: onelake_storage
           provider: access_token
           access_token: "{{ env_var('ONELAKE_TOKEN') }}"
       extensions:
-        - parquet
-        - json
-        - azure
-        - httpfs
-        # mssql_ducklake REPLACES the stock `ducklake` extension — it compiles DuckLake in,
-        # so loading both fails. It must also load before the first ATTACH.
         - name: mssql
           repo: community
         - name: mssql_ducklake
@@ -138,61 +50,20 @@ aemo_electricity:
         - name: delta_export
           repo: community
       attach:
-        # The whole catalog DSN comes from one env var (provision.py emits it). ONE output,
-        # not a `ci` twin: the target name is the engine selector, so a second output named
-        # anything else would enable no models at all.
-        #   Server=<host>;Database=<db>;Encrypt=yes
         - path: "ducklake:mssql:{{ env_var('DUCKLAKE_CATALOG_DSN') }}"
           alias: ducklake
           options:
-            # Its OWN key, deliberately separate from FILES_PATH (the landing zone this leg
-            # READS). It used to be '{{ FILES_PATH }}/Tables' with provision.py re-pointing
-            # FILES_PATH at the ducklake item, which also sent THIS LEG'S DOWNLOADER to a
-            # private copy of the CSVs. Keep the two variables separate.
-            # The VALUE is the shared lakehouse's Tables section, as in the original ducklake
-            # repo: DuckLake lays its parquet out as <data_path>/<schema>/<table>/ and the
-            # delta_export() on-run-end hook writes each table's _delta_log IN PLACE, so under
-            # Tables/ the result is Tables/ducklake_mart/<table> -- a real lakehouse table that
-            # Direct Lake can read. Under Files/ the export produced nothing Fabric could see.
-            # The ducklake_* schema folders keep it apart from the other engines' tables.
             data_path: "{{ env_var('DUCKLAKE_DATA_PATH', env_var('FILES_PATH', '/tmp') ~ '/Tables') }}"
-            # A DuckLake catalog RECORDS its data path on first attach and refuses a different
-            # one afterwards ("DATA_PATH parameter ... does not match existing data path in the
-            # catalog"). Do NOT reach for OVERRIDE_DATA_PATH to move it: per the DuckLake docs it
-            # overrides the path for that connection only and leaves the stored value alone, so
-            # the writes moved to Tables/ while delta_export() -- which reads the catalog --
-            # kept writing every _delta_log under the old Files/ducklake path. The stored value
-            # is the thing to change (dbo.ducklake_metadata, key data_path, in the SQL DB); all
-            # schema, table and file paths are relative to it.
             data_inlining_row_limit: 0
-            # Required for delta_export: without it the exporter cannot find the catalog.
-            # Not mssql-specific — the sqlite backend fails the same way.
             metadata_catalog: "__ducklake_metadata_ducklake"
-            # Any option prefixed `meta_` is forwarded to the CATALOG connection. The
-            # DBT_ENV_SECRET_ prefix keeps it out of the dbt logs. On the CI leg it is minted
-            # inside Fabric by remote_dbt.py's setup hook; for a local run provision.py emits it.
             meta_access_token: "{{ env_var('DBT_ENV_SECRET_SQL_TOKEN', '') }}"
 
-    # ---------------------------------------------------------------- dwh (T-SQL) --------
-    # Fabric Warehouse, on Microsoft's official dbt-fabric. It talks TDS through the
-    # pure-Python mssql-python driver — hence NO `driver:` and NO `port:` key, and no ODBC
-    # to install on the runner. Requires Python >= 3.12.
-    #
-    # This used to be the dbt-fabric-samdebruyn fork, which existed to get a non-ODBC
-    # driver; the official adapter supports TDS directly now, so the fork is gone.
     dwh:
       type: fabric
-      # SQL analytics endpoint, e.g. xxxxxxxx.datawarehouse.fabric.microsoft.com
       server: "{{ env_var('FABRIC_DWH_SERVER') }}"
       database: "{{ env_var('FABRIC_DWH_NAME') }}"
       schema: "{{ env_var('DBT_SCHEMA', 'mart') }}"
       workspace_id: "{{ env_var('FABRIC_WORKSPACE_ID', '') }}"
-      #   CLI                             -> the logged-in `az` identity (CI + laptop)
-      #   ActiveDirectoryServicePrincipal -> tenant_id/client_id/client_secret below
-      #   notebookutils                   -> adapter self-resolves the token (Fabric notebook)
-      # An explicit access_token short-circuits all of them, so `CLI` alongside one is
-      # intentional: the provider uses the token when set and falls through to
-      # AzureCliCredential when it is empty.
       authentication: "{{ env_var('FABRIC_AUTH', 'CLI') }}"
       tenant_id: "{{ env_var('AZURE_TENANT_ID', '') }}"
       client_id: "{{ env_var('AZURE_CLIENT_ID', '') }}"
@@ -203,40 +74,18 @@ aemo_electricity:
       threads: "{{ env_var('DBT_THREADS', '4') | int(4) }}"
       retries: 1
 
-    # ---------------------------------------------------------------- spark -------------
-    # Fabric Spark over Livy. The dbt client runs on the runner and talks to Fabric; this is
-    # not a notebook.
     spark:
       type: fabricspark
       method: livy
       endpoint: https://api.fabric.microsoft.com/v1
       workspaceid: "{{ env_var('FABRIC_WORKSPACE_ID') }}"
-      # Resolved from the GUID by provision.py, never hardcoded — needed for schema-enabled
-      # lakehouse relations.
       workspace_name: "{{ env_var('FABRIC_WORKSPACE_NAME', '') }}"
       lakehouseid: "{{ env_var('FABRIC_LAKEHOUSE_ID') }}"
       lakehouse: "{{ env_var('FABRIC_LAKEHOUSE_NAME') }}"
       schema: "{{ env_var('DBT_SCHEMA', 'mart') }}"
       authentication: "{{ env_var('FABRIC_AUTH', 'CLI') }}"
-      # 4 is a HARD CAP here, not the convention it is on the other engines — do not raise it
-      # to match a change elsewhere. dbt-fabricspark defaults to high_concurrency, which opens
-      # one HC session (= one Spark REPL) PER THREAD, and Fabric packs at most five REPLs into
-      # one Livy session. 8 threads spilled into a second Livy session — a second Spark
-      # application, separately started and separately billed, for one `dbt run`.
       threads: 4
       connect_retries: 1
-      # Deliberately NO session_idle_timeout: setting it forces Fabric to bypass starter pools
-      # (cold on-demand cluster) and did NOT stop the observed ~35-40 min session deaths, so
-      # the cap is Fabric-side. The `|| dbt retry` in CI heals the tail.
-      #
-      # Compute sizing is NOT settable here — Livy API sessions take the WORKSPACE Spark pool
-      # settings. To change launch size, change the pool.
-      #
-      # writeHeavy is the workspace default and the no-op value. readHeavyForPBI is the only
-      # profile that turns V-Order on, and it also flips optimizeWrite, so it changes file
-      # layout well beyond V-Order — opt in per run. An explicit
-      # spark.sql.parquet.vorder.default is NOT a substitute: the resource profile is applied
-      # AFTER the session conf and overwrites that key.
       spark_config:
         name: dbt_fabric_aemo
         conf:
