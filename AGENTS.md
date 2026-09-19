@@ -144,6 +144,13 @@ cd dbt1 && dbt build --target duckrun --profiles-dir .
   with the run — the same session view duckrun and ducklake get. A literal
   `CREATE TEMPORARY VIEW` would be per-cursor and invisible to the fact models' pre_hooks.
   `compact_iceberg.py`'s `TABLES` therefore does NOT list it.
+  **The cost: `dbt retry` cannot re-run anything that reads it.** The view dies with the process
+  and retry does not re-run a model that passed, so every retried node depending on the archive
+  log reports `Catalog Error: Table with name "iceberg_landing.stg_csv_archive_log" does not
+  exist because schema "iceberg_landing" does not exist` instead of whatever actually failed
+  (seen in run 35427665396's four backlog assertions). It applies on the Fabric path too --
+  `run_in_fabric.py` retries as well. **On iceberg, re-run a failed build as a BUILD, not a
+  retry**, and read the FIRST `Completed with N errors` block for the real cause.
 - **`on_schema_change='sync_all_columns'` costs a manual DROP if a TYPE ever changes.** It
   performs a type change as add-copy-rename (`<col>__dbt_alter`), which is not atomic on the
   Iceberg catalog: it once added `latitude__dbt_alter` to `iceberg_mart.dim_duid`, failed the
