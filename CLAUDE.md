@@ -142,12 +142,14 @@ cd dbt1 && dbt build --target duckrun --profiles-dir .
   with the run — the same session view duckrun and ducklake get. A literal
   `CREATE TEMPORARY VIEW` would be per-cursor and invisible to the fact models' pre_hooks.
   `compact_iceberg.py`'s `TABLES` therefore does NOT list it.
-- **`on_schema_change='sync_all_columns'` is unsafe on the Iceberg catalog.** It performs a
-  type change as add-copy-rename (`<col>__dbt_alter`), which is not atomic there: it added
-  `latitude__dbt_alter` to `iceberg_mart.dim_duid`, failed the rename, and every later run
-  died on "Column with name latitude__dbt_alter already exists!" until the table was dropped.
-  `iceberg`'s `dim_duid` uses `append_new_columns`; a type change there means dropping the
-  table by hand. Do not "align" it with ducklake's `sync_all_columns`.
+- **`on_schema_change='sync_all_columns'` costs a manual DROP if a TYPE ever changes.** It
+  performs a type change as add-copy-rename (`<col>__dbt_alter`), which is not atomic on the
+  Iceberg catalog: it once added `latitude__dbt_alter` to `iceberg_mart.dim_duid`, failed the
+  rename, and every later run died on "Column with name latitude__dbt_alter already exists!"
+  until the table was dropped. `iceberg`'s `dim_duid` nevertheless uses `sync_all_columns`,
+  because that is the source repo's value and matching it is what got the leg working — the
+  same value as ducklake's. Adding a column is fine; a type change means dropping the table by
+  hand. `append_new_columns` was tried here on 2026-09-18 and reverted with the rest.
 - **duckdb versions per leg (2026-09-18):** ducklake is PINNED to 1.5.5 (its community
   extensions, `mssql_ducklake` and `delta_export`, publish for that line); iceberg is PINNED by
   hand to one dev build, `2.0.0.dev2609121639`, the way the source repo pins; duckrun alone
