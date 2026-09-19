@@ -26,23 +26,31 @@ Both of those are claims read off chdb-core's source. This job MEASURES them aga
 lakehouse, because "we read the source" is not the same as "we ran it", and the entry that
 lands in docs/candidate-engines.md should be a result.
 
-THE THIRD CLAIM, and the one that decides whether chDB could ever be a leg rather than a
-reader: DatabaseDataLake::createTable has an EMPTY BODY. A `CREATE TABLE` through the catalog
-returns success and registers nothing. That is this repo's signature failure mode — a green
-run that built nothing — arriving pre-installed, so probe 7 runs it and then goes looking for
-the table rather than trusting the statement.
+THE THIRD QUESTION, and the one that decides whether chDB could be a LEG rather than just a
+reader: can it write. ClickHouse's support matrix lists OneLake as one of only three catalogs
+that are NOT read-only — with Unity and SeaweedFS — CREATE TABLE and INSERT both Beta, while
+Glue, Iceberg REST, BigLake, Lakekeeper and Nessie are read-only. Probes 7 and 8 measure it.
 
-THE PROBE NEVER WRITES, AND THE RULE IS NOT A STYLE PREFERENCE.
-DatabaseDataLake::dropTable calls table->drop() on the real Iceberg table, so a stray
-`DROP TABLE` against this catalog would delete the iceberg leg's gold layer. There is
-therefore no DROP, no INSERT, no ALTER and no OPTIMIZE anywhere below, and no DROP DATABASE
-either: the session is in-memory and dying with the process is the cleanup.
-tests_py/test_chdb_smoke.py pins that.
+AN EARLIER VERSION OF THIS FILE ANSWERED THAT QUESTION WRONG, and how is worth keeping.
+It read `DatabaseDataLake::createTable`, saw an empty body, and concluded a create through
+the catalog registers nothing. That hook is not the create path: a datalake database holds no
+table metadata of its own, so creation goes through the catalog instead --
+IcebergMetadata::createInitial writes a v1.metadata.json into the lake and then calls
+catalog->createTable(namespace, table, ...). The probe then tested a statement that could
+never reach it (ENGINE = Memory, added to dodge an unrelated MergeTree error) with the write
+path switched off (no allow_insert_into_iceberg), got the empty hook, and published
+"VERDICT: READER ONLY" off the back of it. Reading source and then testing the wrong
+statement is worse than not testing, and searching the docs first would have caught it.
 
-Probe 7 is the single exception and the reason the rule is written down. Its body is
-literally empty upstream, so there is nothing to clean up — and if a table DOES appear, the
-log says so loudly and LEAVES IT, because auto-dropping it would route through the
-table->drop() path this script exists to stay away from.
+WHAT THE PROBE MAY WRITE, AND WHERE. Probes 7 and 8 create and populate ONE table in the
+`chdb_smoke` namespace, run-scoped by GITHUB_RUN_ID. Nothing else is ever written.
+
+AND IT NEVER DROPS. DatabaseDataLake::dropTable calls table->drop(), which unregisters the
+real table -- and every other table in this catalog is a leg's gold layer. There is no DROP
+anywhere below and no DROP DATABASE either, so the guard needs no exceptions and cannot be
+typo'd into deleting a mart. The cost is that each run leaves a small table behind in
+`chdb_smoke`; drop that namespace by hand if it ever accumulates.
+tests_py/test_chdb_smoke.py pins both halves.
 
 Env (the workflow supplies all of these):
     WAREHOUSE_PATH      "{workspace_id}/{lakehouse_id}" — the same value provision.py's
@@ -50,8 +58,6 @@ Env (the workflow supplies all of these):
     ONELAKE_TOKEN       the https://storage.azure.com/ token, the same one the iceberg leg uses
     LANDING_PATH        abfss:// URL of the landing lakehouse's Files section (optional; the
                         phase B CSV probes SKIP without it)
-    AZURE_TENANT_ID     passed through as onelake_tenant_id (unused in bearer mode, supplied
-                        because the documented CREATE DATABASE carries it)
     CHDB_SMOKE_SCHEMA   namespace for probe 7's create attempt (default chdb_smoke —
                         deliberately outside the <engine>_landing / <engine>_mart namespace
                         the five engines share)
@@ -69,7 +75,6 @@ import traceback
 
 WAREHOUSE = os.environ["WAREHOUSE_PATH"]
 TOKEN = os.environ["ONELAKE_TOKEN"]
-TENANT = os.environ.get("AZURE_TENANT_ID", "")
 SCHEMA = os.environ.get("CHDB_SMOKE_SCHEMA", "chdb_smoke")
 PIN_TABLE = os.environ.get("CHDB_SMOKE_TABLE", "")
 LANDING_PATH = os.environ.get("LANDING_PATH", "")
@@ -127,8 +132,16 @@ RAGGED = "input_format_csv_allow_variable_number_of_columns=1"
 #       is strictly better.
 MAY_FAIL = {9, 14}
 
-# Probe 7's table. Two-part, and the first part is a namespace no leg uses.
-PROBE_TABLE = f"{SCHEMA}.probe_create"
+# WRITE GATE. One setting turns on the whole Iceberg write path -- INSERT and the initial
+# CREATE alike (IcebergMetadata.cpp checks it in createInitial as well as the write paths).
+# Without it probes 7 and 8 are refused, and the refusal looks like "OneLake is read-only"
+# rather than "the probe left the gate shut", which is the mistake this file already made.
+WRITE_GATE = "allow_insert_into_iceberg"
+
+# Probes 7-8's table. The namespace is one no leg uses, and the name is RUN-SCOPED: nothing
+# here ever drops anything, so a fixed name would be created once and every later run would
+# measure "it already exists" instead of "the create worked".
+PROBE_TABLE = f"{SCHEMA}.probe_{os.environ.get('GITHUB_RUN_ID', 'local')}"
 
 
 def quoted(name):
@@ -145,10 +158,16 @@ def quoted(name):
 def attach_sql():
     """The CREATE DATABASE, and the banner's redacted twin.
 
-    oauth_server_uri and auth_scope are deliberately absent: in bearer mode chdb-core never
-    retrieves a token, so they are dead settings here. onelake_tenant_id is carried because
-    the documented statement carries it, not because the Azure credential uses it -- the
-    bearer path builds a StaticCredential and never looks at the tenant.
+    FOUR SETTINGS, AND THE DOCUMENTED STATEMENT HAS SEVEN. oauth_server_uri, auth_scope and
+    onelake_tenant_id all belong to the CLIENT-CREDENTIALS path: that one exchanges an id and
+    secret for a token against a tenant's endpoint. The bearer path does no exchange at all --
+    OneLakeCatalog stores the token straight into the auth header and Configuration.cpp wraps
+    it in a StaticCredential -- so the tenant is stored and never read.
+
+    This carried onelake_tenant_id anyway, on the grounds that the documented CREATE DATABASE
+    carries it. That documented statement is the client-secret example, and copying settings
+    across from it is how a dead argument comes to look required. Dropped after a hand-run
+    confirmed the attach works without it.
     """
     def build(token):
         return (
@@ -156,7 +175,6 @@ def attach_sql():
             f"ENGINE = DataLakeCatalog('{CATALOG_URL}')\n"
             f"SETTINGS catalog_type = 'onelake',\n"
             f"         warehouse = '{WAREHOUSE}',\n"
-            f"         onelake_tenant_id = '{TENANT}',\n"
             f"         onelake_bearer_token = '{token}'"
         )
     return build(TOKEN), build("***")
@@ -202,19 +220,25 @@ def phase_a_probes(table, cols):
         (5, "aggregate over real data", agg, why_agg),
         (6, "filtered read", pred, why_pred),
         (7, "CREATE TABLE through the catalog",
-         f"CREATE TABLE {DB}.{quoted(PROBE_TABLE)} (k Int64, v Int64) ENGINE = Memory",
-         "EXPECTED TO BE A SILENT NO-OP. DatabaseDataLake::createTable has an empty body "
-         "upstream, so this returns success and registers nothing -- main() re-lists the "
-         "catalog afterwards rather than believing the statement. THE ENGINE MUST BE NAMED "
-         "and must be Memory: without one chDB falls back to MergeTree and dies on 'MergeTree "
-         "storages require data path' (run 35433920589) BEFORE the statement ever reaches the "
-         "database, so the no-op went unmeasured and the probe reported a failure about "
-         "storage engines instead. Memory is the one that constructs without touching a disk "
-         "or the lake, which leaves the DATABASE's handling of the create as the only thing "
-         "being tested"),
-        (8, "INSERT INTO", "",
-         "SKIPPED, and not for want of trying: probe 7 cannot leave a table to insert into, "
-         "and the only other tables here are the duckrun and iceberg legs' gold layers"),
+         f"CREATE TABLE {DB}.{quoted(PROBE_TABLE)} (k Int64, v Int64) ENGINE = Iceberg",
+         "CAN A LEG MATERIALISE A MODEL AT ALL. ClickHouse's support matrix lists OneLake as "
+         "one of three catalogs that are NOT read-only (with Unity and SeaweedFS): CREATE "
+         "TABLE and INSERT are both Beta, and IcebergMetadata::createInitial writes a "
+         "v1.metadata.json into the lake and then registers it with catalog->createTable. "
+         "main() re-lists the catalog afterwards rather than believing the statement. "
+         "TWO THINGS THIS GOT WRONG BEFORE, and together they produced a whole wrong verdict "
+         "(run 35434183971 reported READER ONLY): no allow_insert_into_iceberg, which gates "
+         "the entire write path including create; and ENGINE = Memory, added to dodge a "
+         "MergeTree error, which routed the statement away from the Iceberg writer so the "
+         "empty IDatabase::createTable hook ran and registered nothing. That hook is not the "
+         "create path -- a datalake database does not hold its own table metadata -- and "
+         "reading source then testing the wrong statement is worse than not testing"),
+        (8, "INSERT INTO",
+         f"INSERT INTO {DB}.{quoted(PROBE_TABLE)} VALUES (1, 10), (2, 20)",
+         "the append every insert-only fact in this repo would take. INTO THE PROBE'S OWN "
+         "TABLE, in a namespace no leg uses -- the legs' marts are not a test fixture. "
+         "main() reads the rows back afterwards, because a write that returns is not a write "
+         "that landed"),
     ]
 
 
@@ -405,19 +429,29 @@ def landing_files(limit=2):
 def interpret(n, rows):
     """Status for a probe whose meaning is not "it ran".
 
-    Probe 7 is the whole reason this exists: CREATE TABLE through a DataLakeCatalog returns
-    success and registers nothing, so reporting PASS on the statement would be reporting the
-    exact failure mode the probe was written to catch. `rows` for 7 is the catalog listing
-    taken AFTER the create.
+    Probes 7 and 8 are the reason this exists. Neither is answered by its own statement: a
+    create through a catalog can return success and register nothing, and an insert can
+    return without landing a row. `rows` for 7 is the catalog listing taken AFTER the create;
+    for 8 it is a read-back of the table.
     """
     if n == 7:
         listed = {str(r[0]) for r in rows}
         if PROBE_TABLE in listed:
-            return ("CREATED -- the table IS in the catalog afterwards, which contradicts "
-                    "createTable's empty body upstream. LEFT IN PLACE deliberately: dropping "
-                    "it goes through table->drop(), which deletes data. Remove it by hand")
+            return (f"PASS -- {PROBE_TABLE} is registered in the catalog, so a chdb leg could "
+                    f"materialise a model. Left in place: nothing here drops anything")
         return ("SILENT NO-OP -- the statement succeeded and the table is NOT in the catalog. "
-                "A chdb leg has no way to materialise a model through this catalog")
+                "The failure mode to distrust, and the one that produced a wrong verdict "
+                "once: check allow_insert_into_iceberg is on and that the ENGINE reached the "
+                "Iceberg writer rather than a local storage engine")
+
+    if n == 8:
+        got = sorted(tuple(r) for r in rows)
+        if got == [(1, 10), (2, 20)]:
+            return "PASS -- both rows read back; the insert landed, not merely returned"
+        if not rows:
+            return ("SILENT NO-OP -- the INSERT returned and the table is EMPTY. The worst "
+                    "outcome here and the most worth reporting upstream; do not build on it")
+        return f"MISMATCH -- expected [(1, 10), (2, 20)], got {got}"
 
     if n == 13:
         if not rows or rows[0][0] is None:
@@ -523,10 +557,13 @@ def main():
 
     # ---- 1: does chDB take the token at all ------------------------------------------
     print(f"[1] attach the OneLake catalog - THE QUESTION THIS JOB EXISTS FOR", flush=True)
-    for line in (f"SET {GATE}=1\n" + redacted).split("\n"):
+    for line in (f"SET {GATE}=1\nSET {WRITE_GATE}=1\n" + redacted).split("\n"):
         print(f"    {line}", flush=True)
     try:
         run(sess, f"SET {GATE}=1")
+        # Probes 7 and 8 are refused without it, and the refusal reads as "OneLake is
+        # read-only" rather than "the gate was shut" -- which is the mistake this file made.
+        run(sess, f"SET {WRITE_GATE}=1")
         run(sess, attach)
         results.append((1, "attach the OneLake catalog", "PASS"))
         print("    PASS\n", flush=True)
@@ -590,14 +627,20 @@ def main():
             print(flush=True)
             continue
 
-        # PROBE 7 IS NOT ANSWERED BY ITS OWN STATEMENT. The create returns success whatever
-        # happened, so the catalog gets re-listed and interpret() reads THAT.
-        if n == 7:
+        # NEITHER 7 NOR 8 IS ANSWERED BY ITS OWN STATEMENT. A create can return success and
+        # register nothing; an insert can return without landing a row. So the catalog is
+        # re-listed after 7 and the table read back after 8, and interpret() reads THAT.
+        if n in (7, 8):
+            after = (f"SHOW TABLES FROM {DB}" if n == 7 else
+                     f"SELECT k, v FROM {DB}.{quoted(PROBE_TABLE)} ORDER BY k")
             try:
-                rows = run(sess, f"SHOW TABLES FROM {DB}")
+                rows = run(sess, after)
             except Exception as e:
                 rows = []
-                print(f"    (could not re-list the catalog: {oneline(e)})", flush=True)
+                print(f"    (could not verify: {oneline(e)})", flush=True)
+            if n == 8:
+                for r in rows[:5]:
+                    print(f"    -> {str(r)[:200]}", flush=True)
         else:
             for r in rows[:5]:
                 print(f"    -> {str(r)[:200]}", flush=True)
@@ -605,7 +648,7 @@ def main():
                 print(f"    -> ... {len(rows) - 5} more", flush=True)
 
         status = interpret(n, rows)
-        if n == 7 and status.startswith("CREATED"):
+        if status.startswith("SILENT NO-OP") or status.startswith("MISMATCH"):
             print(f"    ::warning::{status}", flush=True)
         print(f"    {status}\n", flush=True)
         results.append((n, name, status))
@@ -766,24 +809,35 @@ def read_verdict(results):
                   "bearer-token argument and url()+Authorization did not work either, so "
                   "there is no path to the landing zone every model reads.")
 
-    if created.startswith("SILENT NO-OP"):
-        return ("VERDICT: READER ONLY -- chDB reaches OneLake on the Entra bearer token this "
-                "repo already mints, lists the legs' tables and reads them, and "
-                "CANNOT WRITE THEM: CREATE TABLE through a DataLakeCatalog returns success "
-                "and registers nothing (DatabaseDataLake::createTable has an empty body), so "
-                "a chdb leg has no way to materialise a model. That rules out a sixth ENGINE "
-                "and leaves a second reader of the gold layer, which is a smaller and "
-                "different thing." + ingest)
+    inserted = by_n.get(8, "")
 
-    if created.startswith("CREATED"):
-        return ("VERDICT: WRITE PATH TO RE-EXAMINE -- reads work AND the create registered a "
-                "table, which contradicts createTable's empty body upstream. Check what "
-                "actually landed in Fabric before believing it; if it is real, the write "
-                "question reopens and an INSERT probe is the next thing to build." + ingest)
+    # A SILENT WRITE IS THE WORST OUTCOME, so it is checked before the happy path. A create
+    # or an insert that returns without landing anything looks identical to one that worked,
+    # from the statement alone -- which is why 7 re-lists and 8 reads back.
+    if created.startswith("SILENT NO-OP") or inserted.startswith("SILENT NO-OP") \
+            or inserted.startswith("MISMATCH"):
+        return ("VERDICT: SUSPECT -- a write returned without error and the catalog does not "
+                "show it. Do not build on this, and do not read it as 'OneLake is read-only' "
+                "either: that conclusion was drawn once already from a probe that had left "
+                "allow_insert_into_iceberg off and named a local storage engine. Check both "
+                "before believing the engine." + ingest)
 
-    return (f"VERDICT: READS WORK, WRITE UNMEASURED -- the catalog and the storage read are "
-            f"both green, but probe 7 did not answer ({created or 'no result'}), so whether "
-            f"a chdb leg could materialise anything is still open." + ingest)
+    if created.startswith("PASS") and inserted.startswith("PASS"):
+        return ("VERDICT: READ AND WRITE -- chDB reaches OneLake on the Entra bearer token "
+                "this repo already mints, lists the legs' tables, reads them, and CREATES AND "
+                "POPULATES a table of its own through the catalog. That is the whole adapter "
+                "contract a sixth engine needs on the write side, so what decides a chdb leg "
+                "now is ingest and the model shapes below, not access." + ingest)
+
+    if created.startswith("PASS"):
+        return (f"VERDICT: CREATE YES, INSERT NO -- the table registered but the append did "
+                f"not ({inserted or 'no result'}). Every fact model in this repo is an "
+                f"incremental append, so a leg is blocked on exactly this." + ingest)
+
+    return (f"VERDICT: READS WORK, WRITE DID NOT -- the catalog and the storage read are both "
+            f"green, but the create failed ({created or 'no result'}). If the error names a "
+            f"storage engine rather than the catalog, it is the statement and not chDB."
+            + ingest)
 
 
 if __name__ == "__main__":

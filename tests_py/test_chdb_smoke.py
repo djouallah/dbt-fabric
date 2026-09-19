@@ -1,4 +1,4 @@
-"""The chDB smoke test must stay a smoke test, and must stay read-only.
+"""The chDB smoke test must stay a smoke test, and must never drop anything.
 
 .github/workflows/chdb_smoke.yml probes whether chDB could become a SIXTH engine. It is not
 one. The whole design rests on that: it touches no gating, no parity, no deploy, and it is
@@ -8,15 +8,18 @@ wires the workflow into pipeline.yml "so it runs with everything else", and the 
 a leg nobody decided to build.
 
 THE OTHER HALF OF THIS FILE IS A DATA-LOSS GUARD, and it matters more than the absence tests.
-chDB's DatabaseDataLake::dropTable calls table->drop() on the REAL Iceberg table, so a
-`DROP TABLE` against the attached catalog would delete the iceberg leg's gold layer -- and
-`DROP DATABASE` is the same hazard one level up. The probe reads; the one CREATE it attempts
-is the no-op measurement, and a table that somehow appears is left in place and flagged.
-test_probe_never_writes is what keeps that true.
+chDB's DatabaseDataLake::dropTable calls table->drop(), which unregisters the REAL table --
+and every table in that catalog except the probe's own is a leg's gold layer. So the rule is
+that nothing is ever dropped, with no exceptions: a rule with no exceptions cannot be typo'd
+into deleting a mart. Probes 7 and 8 DO write, to one run-scoped table in a namespace no leg
+uses, and test_writes_only_ever_target_the_probes_own_table keeps it there.
 
-And one correctness test: CREATE TABLE through a DataLakeCatalog RETURNS SUCCESS and registers
-nothing. Reporting that as PASS would be reporting the exact failure mode -- a green run that
-built nothing -- the probe was written to catch.
+And the correctness tests, which exist because this probe answered the write question WRONG
+once -- run 35434183971 published "VERDICT: READER ONLY" off a create that had never reached
+the Iceberg writer. A create through a catalog can return success and register nothing; an
+insert can return without landing a row. Both are graded on what the catalog shows
+afterwards, never on the statement, and the probe has to get past `allow_insert_into_iceberg`
+and a local storage engine before it is measuring chDB at all.
 
 Run: python -m pytest tests_py/ -q
 """
@@ -223,13 +226,14 @@ def executed_sql(mod):
     return [s for s in out if s]
 
 
-def test_probe_never_writes(smoke):
-    """THE DATA-LOSS GUARD.
+def test_the_probe_never_drops(smoke):
+    """THE DATA-LOSS GUARD, and it has no exceptions.
 
-    DatabaseDataLake::dropTable calls table->drop() on the real Iceberg table, so a DROP
-    against the attached catalog deletes the iceberg leg's gold layer -- and the only tables
-    in that catalog ARE the leg's. DROP DATABASE is the same hazard one level up. The session
-    is in-memory, so dying is the cleanup and none of these are needed for anything.
+    DatabaseDataLake::dropTable calls table->drop(), which unregisters the real table -- and
+    every table in this catalog other than the probe's own is a leg's gold layer. So there is
+    no DROP at all rather than a careful DROP: a rule with no exceptions cannot be typo'd into
+    deleting a mart. The cost is a small table left behind per run, which is why the probe
+    table's name is run-scoped.
     """
     statements = " ".join(executed_sql(smoke)).lower()
     for anchor in ("select count()", "show tables from", "create database"):
@@ -237,31 +241,60 @@ def test_probe_never_writes(smoke):
             f"{anchor!r} is missing, so this test is no longer reading the statements the "
             f"script runs -- it would pass on a file that dropped everything"
         )
-    for banned in ("drop table", "drop database", "insert into", "alter table",
-                   "optimize table", "truncate table"):
+    for banned in ("drop table", "drop database", "truncate table", "alter table",
+                   "optimize table"):
         assert banned not in statements, (
-            f"chdb_smoke.py issues {banned!r}. The probe reads. The catalog's drop path "
-            f"deletes real data, and the only tables in it belong to the iceberg leg."
+            f"chdb_smoke.py issues {banned!r}. Nothing here drops anything: the catalog's "
+            f"drop path unregisters the real table, and the rest of this catalog is the "
+            f"legs' gold layers."
         )
 
-    # The session must stay ephemeral -- a path would persist the catalog attachment past the
-    # process, which is the state this design exists to not have.
-    assert "session.Session()" in SMOKE_PY.read_text(encoding="utf-8"), (
-        "the probe's session gained a path; it must be in-memory and die with the process"
+
+def test_writes_only_ever_target_the_probes_own_table(smoke):
+    """Probes 7 and 8 write. Everything they write goes to one run-scoped table in a
+    namespace no leg uses -- the legs' marts are not a test fixture."""
+    writes = [st for st in executed_sql(smoke)
+              if "INSERT INTO" in st or "CREATE TABLE" in st]
+    assert writes, "the write probes vanished; 7 and 8 are what decide a leg is possible"
+    for st in writes:
+        assert smoke.PROBE_TABLE in st, f"a write targets something else: {st}"
+
+    assert smoke.PROBE_TABLE.startswith(smoke.SCHEMA + "."), (
+        "the write target must sit in the probe's own namespace, not a leg's"
     )
+    for engine in ENGINES:
+        assert not smoke.PROBE_TABLE.startswith(f"{engine}_"), (
+            f"the write target is inside {engine}'s namespace"
+        )
+    # RUN-SCOPED, because nothing is ever dropped: a fixed name would be created once and
+    # every later run would measure "it already exists" instead of "the create worked".
+    assert smoke.PROBE_TABLE.rsplit("_", 1)[-1], smoke.PROBE_TABLE
 
+def test_the_create_reaches_the_iceberg_writer(smoke):
+    """THE TWO THINGS THAT MADE THIS PROBE ANSWER WRONG.
 
-def test_the_only_write_attempt_is_the_no_op_probe(smoke):
-    """One CREATE, into a namespace no leg uses, and it is the measurement."""
+    It reported "VERDICT: READER ONLY" (run 35434183971) because the create never reached the
+    Iceberg writer: no `allow_insert_into_iceberg`, which gates the whole write path including
+    the initial create, and `ENGINE = Memory` -- added to dodge an unrelated MergeTree error --
+    which routed the statement into a local storage engine. What answered was the empty
+    IDatabase::createTable hook, which is not the create path at all: a datalake database
+    holds no table metadata of its own, so creation goes through catalog->createTable.
+
+    ClickHouse's support matrix lists OneLake as one of three catalogs that are NOT read-only.
+    """
     creates = [sql for _, _, sql, _ in smoke.phase_a_probes("some_mart.some_table", [])
                if isinstance(sql, str) and "CREATE TABLE" in sql]
     assert len(creates) == 1, f"the write attempts changed: {creates}"
-    # AND IT MUST NAME AN ENGINE. Without one chDB falls back to MergeTree and dies on
-    # "MergeTree storages require data path" before the statement reaches the database, so the
-    # no-op goes unmeasured and the probe reports a failure about storage engines instead
-    # (run 35433920589). Memory constructs without touching a disk or the lake, which leaves
-    # the DATABASE's handling of the create as the only thing under test.
-    assert "ENGINE = Memory" in creates[0], creates[0]
+    assert "ENGINE = Iceberg" in creates[0], creates[0]
+    assert "Memory" not in creates[0], (
+        "ENGINE = Memory never reaches the Iceberg writer; it measures a local table"
+    )
+    assert smoke.WRITE_GATE == "allow_insert_into_iceberg"
+    src = SMOKE_PY.read_text(encoding="utf-8")
+    assert 'run(sess, f"SET {WRITE_GATE}=1")' in src, (
+        "the write gate is never opened, so probes 7 and 8 are refused and the refusal reads "
+        "as 'OneLake is read-only'"
+    )
     assert smoke.PROBE_TABLE.startswith(smoke.SCHEMA + "."), (
         "probe 7 must create inside the probe's own namespace, not a leg's"
     )
@@ -273,26 +306,54 @@ def test_the_only_write_attempt_is_the_no_op_probe(smoke):
 
 # ---- the probes measure what they claim to -----------------------------------------------
 
-def test_create_table_no_op_is_not_reported_as_pass(smoke):
-    """The whole reason probe 7 re-lists the catalog instead of trusting the statement.
+def test_a_write_that_did_not_land_is_never_reported_as_pass(smoke):
+    """Neither write probe may be answered by its own statement.
 
-    createTable has an empty body upstream: the statement succeeds and nothing is registered.
-    A PASS there would be this repo's signature failure mode -- a green run that built
-    nothing -- reported as a success by the probe meant to catch it.
+    A create through a catalog can return success and register nothing; an insert can return
+    without landing a row. Both look identical to the real thing from the statement alone, so
+    7 re-lists the catalog and 8 reads the table back -- and what those return is what
+    interpret() grades.
     """
-    absent = [("iceberg_mart.fct_price",), ("iceberg_landing.stg_csv_archive_log",)]
-    status = smoke.interpret(7, absent)
-    assert status.startswith("SILENT NO-OP"), status
-    assert not status.startswith("PASS")
-
-    # ... and if it ever DOES register, that is a different answer and must not be tidied
-    # away -- nor auto-dropped, which is the path that deletes data.
+    absent = [("iceberg_mart.fct_price",), ("duckrun_mart.fct_summary",)]
+    assert smoke.interpret(7, absent).startswith("SILENT NO-OP")
     present = absent + [(smoke.PROBE_TABLE,)]
-    created = smoke.interpret(7, present)
-    assert created.startswith("CREATED"), created
-    assert "LEFT IN PLACE" in created
+    assert smoke.interpret(7, present).startswith("PASS")
+
+    assert smoke.interpret(8, [(1, 10), (2, 20)]).startswith("PASS")
+    assert smoke.interpret(8, []).startswith("SILENT NO-OP")
+    assert smoke.interpret(8, [(1, 10)]).startswith("MISMATCH")
 
 
+def test_a_silent_write_outranks_the_happy_path(smoke):
+    """The worst outcome has to be checked first.
+
+    A create that registered plus an insert that vanished would otherwise read as a partial
+    success rather than as "do not build on this".
+    """
+    base = [(1, "x", "PASS"), (2, "x", "PASS (21 table(s))"), (4, "x", "PASS (1 row(s))"),
+            (10, "x", "PASS"), (11, "x", "PASS (1 row(s))")]
+    v = smoke.read_verdict(base + [(7, "x", "PASS -- registered"),
+                                   (8, "x", "SILENT NO-OP -- the table is EMPTY")])
+    assert "SUSPECT" in v
+    # ... and it must not resurrect the conclusion it got wrong before.
+    assert "READER ONLY" not in v
+    assert "allow_insert_into_iceberg" in v
+
+
+def test_read_and_write_is_the_verdict_when_both_land(smoke):
+    """The distinction the job now turns on: reading the gold layer is useful, writing it is
+    what makes a sixth ENGINE possible at all."""
+    base = [(1, "x", "PASS"), (2, "x", "PASS (21 table(s))"), (4, "x", "PASS (1 row(s))"),
+            (10, "x", "PASS"), (11, "x", "PASS (1 row(s))")]
+    v = smoke.read_verdict(base + [(7, "x", "PASS -- registered"),
+                                   (8, "x", "PASS -- both rows read back")])
+    assert "READ AND WRITE" in v
+    assert "INGEST:" in v, "phase B must still speak for itself; access is not ingest"
+
+    # Create without insert is its own answer: every fact model here is an incremental append.
+    half = smoke.read_verdict(base + [(7, "x", "PASS -- registered"),
+                                      (8, "x", "FAIL - not supported")])
+    assert "CREATE YES, INSERT NO" in half
 def test_probe_numbers_are_contiguous(smoke):
     """1 and 2 are run by main() (the read probes need a table discovered from 2's output),
     3-8 are phase A, 9-17 phase B. Gaps mean a probe was dropped without renumbering, and the
@@ -419,21 +480,6 @@ def test_catalog_without_storage_is_its_own_finding(smoke):
     v = smoke.read_verdict([(1, "x", "PASS"), (2, "x", "PASS (8 table(s))"),
                             (4, "x", "FAIL - ACCESS_DENIED")])
     assert "CATALOG YES, STORAGE NO" in v
-
-
-def test_the_no_op_verdict_rules_out_an_engine_not_a_reader(smoke):
-    """The distinction the whole job turns on: chDB reading the gold layer is useful and is
-    not a sixth engine. A verdict that blurred them would put a leg on the roadmap that
-    cannot materialise a single model."""
-    green = [(1, "x", "PASS"), (2, "x", "PASS (8 table(s))"), (4, "x", "PASS (1 row(s))"),
-             (7, "x", "SILENT NO-OP -- the statement succeeded and the table is NOT in the "
-                      "catalog"),
-             (10, "x", "PASS (1 row(s))"), (11, "x", "PASS (1 row(s))")]
-    v = smoke.read_verdict(green)
-    assert "READER ONLY" in v
-    assert "CANNOT WRITE" in v
-    # Phase B has to be able to speak for itself: reads working says nothing about ingest.
-    assert "INGEST:" in v
 
 
 def test_unreachable_files_is_reported_as_blocked_ingest(smoke):
