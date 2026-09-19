@@ -15,7 +15,12 @@ record: the Fabric items each leg touched, what it wrote, and what it cost in ca
   compute** — a throwaway Python notebook of 8 vCores through duckrun's `run_python`
   (`.github/scripts/remote_dbt.py`); tokens are minted inside Fabric by `notebookutils` and
   never travel. dwh and spark run dbt on the runner, where it is only a client of the
-  Warehouse / Livy. A `compact` job folds the Iceberg catalog's small files afterwards, before
+  Warehouse / Livy. The `local_runner` input (off by default) moves duckrun and iceberg onto the
+  runner too — a verification mode, because the notebook is what injects their tokens, so an
+  in-Fabric run cannot show whether the iceberg leg's credential vending works on an `az`-minted
+  one. Pair it with a small `process_limit`: the runner has 7 GB, and being shut down
+  mid-`fct_scada` is why these legs went to Fabric in the first place. ducklake opts out and
+  always goes to Fabric — only `run_in_fabric.py` waits out its auto-paused catalog. A `compact` job folds the Iceberg catalog's small files afterwards, before
   `layout` measures them. `process_limit` is a dispatch input: files each fact model folds per
   run, oldest first, on every engine. `deploy` (`none` / `no_model` / `full`) deploys the
   in-Fabric demo after the build (next section).

@@ -178,7 +178,16 @@ cd dbt1 && dbt build --target duckrun --profiles-dir .
   duckrun's `run_python`, 8 vCores; `run_in_fabric.py` is what runs there, invoking dbt
   in-process via `dbtRunner`). Do not move them
   back onto the runner: DuckDB folds the archive in memory and the 7 GB hosted runner was shut
-  down mid-`fct_scada` twice in one day. Tokens are minted in the notebook by `notebookutils`
+  down mid-`fct_scada` twice in one day. **The one sanctioned exception is `pipeline.yml`'s
+  `local_runner` input**, off by default: it builds duckrun and iceberg on the runner so the
+  iceberg leg's credential vending can be proven on an `az`-minted token, which an in-Fabric run
+  cannot do because the notebook injects the token itself. Verification only, and it wants a
+  small `process_limit`. ducklake is excluded on purpose — only `run_in_fabric.py` carries the
+  40613 loop for its auto-paused catalog SQL DB — which is also why `local` is NOT a value of
+  `fabric_cores`: `remote_dbt.py` reads that as `int()`, and the still-remote ducklake leg would
+  die on `int('local')`. A local leg writes no notebook GUID, so `measure_cu.py` skips it and it
+  is ABSENT from `cu.json` rather than zero; `RUNIN_LOCAL_RUNNER` in the run record is what says
+  why. Tokens are minted in the notebook by `notebookutils`
   (the `setup` hook); only the `FORWARD` allowlist of config travels, never anything
   token-shaped. `DATA_LAKEHOUSE_ID` from provision.py is what run_python needs.
 - **ducklake's catalog SQL DB auto-pauses, and the first connection after that FAILS.** A

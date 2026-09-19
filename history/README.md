@@ -69,6 +69,13 @@ hours they ran, and the ledger holds what those items cost in those hours.
                  "window": ["...Z", "...Z"], "partial": true}}}}}
 ```
 
+**A leg dispatched with `local_runner` is ABSENT here, not zero.** duckrun's and iceberg's only
+compute GUID is the Fabric notebook, written by `remote_dbt.py`; build them on the GitHub runner
+and there is no GUID, so `measure_cu.attribute()` skips the leg and no row is ever made for that
+(run, engine). That is the truth — GitHub compute is not Fabric capacity — but it is
+indistinguishable from a lost measurement, so check the run record's `inputs.local_runner` before
+reading a gap as a bug. ducklake never goes local and keeps its catalog SQL DB's `Sql Usage`.
+
 **Compute only, on purpose.** Every `OneLake …` operation is a storage transaction, and on a
 lakehouse shared by five engines the storage in any window is everybody's — there is nothing
 to attribute. The operation grain is kept so the compute is readable by name; storage never
