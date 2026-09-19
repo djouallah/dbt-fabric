@@ -32,7 +32,7 @@ def _notebook_source() -> str:
 
 
 def test_notebook_cell_sources_are_arrays_of_lines():
-    """CLAUDE.md: keep each cell's `source` as an array of lines, never one string."""
+    """AGENTS.md: keep each cell's `source` as an array of lines, never one string."""
     nb = json.loads(NOTEBOOK.read_text(encoding="utf-8"))
     for c in nb["cells"]:
         assert isinstance(c["source"], list) and all(isinstance(s, str) for s in c["source"]), (

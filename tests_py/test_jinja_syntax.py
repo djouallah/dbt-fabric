@@ -99,7 +99,7 @@ def test_no_comment_delimiter_inside_a_comment(path):
     and the damage is prose in the compiled SQL.
 
     Met writing this suite's own neighbours: a comment explaining the rule above quoted
-    `{# #}` to illustrate it and closed itself on the `#}` inside the illustration. CLAUDE.md
+    `{# #}` to illustrate it and closed itself on the `#}` inside the illustration. AGENTS.md
     lists it under "Jinja traps, all met in this repo"; this is the check for it.
     """
     text = path.read_text(encoding="utf-8")

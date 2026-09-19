@@ -55,7 +55,7 @@ def smoke():
 def test_sail_is_not_a_registered_engine():
     assert "sail" not in ENGINES, (
         "sail appeared in the engine list. If it has really become a sixth engine it needs a "
-        "model tree, a profile target, gating, parity and a deploy binding -- see CLAUDE.md. "
+        "model tree, a profile target, gating, parity and a deploy binding -- see AGENTS.md. "
         "If it has not, take it back out."
     )
 

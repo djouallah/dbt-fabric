@@ -21,7 +21,7 @@
 -- NESTED DERIVED TABLES, NOT CTEs, AND NO TOP-LEVEL `WITH`. dbt-fabric wraps a singular
 -- test's SQL inside a CTE of its own, and T-SQL does not allow a WITH clause in a CTE
 -- body: the CTEs here parsed as detached and the run died on "Invalid object name
--- 'per_date'". Same trap as the merge models (see CLAUDE.md); it bites tests too because
+-- 'per_date'". Same trap as the merge models (see AGENTS.md); it bites tests too because
 -- of the wrapper, even though a plain table model with a leading WITH is fine.
 --
 -- `MAX([date]) OVER ()` rather than a second scan for the max: it runs over the GROUPed

@@ -25,7 +25,7 @@ name: docs
 #          IS work, so `docs generate` (WHICH == 'generate') compiles the full SQL and fires
 #          no query. dwh does NOT: dbt1/macros/new_source_files.sql guards only on
 #          `not execute`, so generating its docs would fire real OPENROWSET queries against
-#          the Warehouse -- the exact trap CLAUDE.md warns about.
+#          the Warehouse -- the exact trap AGENTS.md warns about.
 #
 # **THE PAGE IS ONE FILE.** `--static` inlines the manifest and the catalog into
 # `target/static_index.html`, which is what duckrun's own deploy-docs and
