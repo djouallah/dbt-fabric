@@ -100,19 +100,18 @@ cd dbt1 && dbt build --target duckrun --profiles-dir .
   job in `pipeline.yml` is duckrun end to end (storage, Fabric and Power BI tokens all from
   the assertion), so it has no login step either.
 
-- **THE ICEBERG LEG RUNS ON CREDENTIAL VENDING, AND THAT IS PROVEN FOR WRITES.** It holds ONE
-  credential — the `token:` on the ATTACH, for the REST catalog — and every data file is read
-  and written on the storage credential the catalog vends per table
-  (`adls.sas-token.onelake.dfs.fabric.microsoft.com`, usable since duckdb/duckdb-iceberg#1331,
-  merged 2026-08-19). **There is no `secrets:` block and no `access_delegation_mode`**; vending
-  is the default mode and `'none'` is what turns it OFF. Run 35424929721 (2026-09-19) built all
-  eight models green — `fct_price` 16.5s, `fct_scada` 31.3s, `fct_summary` 18.0s — so a LONG
-  write survives it, not just `compact_iceberg.py`'s metadata rewrite. The duckdb pin is what
-  makes it possible: before #1331 the vended credential is unusable.
-  The fallback, if a credential error ever appears, is exactly two things back —
-  `access_delegation_mode: 'none'` plus an `azure` secret with `ONELAKE_TOKEN`, which is what
-  `djouallah/dbt_fabric_python_iceberg` still carries. Do not put them back without a failing
-  run to point at.
+- **CREDENTIAL VENDING COVERS THE `Tables/` SECTION ONLY. `Files/` STILL NEEDS A REAL SECRET.**
+  The iceberg leg carries BOTH: the `token:` on the ATTACH authorises the REST catalog and the
+  catalog vends a per-table storage credential for the Iceberg data files
+  (`adls.sas-token.onelake.dfs.fabric.microsoft.com`, usable since duckdb/duckdb-iceberg#1331);
+  the `azure` secret authorises the LANDING ZONE, which is plain `Files/` and which every model
+  reads. `access_delegation_mode` is absent, so vending stays on for the tables — `'none'` is
+  what would turn it off, and it is not wanted.
+  **A green in-Fabric run is not evidence the credentials are right**, because a notebook's own
+  identity already authorises OneLake: run 35424929721 built all eight models with no secret at
+  all, and the same profile on a runner (`local_runner`, 35427154840) died on the first model with
+  `Unauthorized` reading `Files/csv_raw_archive_log.parquet`. That asymmetry is why `local_runner`
+  exists.
 - **OTHERWISE THE LEG IS THAT SOURCE REPO'S PROFILE.** `threads: 2` and a hand-pinned duckdb
   come straight from it. **Port from that repo rather than deriving the leg from ducklake plus
   an idea:** three deviations shipped together on 2026-09-18 (vending, a floating
