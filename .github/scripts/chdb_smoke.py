@@ -138,6 +138,12 @@ MAY_FAIL = {9, 14}
 # rather than "the probe left the gate shut", which is the mistake this file already made.
 WRITE_GATE = "allow_insert_into_iceberg"
 
+# The second half of the write settings, from ClickHouse's own catalog tests: every INSERT in
+# tests/integration/test_database_iceberg carries write_full_path_in_iceberg_metadata beside
+# allow_insert_into_iceberg. It makes the metadata record absolute locations, which is what a
+# catalog-registered table needs to be resolvable by anything but ClickHouse.
+FULL_PATH = "write_full_path_in_iceberg_metadata"
+
 # Probes 7-8's table. The namespace is one no leg uses, and the name is RUN-SCOPED: nothing
 # here ever drops anything, so a fixed name would be created once and every later run would
 # measure "it already exists" instead of "the create worked".
@@ -220,21 +226,29 @@ def phase_a_probes(table, cols):
         (5, "aggregate over real data", agg, why_agg),
         (6, "filtered read", pred, why_pred),
         (7, "CREATE TABLE through the catalog",
-         f"CREATE TABLE {DB}.{quoted(PROBE_TABLE)} (k Int64, v Int64) ENGINE = Iceberg",
+         f"CREATE TABLE {DB}.{quoted(PROBE_TABLE)} (k Int64, v Int64) "
+         f"ENGINE = IcebergAzure('{probe_table_path()}')",
          "CAN A LEG MATERIALISE A MODEL AT ALL. ClickHouse's support matrix lists OneLake as "
-         "one of three catalogs that are NOT read-only (with Unity and SeaweedFS): CREATE "
-         "TABLE and INSERT are both Beta, and IcebergMetadata::createInitial writes a "
-         "v1.metadata.json into the lake and then registers it with catalog->createTable. "
-         "main() re-lists the catalog afterwards rather than believing the statement. "
-         "TWO THINGS THIS GOT WRONG BEFORE, and together they produced a whole wrong verdict "
-         "(run 35434183971 reported READER ONLY): no allow_insert_into_iceberg, which gates "
-         "the entire write path including create; and ENGINE = Memory, added to dodge a "
-         "MergeTree error, which routed the statement away from the Iceberg writer so the "
-         "empty IDatabase::createTable hook ran and registered nothing. That hook is not the "
-         "create path -- a datalake database does not hold its own table metadata -- and "
-         "reading source then testing the wrong statement is worse than not testing"),
+         "one of three catalogs that are NOT read-only (with Unity and SeaweedFS), and "
+         "IcebergMetadata::createInitial writes a v1.metadata.json into the lake and then "
+         "registers it with catalog->createTable. main() re-lists the catalog afterwards "
+         "rather than believing the statement. "
+         "THE ENGINE ARGUMENT IS THE WHOLE TRICK, and it took three runs to find. A "
+         "catalog-backed create needs an EXPLICIT engine and path -- ClickHouse's own "
+         "tests/integration/test_database_iceberg writes `ENGINE = IcebergS3('<url>', key, "
+         "secret)` -- and the Azure spelling looks like a dead end, because IcebergAzure's "
+         "credential surface has no bearer slot any more than azureBlobStorage's does. It is "
+         "not: StorageAzureConfiguration::fromAST has an is_onelake branch taking EXACTLY ONE "
+         "argument and supplying the catalog's own bearer token, so inside a OneLake catalog "
+         "the engine takes an abfss url and no credentials at all. "
+         "WHAT THE EARLIER RUNS MEASURED INSTEAD: ENGINE = Memory (run 35434183971) never "
+         "reached the Iceberg writer, so the empty IDatabase::createTable hook answered and "
+         "the job published 'READER ONLY'; bare ENGINE = Iceberg (run 35437003002) defaulted "
+         "to the S3 flavour with no arguments -- 'Storage S3 requires 1 to 9 arguments', a "
+         "storage engine complaining, which is what the verdict told us to look for"),
         (8, "INSERT INTO",
-         f"INSERT INTO {DB}.{quoted(PROBE_TABLE)} VALUES (1, 10), (2, 20)",
+         f"INSERT INTO {DB}.{quoted(PROBE_TABLE)} VALUES (1, 10), (2, 20) "
+         f"SETTINGS {WRITE_GATE}=1, {FULL_PATH}=1",
          "the append every insert-only fact in this repo would take. INTO THE PROBE'S OWN "
          "TABLE, in a namespace no leg uses -- the legs' marts are not a test fixture. "
          "main() reads the rows back afterwards, because a write that returns is not a write "
@@ -249,6 +263,18 @@ def first_col(cols, kinds):
         if bare.startswith(tuple(kinds)):
             return name
     return None
+
+
+def probe_table_path():
+    """The abfss location probe 7 hands IcebergAzure.
+
+    `Tables/<namespace>/<table>`, which is where Fabric keeps a lakehouse's tables and what
+    the OneLake catalog's own SHOW CREATE TABLE renders. WAREHOUSE_PATH is already
+    "<workspace_id>/<lakehouse_id>", so both halves are in hand -- and the DFS host, not the
+    blob one, because that is the spelling an abfss url carries.
+    """
+    ws, item = WAREHOUSE.split("/", 1)
+    return f"abfss://{ws}@{DFS_HOST}/{item}/Tables/{PROBE_TABLE.replace('.', '/')}"
 
 
 def blob_url(name):
