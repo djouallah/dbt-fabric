@@ -3,6 +3,19 @@
 # LATEST PRE-RELEASE duckdb, like the iceberg leg, so the two DuckDB-on-OneLake legs run the
 # same engine build (2026-09-17). duckrun's own duckdb constraint still applies; `--pre` only
 # lets pip consider dev builds inside it. deltalake stays unpinned: duckrun pins it.
+#
+# `[dbt]` IS REQUIRED, AND THIS IS THE ONLY REQUIREMENTS FILE HERE THAT NEEDS IT. duckrun 0.5.0
+# moved dbt-core and dbt-duckdb behind that extra -- plain `pip install duckrun` is the
+# connect()/deploy API alone (DuckDB, delta-rs, OneLake auth, no dbt tree). This leg builds with
+# `--target duckrun`, i.e. duckrun's OWN dbt adapter, and nothing else in this file supplies dbt,
+# so a bare `duckrun` leaves the leg with no adapter at all. The other four legs stay on plain
+# `duckrun` deliberately: each brings its own adapter (dbt-duckdb / dbt-fabric / dbt-fabricspark)
+# and wants duckrun only for provisioning and for launching the notebook -- see iceberg.txt.
+#
+# The extra also carries `dbt-core<2.0` and `dbt-duckdb<2.0`, which is what keeps the GLOBAL
+# `--pre` above from letting pip consider a dbt-core 2 pre-release for this dbt 1.x leg. That is
+# the exact failure iceberg.txt records from 2026-09-18, and on THIS file `--pre` is still live,
+# so the ceiling is load-bearing rather than incidental.
 --pre
 duckdb
-duckrun
+duckrun[dbt]
