@@ -96,8 +96,7 @@ def test_the_write_permissions_do_not_spread():
 
 
 def test_it_chains_off_the_pipeline_and_checks_out_that_branch():
-    """Same trap as capacity.yml's: on a `workflow_run` event the default checkout is the
-    TRIGGERING run's SHA and `github.ref_name` is the default branch, so a topic-branch
+    """On a `workflow_run` event the default checkout is the TRIGGERING run's SHA and `github.ref_name` is the default branch, so a topic-branch
     pipeline would publish main's models as if they were the ones that ran."""
     d = doc()
     on = d[True] if True in d else d["on"]

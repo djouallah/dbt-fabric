@@ -22,7 +22,6 @@ from _layout import REPO
 GITIGNORE = REPO / ".gitignore"
 WORKFLOWS = REPO / ".github" / "workflows"
 PIPELINE = WORKFLOWS / "pipeline.yml"
-CAPACITY = WORKFLOWS / "capacity.yml"
 
 
 def test_fingerprints_are_gitignored():
@@ -59,18 +58,10 @@ def _triggers(path):
 
 
 def test_only_ci_runs_on_push():
-    """pipeline.yml and capacity.yml COMMIT to history/. A push made with GITHUB_TOKEN triggers
-    nothing, which is the only reason two committers are safe today; a `push:` trigger on
-    either would let a PAT-authenticated commit start a paid build or loop the ledger."""
+    """pipeline.yml COMMITS to history/. A push made with GITHUB_TOKEN triggers nothing, which
+    is what makes committing from a workflow safe; a `push:` trigger would let a
+    PAT-authenticated commit start a paid build."""
     for wf in sorted(WORKFLOWS.glob("*.yml")):
         if wf.name == "ci.yml":
             continue
         assert "push" not in _triggers(wf), f"{wf.name} must not run on push"
-
-
-def test_capacity_checks_out_the_triggering_branch():
-    """On a `workflow_run` event the default checkout is the TRIGGERING run's SHA, from before
-    the record job pushed -- the read would then miss the very run that triggered it."""
-    text = CAPACITY.read_text(encoding="utf-8")
-    assert "workflow_run" in _triggers(CAPACITY)
-    assert "ref: ${{ github.event.workflow_run.head_branch" in text

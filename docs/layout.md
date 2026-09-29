@@ -25,8 +25,7 @@ onelake.py                                 OneLake I/O for the scripts (azure-id
 .github/scripts/parity.py                  proves the engines agree
 .github/scripts/record.py                  the run record: items by GUID, each leg's window
 .github/scripts/layout.py                  what each engine wrote: files, row groups, encodings, order
-.github/scripts/measure_cu.py              what each engine cost: capacity units per run and engine
-history/                                   parity/ fingerprints, runs/ records, cu.json ledger
+history/                                   parity/ fingerprints, runs/ records
 semantic_model/                            one Direct Lake semantic model over <engine>_mart;
                                            deployment is coming next (Fabric Jumpstart)
 docs/                                      this, and the rest of docs/README.md

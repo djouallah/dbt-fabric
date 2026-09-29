@@ -186,34 +186,21 @@ alone can be dry-run into a local directory (`LANDING_PATH=./landing`).
 - `pipeline.yml` being manual. It commits to `history/parity/`, so a push trigger makes the
   commit start the next run.
 
-## Measuring what it cost and what it wrote
+## What each engine wrote
 
-Ported from `djouallah/direct-lake-parquet-layout` (`record.py`, `cu/measure.py`, `stats.py`);
-`history/README.md` is the reader-facing account. What differs here, and why:
+Ported from `djouallah/direct-lake-parquet-layout` (`record.py`, `stats.py`);
+`history/README.md` is the reader-facing account.
 
-- **Nothing is torn down, so a GUID does not belong to one run.** The lakehouse and the
-  warehouse persist, so every leg records `started`/`finished` (`record.py leg-start` /
-  `leg-end` in `pipeline.yml`, bracketing build + tests + **fingerprint** — on spark the
-  run-operation opens a new Livy session, on dwh it is a full Warehouse Query) and the GUIDs
-  its compute bills against (`legs.<engine>.compute`). `measure_cu.py` sums the hour grain of
-  `Metrics By Item Operation And Hour` over those items in those hours, per run × engine.
-- **Compute only.** Every `OneLake …` operation is excluded, in the DAX and again in Python:
-  on a shared lakehouse the storage transactions in any window are both legs' plus whatever
-  else touched the item. Compute is unambiguous per engine — dwh's `Warehouse Query` on its
-  own item, spark's Livy run on the lakehouse (only the spark leg opens Livy sessions there).
-- **Caveats the window cannot fix:** two runs under an hour apart share an hour; a Livy
-  session idling past leg-end bills into the next hour. Documented, not fixed.
-- **`items` and `legs` are dicts, never lists.** The fragment merge is a recursive dict union
-  that REPLACES lists, so a list would let the leg-end fragment wipe the leg-start.
-  Fragments merge in BASENAME order (`download-artifact` nests each in its own directory).
-  The one list that accumulates is `legs.<engine>.compute`, and `record.leg()` does the union
-  itself.
-- **`RUN_RECORD` unset is a silent no-op** — `provision.py` must stay runnable by hand. The
-  cost: a job that forgets it produces a record missing those items with nothing red. Every
-  fragment upload is `if-no-files-found: ignore`; `record.py finish` logs the item table it
-  assembled.
+- **The run record is run stamp + inputs + `layout` + `parity`.** `record.py init` in `land`,
+  `layout.py` merges `layout`, `record.py finish` in the `record` job folds in this run's
+  fingerprints and commits it to `history/runs/`.
+- **Everything in the record is keyed by name, never a list.** The fragment merge is a
+  recursive dict union that REPLACES lists. Fragments merge in BASENAME order
+  (`download-artifact` nests each in its own directory).
+- **`RUN_RECORD` unset is a silent no-op**, so the scripts stay runnable by hand. Every
+  fragment upload is `if-no-files-found: ignore`.
 - **`runner.temp` is not a named value at job level.** `RUN_RECORD` is set from a step into
-  `$GITHUB_ENV`, and the fragment lives outside the checkout so the committing jobs never see
+  `$GITHUB_ENV`, and the fragment lives outside the checkout so the committing job never sees
   an untracked `record/`.
 - **Compare this run's downloaded fingerprints, never `history/parity/`.** After the first
   commit that directory also holds the previous run's, so a leg that failed this run would be
@@ -224,17 +211,11 @@ Ported from `djouallah/direct-lake-parquet-layout` (`record.py`, `cu/measure.py`
   schema rule is `layout.mart_schema()` — the one Python copy of `generate_schema_name()`.
   Its heavy imports (`duckdb`, `onelake`, `provision`) are lazy so `tests_py/test_layout.py`
   runs in `ci.yml`'s unit job; `provision.py` reads `FABRIC_WORKSPACE_ID` at import.
-- **`capacity.yml` and `pipeline.yml` must never gain a `push:` trigger.** Both commit to
-  `history/`. GITHUB_TOKEN pushes trigger nothing, which is the only reason two committers are
-  safe; `tests_py/test_parity_record.py` pins the trigger set. On a `workflow_run` event the
-  checkout MUST use `github.event.workflow_run.head_branch`: the default is the triggering
-  run's SHA, from before the record job pushed.
-- **Secrets the CU read needs:** `CU_METRICS_WORKSPACE_ID`, `CU_METRICS_MODEL_ID`,
-  `CU_CAPACITY_ID`. The Power BI token comes from azure-identity after `azure/login`.
-  `CU_MODEL_OFFSET_HOURS` is the app's own clock (+10 on this tenant); a wrong value reads as
-  "no activity", not as an error.
-- **Records before the split** (history/runs/ and cu.json from before 2026-09-29) include legs
-  of engines that now live in the community repo. They are the past record; leave them.
+- **`pipeline.yml` must never gain a `push:` trigger.** It commits to `history/`; GITHUB_TOKEN
+  pushes trigger nothing, which is what makes that safe. `tests_py/test_parity_record.py` pins
+  the trigger set. On a `workflow_run` event (`docs.yml`) the checkout MUST use
+  `github.event.workflow_run.head_branch`: the default is the triggering run's SHA, from before
+  the record job pushed.
 
 ## Domain facts worth keeping
 

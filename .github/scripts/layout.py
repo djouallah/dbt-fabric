@@ -34,7 +34,7 @@ repo's README explains why each of those is worth a number; here they are simply
 
 HEAVY IMPORTS ARE LAZY. duckdb, onelake (azure SDKs) and provision (which reads
 FABRIC_WORKSPACE_ID at import) are imported inside the functions that need them, so the pure
-functions below import offline for tests_py/test_layout.py -- the same rule measure_cu.py follows.
+functions below import offline for tests_py/test_layout.py.
 """
 from __future__ import annotations
 

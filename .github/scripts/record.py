@@ -3,31 +3,19 @@
 as text. Ported from djouallah/direct-lake-parquet-layout's record.py.
 
     RUN_RECORD=<path> python .github/scripts/record.py init
-    RUN_RECORD=<path> python .github/scripts/record.py leg-start <engine>
-    RUN_RECORD=<path> python .github/scripts/record.py leg-end <engine> <outcome>
     python .github/scripts/record.py finish <fragment dir> <parity dir | -> <dest>
 
-**The point of this file is the Fabric item GUID plus the leg's time window.** The CU ledger
-(measure_cu.py) attributes capacity units to a run and an engine by asking the Capacity Metrics
-model for the compute items each leg used, inside the hours that leg ran. Nothing else in the
-repo writes those two facts down: provision.py resolves every GUID and logs it to stderr, and
-the leg's start/finish exist only in the Actions UI.
+What a record holds: the run stamp and the dispatch inputs (`init`, in the `land` job), what
+each engine WROTE (`layout`, from layout.py) and this run's parity fingerprints (`finish`, in
+the `record` job). It is committed to history/runs/.
 
-Unlike the source repo, NOTHING IS TORN DOWN HERE. The lakehouse and the warehouse outlive every
-run, so a GUID does not belong to one run -- which is why every leg
-records `started` / `finished` beside its `compute` GUIDs, and why the ledger is keyed per run
-and engine rather than per item. See history/README.md.
-
-Env in: `RUN_RECORD`, the fragment this job writes. **Unset is a silent no-op**, deliberately:
-provision.py must stay runnable by hand (and inside the demo notebook) without a record path. The cost of that choice is that a job which forgets its RUN_RECORD env fails
-silently, producing a record missing those items -- so every fragment upload is
-`if-no-files-found: ignore` and `finish` logs the item table it assembled.
+Env in: `RUN_RECORD`, the fragment this job writes. **Unset is a silent no-op**, deliberately,
+so the scripts stay runnable by hand. Every fragment upload is `if-no-files-found: ignore`.
 
 Each job writes its OWN fragment -- separate jobs run on separate runners and cannot share one --
-and the `record` job merges them by BASENAME order. `items` and `legs` are dicts keyed by GUID
-and engine rather than lists: a deep merge unions dicts and REPLACES lists, so the leg-end
-fragment's `{finished, outcome}` lands on top of the leg-start fragment's `{started}` without
-either knowing about the other. tests_py/test_record.py pins this.
+and the `record` job merges them by BASENAME order. The merge is a deep dict union that REPLACES
+lists, which is why everything in the record is keyed by name. tests_py/test_record.py pins
+this.
 """
 from __future__ import annotations
 
@@ -44,7 +32,7 @@ def path(p: str | None = None) -> str | None:
 
 
 def now() -> str:
-    """UTC, second precision, `Z` suffix. measure_cu.py converts to the metrics model's clock."""
+    """UTC, second precision, `Z` suffix."""
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
@@ -74,45 +62,6 @@ def merge(obj: dict, p: str | None = None) -> str | None:
     with open(p, "w", encoding="utf-8") as f:
         json.dump(cur, f, indent=1, sort_keys=True, default=str)
     return p
-
-
-def item(guid: str | None, role: str, kind: str, name: str, **extra) -> str | None:
-    """Record one Fabric item under its GUID.
-
-    `role` is a closed vocabulary -- `landing` | `data` | `warehouse` | `catalog` | `folder` |
-    `compute` -- and `kind` is Fabric's own item type (`Lakehouse`, `Warehouse`, `SQLDatabase`,
-    `Notebook`, `Folder`). The GUID is upper-cased because the metrics model returns item ids
-    upper-cased; normalising at write time makes the join a dict lookup.
-
-    A blank GUID is dropped rather than recorded as null: a null key joins to nothing and reads
-    as an item nobody can find.
-    """
-    if not guid:
-        return None
-    rec = {"role": role, "kind": kind, "name": name, **extra}
-    return merge({"items": {str(guid).upper(): rec}})
-
-
-def leg(engine: str, **fields) -> str | None:
-    """Record facts about one engine's leg: `started`, `finished`, `outcome`, `compute` (the
-    GUIDs whose compute operations belong to this leg). Merged, so the fields accumulate across
-    the steps that write them.
-
-    `compute` ACCUMULATES -- the one list in the record that does. The merge replaces lists,
-    so a leg whose compute is written by more than one step would otherwise keep only the
-    last writer's items. Upper-cased, de-duplicated, order kept.
-    """
-    if not engine:
-        return None
-    if "compute" in fields:
-        new = [str(g).upper() for g in fields["compute"] if g]
-        p = path()
-        if p and os.path.exists(p):
-            with open(p, encoding="utf-8") as f:
-                cur = ((json.load(f).get("legs") or {}).get(engine) or {}).get("compute") or []
-            new = list(cur) + [g for g in new if g not in cur]
-        fields["compute"] = new
-    return merge({"legs": {engine: fields}})
 
 
 def fragments(paths) -> list[str]:
@@ -191,26 +140,15 @@ def finish(frag_dir: str, parity_dir: str | None, dest: str) -> str:
     merge({"run": {"finished": now()}}, dest)
     with open(dest, encoding="utf-8") as f:
         doc = json.load(f)
-    items, legs = doc.get("items") or {}, doc.get("legs") or {}
     sys.stderr.write(f"  merged {len(got)} fragment(s): "
                      + ", ".join(os.path.basename(g) for g in got) + "\n"
-                     f"  {dest}: {len(items)} item GUIDs, {len(legs)} leg(s), "
-                     f"{len(fps)} fingerprint(s), top-level keys {sorted(doc)}\n")
-    for guid, it in sorted(items.items(), key=lambda kv: (kv[1].get("role", ""),
-                                                          kv[1].get("name", ""))):
-        sys.stderr.write(f"    {it.get('role', '?'):<10} {it.get('name', '?'):<24} {guid}"
-                         + (f"  ({it['engine']})" if it.get("engine") else "") + "\n")
-    for engine, lg in sorted(legs.items()):
-        sys.stderr.write(f"    leg {engine:<9} {lg.get('started', '?')} -> "
-                         f"{lg.get('finished', '?')}  {lg.get('outcome', '?')}  "
-                         f"compute={lg.get('compute')}\n")
+                     f"  {dest}: {len(fps)} fingerprint(s), top-level keys {sorted(doc)}\n")
     return dest
 
 
 def main(argv: list[str]) -> int:
     if not argv:
-        print("usage: record.py init | merge '<json>' | leg-start <engine> | "
-              "leg-end <engine> <outcome> | combine <dir>... <dest> | "
+        print("usage: record.py init | merge '<json>' | combine <dir>... <dest> | "
               "finish <fragment dir> <parity dir|-> <dest>", file=sys.stderr)
         return 2
     cmd = argv[0]
@@ -219,12 +157,6 @@ def main(argv: list[str]) -> int:
         print(path() or "(no RUN_RECORD set)")
     elif cmd == "merge":
         merge(json.loads(argv[1]))
-        print(path() or "(no RUN_RECORD set)")
-    elif cmd == "leg-start":
-        leg(argv[1], started=now())
-        print(path() or "(no RUN_RECORD set)")
-    elif cmd == "leg-end":
-        leg(argv[1], finished=now(), outcome=argv[2] if len(argv) > 2 else "unknown")
         print(path() or "(no RUN_RECORD set)")
     elif cmd == "combine":
         *srcs, dest = argv[1:]

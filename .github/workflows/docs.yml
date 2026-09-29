@@ -5,7 +5,6 @@ name: docs
 # It builds nothing, commits nothing, spends no Fabric compute and needs NO CREDENTIALS.
 #
 #   pipeline         builds, records the run, commits history/runs/ + history/parity/   dispatch
-#   Capacity units   reads the metrics model, commits history/cu.json     after pipeline · daily · dispatch
 #   docs             this -- generates the DAG, deploys to Pages              after pipeline · dispatch
 #
 # **WHY dwh, AND WHY NO CATALOG.** The models are identical on both engines, so either draws
@@ -58,8 +57,7 @@ jobs:
       DBT_SCHEMA: mart
       PYTHONIOENCODING: utf-8
     steps:
-      # `ref:` IS LOAD-BEARING, for the same reason as capacity.yml's. On a `workflow_run`
-      # event a default checkout takes the TRIGGERING run's head SHA -- from before the record
+      # `ref:` IS LOAD-BEARING. On a `workflow_run` event a default checkout takes the TRIGGERING run's head SHA -- from before the record
       # job pushed -- and `github.ref_name` is the default branch regardless of where the
       # pipeline ran, so a topic-branch pipeline would document main's models instead of its own.
       - uses: actions/checkout@v5

@@ -1,7 +1,7 @@
-# CI, and what each run cost
+# CI
 
-What the four workflows do and why only `ci.yml` runs on push, plus the run record: the
-Fabric items each leg touched, what it wrote, and what it cost in capacity units.
+What the three workflows do and why only `ci.yml` runs on push, plus the run record: what
+each engine wrote.
 
 - `ci.yml` — free and credential-less: pytest, plus `check_gating.py` as a two-way matrix
   (one environment per engine). Runs on every push. The matrix cannot be collapsed into one
@@ -18,9 +18,6 @@ Fabric items each leg touched, what it wrote, and what it cost in capacity units
   `azure/login` (OIDC). `process_limit` is a dispatch input: files each fact model folds per
   run, **newest first**, on both engines — so a partial load is recent data, and the backlog
   shows up as test WARNINGS that fall run by run rather than as a failed build.
-- `capacity.yml` — fires after every pipeline run and once a day: reads capacity units per
-  run and engine from the Fabric Capacity Metrics model (token via azure-identity after
-  `azure/login`) and commits `history/cu.json`.
 - `docs.yml` — fires after every pipeline run: `dbt docs generate --static --no-compile
   --empty-catalog --target dwh` and deploys the one self-contained page to GitHub Pages —
   **[the DAG and the model docs](https://djouallah.github.io/fabric-medallion-dbt/)**. It
@@ -33,18 +30,13 @@ Fabric items each leg touched, what it wrote, and what it cost in capacity units
 deliberate act, and because the record job commits to `history/`, so a push trigger would
 make the commit start the next run. `tests_py/test_parity_record.py` pins the trigger set.
 
-## What it cost, and what it wrote
+## What it wrote
 
-Ported from [`direct-lake-parquet-layout`](https://github.com/djouallah/direct-lake-parquet-layout)
-and adapted to shared, persistent items. Every pipeline run leaves one record in
-`history/runs/` — the Fabric item GUIDs it touched, each leg's compute window, the parquet
-layout of both engines' tables (files, row groups, `fct_summary`'s per-column encodings and
-physical row order) and the parity fingerprints — and the `Capacity units` workflow keeps
-`history/cu.json`: **compute** capacity units per run and engine, read from the Capacity
-Metrics model for each leg's items inside its own hours. Storage transactions are
-deliberately not attributed: the lakehouse is shared, so its OneLake operations in any window
-belong to everybody. [`history/README.md`](../history/README.md) has the schemas and the
-caveats.
+Ported from [`direct-lake-parquet-layout`](https://github.com/djouallah/direct-lake-parquet-layout).
+Every pipeline run leaves one record in `history/runs/` — the run's inputs, the parquet layout
+of both engines' tables (files, row groups, `fct_summary`'s per-column encodings and physical
+row order) and the parity fingerprints. [`history/README.md`](../history/README.md) has the
+schema.
 
 Note: cancelling a GitHub job does **not** stop Fabric — a Warehouse query or Livy session
 keeps running, and billing.

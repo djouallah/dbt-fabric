@@ -4,14 +4,14 @@ name: pipeline
 # legible in a screenshot without reading the inputs.
 run-name: pipeline — ${{ inputs.engines == 'all' && 'both engines' || inputs.engines }}, one gold layer
 
-# Builds the same models on every engine, proves they agree, and writes down what the run
-# touched and what it wrote (history/runs/); the Capacity units workflow then adds what it cost.
+# Builds the same models on every engine, proves they agree, and writes down what each engine
+# wrote (history/runs/).
 #
 # Manual only. Provisioning Fabric items and spending capacity is a deliberate act, and the
 # record job commits to history/ (the run record and the parity fingerprints), so a push
 # trigger would make the commit start the next run. A push made with GITHUB_TOKEN triggers
 # nothing, which is what makes committing from here safe today; NEVER add a push: trigger
-# here or to capacity.yml -- tests_py/test_parity_record.py pins the trigger set.
+# here -- tests_py/test_parity_record.py pins the trigger set.
 
 on:
   workflow_dispatch:
@@ -126,8 +126,8 @@ jobs:
           client-id: ${{ secrets.AZURE_CLIENT_ID }}
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           allow-no-subscriptions: true
-      # The run record starts here -- run id, sha, inputs -- and provision.py adds the shared
-      # items' GUIDs to the same fragment. record.py; the record job merges every job's.
+      # The run record starts here -- run id, sha, inputs. record.py; the record job merges
+      # every job's fragment.
       # A step, not job env: the `runner` context is not available at job level.
       - name: Open the run record
         run: |
@@ -205,14 +205,6 @@ jobs:
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           allow-no-subscriptions: true
 
-      # ---- the run record -------------------------------------------------------------
-      # The fragment this leg writes (record.py): the items it touched, under their GUIDs, and
-      # the leg's compute window. OUTSIDE the checkout, so no untracked file lands in the tree;
-      # the record job below merges every job's fragment into history/runs/. A step, not job
-      # env: the `runner` context is not available at job level.
-      - name: Open the run-record fragment
-        run: echo "RUN_RECORD=$RUNNER_TEMP/record/record-20-build-$ENGINE.json" >> "$GITHUB_ENV"
-
       # ---- provision ---------------------------------------------------------------
       - name: Provision Fabric items
         run: python .github/scripts/provision.py "$ENGINE" >> "$GITHUB_ENV"
@@ -231,14 +223,6 @@ jobs:
       # csv_raw_archive_log.parquet in place, so legs landing at once would race on that one
       # file. The shared `land` job above is the one writer, and one landing zone for both
       # engines is also what makes the parity comparison below mean anything.
-
-      # ---- the leg's window --------------------------------------------------------
-      # `started` / `finished` bracket everything that spends Fabric compute -- build, tests
-      # AND the fingerprint -- and are what measure_cu.py attributes this leg's capacity units
-      # with, at the metrics model's hour grain. The items are persistent and shared here, so
-      # the window is not optional: without it a GUID's CU is every run's CU. history/README.md.
-      - name: Record leg start
-        run: python .github/scripts/record.py leg-start "$ENGINE"
 
       # ---- build -------------------------------------------------------------------
       - name: dbt build
@@ -259,23 +243,6 @@ jobs:
           name: parity-${{ matrix.engine }}
           path: history/parity/${{ matrix.engine }}.json
           if-no-files-found: warn
-
-      # AFTER the fingerprint, not after the build: on spark the run-operation opens a new
-      # Livy session and on dwh it is a full Warehouse Query, both billed. `job.status` is
-      # already `failure` once any earlier step failed, so no step ids are needed.
-      - name: Record leg end
-        if: always()
-        run: python .github/scripts/record.py leg-end "$ENGINE" "${{ job.status }}"
-
-      # always(): a failed build still spent compute, and it still has to be attributable.
-      # `ignore`: RUN_RECORD unset (or a leg that died before leg-start) is a no-op fragment,
-      # not an error -- record.py logs what it assembled.
-      - uses: actions/upload-artifact@v6
-        if: always()
-        with:
-          name: record-fragment-build-${{ matrix.engine }}
-          path: ${{ runner.temp }}/record/
-          if-no-files-found: ignore
 
   # WHAT EACH ENGINE WROTE. layout.py reads each engine's tables back through their Delta logs
   # -- rows, files, row groups, size, compression -- plus fct_summary's per-column encodings,
@@ -332,10 +299,9 @@ jobs:
 
   # THE ACCEPTANCE TEST, AND THE RUN'S PAPER TRAIL. Everything above is just a build; this
   # compares the engines' fingerprints (the claim the repo makes) and assembles ONE run record
-  # from every job's fragment -- items by GUID, each leg's compute window, the layout, this
-  # run's fingerprints -- and commits it to history/runs/. The Capacity units workflow then
-  # reads CU for those items in those windows. Runs whatever happened above (!cancelled()):
-  # a failed leg still spent capacity, and that still has to be attributable.
+  # from every job's fragment -- run stamp, inputs, the layout, this run's fingerprints -- and
+  # commits it to history/runs/. Runs whatever happened above (!cancelled()): what a failed leg
+  # left behind is still worth recording.
   record:
     name: parity + record
     needs: [build, layout]
@@ -385,9 +351,7 @@ jobs:
           path: ${{ steps.rec.outputs.path }}
       # NO REBASE. Reset onto whatever origin holds RIGHT NOW, put the record (and, when the
       # comparison passed, the fingerprints) back, commit, push -- and repeat against a newer
-      # origin if the push loses. The Capacity units workflow commits history/cu.json on its own
-      # concurrency group, so the two can race on the ref and never on a file. The files are
-      # copied aside first because `reset --hard` on attempt 2 deletes exactly what attempt 1
+      # origin if the push loses. The files are copied aside first because `reset --hard` on attempt 2 deletes exactly what attempt 1
       # committed.
       #
       # -f IS REQUIRED for the fingerprints. .gitignore carries `history/parity/*.json` so that a
