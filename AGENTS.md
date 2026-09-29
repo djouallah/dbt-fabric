@@ -114,6 +114,11 @@ The user's path is two steps: install `fabric_items/`, then run or schedule
   file under `fabric_items/`. No prefix is applied by default. Before one is, `run`,
   `dbt`, `ingest` and `parity` have to be renamed: as they stand, a prefix would rewrite
   `dbt build` and `subprocess.run`.
+- **A release is a tag on a commit OFF `main` whose `repo_ref` is that tag.** The catalog
+  entry in `jumpstart/` installs at a tag, and `run` downloads the project at
+  `deploy_config`'s `repo_ref`: tag `main` as it is and a `v1.0.0` install builds whatever
+  `main` holds that day. `main` keeps `repo_ref: main`. Steps in `jumpstart/README.md`;
+  `tests_py/test_jumpstart_entry.py` pins the entry to `install_jumpstart.INSTALL`.
 - `.github/workflows/install.yml` and `deploy.yml` (both manual) install into the test
   workspace and check every item landed; `tests_py/test_fabric_items.py` pins the items, the
   notebooks and the deploy's names offline.

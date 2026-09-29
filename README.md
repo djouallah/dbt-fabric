@@ -50,7 +50,9 @@ Each notebook holds its own code, so opening one shows what the step does. `depl
 `spark`; the download and process limits).
 
 This is the demo install, and it needs a public repo: Jumpstart clones it from GitHub, and
-the `run` notebook downloads the dbt project from it on every run.
+the `run` notebook downloads the dbt project from it on every run. The entry for the
+Jumpstart catalog, which would shorten this to `jumpstart.install("fabric-medallion-dbt")`,
+is prepared in [jumpstart/](jumpstart/README.md).
 
 ## Production: deploy from CI
 
