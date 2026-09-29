@@ -1,0 +1,43 @@
+name: install
+
+# Installs fabric_items/ into the test workspace with Fabric Jumpstart -- the call a user
+# pastes into a Fabric notebook -- and checks that every item landed.
+#
+# Manual only: it creates Fabric items. It installs and stops there; the run itself is
+# run_pipeline, in the workspace.
+
+on:
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+
+concurrency:
+  group: install
+  cancel-in-progress: false
+
+jobs:
+  install:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      FABRIC_WORKSPACE_ID: ${{ secrets.FABRIC_WORKSPACE_ID }}
+      # Outside a Fabric notebook Jumpstart has no notebookutils to ask.
+      FABRIC_JUMPSTART_TOKEN_CREDENTIAL: AzureCliCredential
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      # requests: install_jumpstart.py lists the workspace through provision.py.
+      - run: pip install fabric-jumpstart requests
+      - uses: azure/login@v3
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          allow-no-subscriptions: true
+      - name: Install with Fabric Jumpstart
+        # The branch this workflow was dispatched on: Jumpstart clones it from GitHub, so
+        # what is installed is what was pushed, not the checkout above.
+        run: python .github/scripts/install_jumpstart.py "${{ github.ref_name }}"

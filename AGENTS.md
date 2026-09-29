@@ -30,9 +30,9 @@ This repo is used for training and must rest on supported pieces:
   preinstalled in Fabric's Python notebook. `ingest/download_aemo.py` uses it for the nemweb listings
   and the archive log; `layout.py` for parquet footers. `requirements/ops.txt` pins it to the
   version the notebook ships (1.4.4) so a script behaves the same on a runner and in Fabric.
-- **Deploying the Direct Lake models is being moved to Microsoft Fabric Jumpstart**
-  (`fabric-jumpstart`, on `fabric-cicd`). Until that lands there is no deploy job; the models'
-  source is `semantic_model/`.
+- **Installing into a workspace is Microsoft Fabric Jumpstart** (`fabric-jumpstart`, on
+  `fabric-cicd`), from `fabric_items/`; see "Running in Fabric" below. The Direct Lake models
+  are not installed yet; their source is `semantic_model/`.
 
 ## Verify before you spend anything
 
@@ -53,6 +53,30 @@ every model, and `dbt build` reports "Nothing to do" and goes green. Nothing els
 
 There is no Fabric-free run: both engines' compute is in Fabric, and everything lands in
 OneLake — `ingest/onelake.py` accepts only `abfss://` paths.
+
+## Running in Fabric
+
+The user's path is two steps: install `fabric_items/` with Fabric Jumpstart (the snippet in
+`README.md`), then run or schedule `run_pipeline`.
+
+- **`run_pipeline` is land -> [dwh, spark] -> parity, four activities on the ONE notebook**,
+  each passing `step` and `run_id` (`@pipeline().RunId`). Each activity is its own session,
+  which is what lets both adapters run.
+- **Nothing dbt-shaped lives in `run.Notebook`.** It reads the `deploy_config` Variable
+  Library into env vars, downloads this repo from GitHub at `repo_ref`, and runs
+  `fabric_run.py <step> <run_id>`. Change the scripts, not the notebook: a fix pushed to the
+  repo reaches every installed workspace on its next run, a notebook change needs a reinstall.
+- **`fabric_run.py` runs the commands `pipeline.yml` runs**, and nothing else. Do not give it
+  logic the workflow does not have.
+- **Fingerprints go to `dbt_landing/Files/parity/<run_id>/`** and `parity` reads that run's
+  only, for the same reason the workflow never compares `history/parity/`.
+- **`run_pipeline` and `pipeline.yml` must never run at the same time**: they land into the
+  same lakehouse and build the same schemas.
+- **Item names are rewritten as whole words when Jumpstart applies a prefix**, in every text
+  file under `fabric_items/`. No prefix is applied by default. Before one is, `run` and `dbt`
+  have to be renamed: as they stand, a prefix would rewrite `dbt build` and `subprocess.run`.
+- `.github/workflows/install.yml` (manual) installs into the test workspace and checks every
+  item landed; `tests_py/test_fabric_items.py` pins the items offline.
 
 ## Gating
 

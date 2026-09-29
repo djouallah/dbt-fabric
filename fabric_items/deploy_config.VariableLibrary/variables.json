@@ -1,0 +1,12 @@
+{
+    "$schema": "https://developer.microsoft.com/json-schemas/fabric/item/variableLibrary/definition/variables/1.0.0/schema.json",
+    "variables": [
+        {"name": "engines", "type": "String", "value": "all"},
+        {"name": "process_limit", "type": "String", "value": "1000"},
+        {"name": "download_limit", "type": "String", "value": "6"},
+        {"name": "daily_download_limit", "type": "String", "value": "60"},
+        {"name": "dbt_schema", "type": "String", "value": "mart"},
+        {"name": "spark_resource_profile", "type": "String", "value": "readHeavyForPBI"},
+        {"name": "repo_ref", "type": "String", "value": "main"}
+    ]
+}

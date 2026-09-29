@@ -69,12 +69,12 @@ FABRIC_RESOURCE = "https://api.fabric.microsoft.com"
 def token(resource: str = FABRIC_RESOURCE) -> str:
     """A bearer token for `resource`: notebookutils inside Fabric, the Azure CLI (after
     `azure/login` on CI, or `az login` on a laptop) everywhere else."""
-    # Inside a Fabric notebook (the demo notebook runs this script there) notebookutils mints
-    # any audience, and `az` does not exist.
+    # Inside a Fabric notebook (fabric_items/run.Notebook runs this script there) `az` does
+    # not exist. notebookutils names the Fabric REST audience `pbi`.
     try:
         import notebookutils  # type: ignore
 
-        return notebookutils.credentials.getToken(resource)
+        return notebookutils.credentials.getToken("pbi" if resource == FABRIC_RESOURCE else resource)
     except ImportError:
         pass
     return subprocess.run(

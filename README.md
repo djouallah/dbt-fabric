@@ -18,6 +18,29 @@ A version of this project that also runs on community adapters, with a compariso
 more engines, is at
 [fabric-medallion-dbt-community](https://github.com/djouallah/fabric-medallion-dbt-community).
 
+## Install it in Fabric
+
+In a Fabric notebook, in the workspace you want it in:
+
+```python
+%pip install fabric-jumpstart
+import fabric_jumpstart as jumpstart
+jumpstart._install_from_github(
+    logical_id="fabric-medallion-dbt",
+    repo_url="https://github.com/djouallah/fabric-medallion-dbt.git",
+    repo_ref="main",
+    workspace_path="fabric_items/",
+    entry_point="run_pipeline.DataPipeline",
+    items_in_scope=["VariableLibrary", "Lakehouse", "Warehouse", "Notebook", "DataPipeline"],
+)
+```
+
+That creates the two lakehouses, the warehouse, the `deploy_config` variable library, the
+`run` notebook and the `run_pipeline` pipeline. Open `run_pipeline` and click **Run**, or give
+it a schedule: it lands the AEMO files once, builds both engines in parallel, and fails if
+their gold tables disagree. `deploy_config` holds the settings (`engines`: `all`, `dwh` or
+`spark`; the download and process limits).
+
 ## Docs
 
 [Overview](docs/overview.md), how to [run it](docs/run.md), and the rest in
