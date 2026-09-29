@@ -117,8 +117,8 @@ SELECT
   DUID,
   CAST(mw AS DECIMAL(18, 4)) AS mw,
   CAST(price AS DECIMAL(18, 4)) AS price,
-  -- Provenance column only — no read path depends on it anymore. Kept to match the
-  -- other engines' schema.
+  -- Provenance column only: no read path depends on it. Both engines keep it, so their
+  -- tables have the same columns.
   greatest(
     (SELECT MAX(CAST(SETTLEMENTDATE AS TIMESTAMP)) FROM {{ ref('fct_scada') }}),
     COALESCE((SELECT MAX(CAST(SETTLEMENTDATE AS TIMESTAMP)) FROM {{ ref('fct_scada_today') }}), CAST('1900-01-01' AS TIMESTAMP))

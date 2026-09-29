@@ -6,10 +6,9 @@
         green — so this prefix is load-bearing, not cosmetic, and check_gating.py asserts it
         offline.
 
-     2. THE ISOLATION LEVER. The model's +schema (landing / mart) used to be returned
-        VERBATIM in the source repos, which made target.schema (DBT_SCHEMA) dead
-        config: no profile or env var could redirect a run away from the production
-        schemas. That bites for real the moment a test run points at a catalog that already
+     2. THE ISOLATION LEVER. Returning the model's +schema (landing / mart) VERBATIM
+        would make target.schema (DBT_SCHEMA) dead config: no profile or env var could
+        redirect a run away from the production schemas. That bites for real the moment a test run points at a catalog that already
         holds the real data — the "test" merges straight into production.
 
        DBT_SCHEMA unset/'mart' -> '<engine>_<layer>'               (spark_landing, spark_mart)

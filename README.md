@@ -14,10 +14,6 @@ A medallion architecture on Microsoft Fabric: one dbt project that builds the **
 Both adapters are maintained by Microsoft. The eight models compute the same numbers on
 both, and every pipeline run reads both engines' gold tables and compares them.
 
-A version of this project that also runs on community adapters, with a comparison across
-more engines, is at
-[fabric-medallion-dbt-community](https://github.com/djouallah/fabric-medallion-dbt-community).
-
 ## Install it in Fabric
 
 In a Fabric notebook, in the workspace you want it in:

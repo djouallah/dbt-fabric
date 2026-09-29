@@ -1,8 +1,8 @@
 """Every model and singular test must be syntactically valid Jinja.
 
-dbt only reports this from a `dbt parse`, which needs that engine's dbt installed -- and one
-environment cannot hold both dbt majors, so half the repo's templates can only be parsed in
-CI. This test closes that gap offline for all five engines at once: it does not need dbt, an
+dbt only reports this from a `dbt parse`, which needs that engine's adapter installed -- and
+one environment cannot hold both adapters, so each engine's templates can only be parsed in
+its own CI job. This test closes that gap offline for both engines at once: it does not need dbt, an
 adapter, credentials or a warehouse, only Jinja's own lexer.
 
 WHAT IT ACTUALLY CATCHES, and why it exists: a Jinja comment cannot live inside a `{{ ... }}`

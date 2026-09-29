@@ -3,10 +3,9 @@
      macros (spark_read_csv.sql) turn the list into an explicit Hadoop brace glob for the
      `USING csv OPTIONS (path ...)` temp view.
 
-     The selection rule is IDENTICAL to the other dialects -- files of this source_type minus
-     whatever {{ this }} already holds, NEWEST first, capped at process_limit -- so every engine
-     folds the SAME files. process_limit is the same knob dwh reads in new_source_files; spark used to be the one engine without
-     it, and its first build was a bare-folder scan of the whole archive.
+     The selection rule is IDENTICAL to dwh's new_source_files -- files of this source_type
+     minus whatever {{ this }} already holds, NEWEST first, capped at process_limit -- so both
+     engines fold the SAME files.
 
      this_relation is none on a first build / --full-refresh (nothing is ingested yet, so
      every file of the type is new). Returns [] while parsing (execute=false). --#}

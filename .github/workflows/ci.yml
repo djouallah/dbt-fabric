@@ -40,10 +40,7 @@ jobs:
   # ONE JOB PER ENGINE, each installing only that engine's requirements.
   #
   # Not one job installing both: dbt-fabric and dbt-fabricspark shadow each other under the
-  # dbt.adapters namespace, so loading the spark plugin fails with "has no attribute 'Plugin'";
-  # the dbt-fabric-samdebruyn fork this replaced instead made the spark profile fail
-  # validation with "'database' is a required property". Both were found here rather than
-  # locally.
+  # dbt.adapters namespace, so loading the spark plugin fails with "has no attribute 'Plugin'".
   #
   # Splitting the matrix is also more faithful — each engine is validated against exactly
   # the dependencies it builds with.

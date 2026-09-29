@@ -1,8 +1,8 @@
 """Parse every singular test's SQL in its OWN dialect.
 
-The singular tests are the same assertion written five ways, and a naive port across
-dialects is the classic way to end up with a test that parses on one engine and is
-nonsense on another (T-SQL has no GROUP BY ALL and no LIMIT; Spark and DuckDB have no TOP).
+The singular tests are the same assertion written twice, once per dialect, and a naive port
+is the classic way to end up with a test that parses on one engine and is nonsense on the
+other (T-SQL has no GROUP BY ALL and no LIMIT; Spark has no TOP).
 dbt parse only checks the Jinja, never the SQL, and there is no way to run the dwh or spark
 SQL without a Fabric capacity -- so sqlglot is the only offline check these get.
 

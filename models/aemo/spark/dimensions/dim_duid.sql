@@ -1,15 +1,32 @@
--- DUID dimension (Spark). The reference CSVs are headered, so register them as temp views
--- (USING csv, header+inferSchema) in pre_hooks, then join. Full table replace every run --
--- atomic, so no concurrent-writer duplicate risk, and attribute changes flow through. It
--- previously also carried incremental_strategy='merge' and unique_key, which materialized
--- ='table' silently ignores; they are gone rather than left to describe a merge that never ran.
+-- DUID dimension (Spark). An incremental merge on DUID, as on dwh: a unit that leaves the
+-- reference CSVs keeps its row, because fct_summary still holds its history, and a changed
+-- attribute is updated in place. MAX() picks one value per unit, as on dwh; first() would
+-- pick whichever row Spark read first, and could change from run to run.
+--
+-- The reference CSVs are headered. An incremental model cannot read a csv temp view
+-- (macros/spark_read_csv.sql), so the pre_hooks read each file through one and stage the
+-- columns this model uses into a Delta table, under names Delta accepts; the post_hooks
+-- drop the stages.
 {{ config(
-    materialized='table',
+    materialized='incremental',
+    incremental_strategy='merge',
+    file_format='delta',
+    unique_key='DUID',
     pre_hook=[
-      "CREATE OR REPLACE TEMPORARY VIEW duid_data USING csv OPTIONS (path '" ~ get_csv_archive_path() ~ "/duid/duid_data.csv', header 'true', inferSchema 'true')",
-      "CREATE OR REPLACE TEMPORARY VIEW facilities USING csv OPTIONS (path '" ~ get_csv_archive_path() ~ "/duid/facilities.csv', header 'true', inferSchema 'true')",
-      "CREATE OR REPLACE TEMPORARY VIEW wa_energy_raw USING csv OPTIONS (path '" ~ get_csv_archive_path() ~ "/duid/WA_ENERGY.csv', header 'true', inferSchema 'true')",
-      "CREATE OR REPLACE TEMPORARY VIEW geo_data USING csv OPTIONS (path '" ~ get_csv_archive_path() ~ "/duid/geo_data.csv', header 'true', inferSchema 'true')"
+      "{{ spark_reference_view('duid_data') }}",
+      "{{ spark_reference_stage('duid_data', 'DUID, Region, `Fuel Source - Descriptor` AS FuelSourceDescriptor, Participant') }}",
+      "{{ spark_reference_view('facilities') }}",
+      "{{ spark_reference_stage('facilities', '`Facility Code` AS DUID, `Participant Name` AS Participant') }}",
+      "{{ spark_reference_view('WA_ENERGY') }}",
+      "{{ spark_reference_stage('WA_ENERGY', 'DUID, Technology') }}",
+      "{{ spark_reference_view('geo_data') }}",
+      "{{ spark_reference_stage('geo_data', 'DUID, latitude, longitude') }}"
+    ],
+    post_hook=[
+      "{{ spark_drop_reference_stage('duid_data') }}",
+      "{{ spark_drop_reference_stage('facilities') }}",
+      "{{ spark_drop_reference_stage('WA_ENERGY') }}",
+      "{{ spark_drop_reference_stage('geo_data') }}"
     ]
 ) }}
 
@@ -26,28 +43,23 @@ WITH states AS (
 
 duid_aemo AS (
     SELECT
-        DUID AS DUID,
-        first(Region) AS Region,
-        first(`Fuel Source - Descriptor`) AS FuelSourceDescriptor,
-        first(Participant) AS Participant
-    FROM duid_data
+        DUID,
+        MAX(Region) AS Region,
+        MAX(FuelSourceDescriptor) AS FuelSourceDescriptor,
+        MAX(Participant) AS Participant
+    FROM {{ spark_reference_relation('duid_data') }}
     WHERE length(DUID) > 2
     GROUP BY DUID
 ),
 
-wa_facilities AS (
-    SELECT 'WA1' AS Region, `Facility Code` AS DUID, `Participant Name` AS Participant
-    FROM facilities
-),
-
 duid_wa AS (
     SELECT
-        wa_facilities.DUID,
-        wa_facilities.Region,
-        wa_energy_raw.Technology AS FuelSourceDescriptor,
-        wa_facilities.Participant
-    FROM wa_facilities
-    LEFT JOIN wa_energy_raw ON wa_facilities.DUID = wa_energy_raw.DUID
+        f.DUID,
+        'WA1' AS Region,
+        w.Technology AS FuelSourceDescriptor,
+        f.Participant
+    FROM {{ spark_reference_relation('facilities') }} f
+    LEFT JOIN {{ spark_reference_relation('WA_ENERGY') }} w ON f.DUID = w.DUID
 ),
 
 duid_all AS (
@@ -57,21 +69,24 @@ duid_all AS (
 ),
 
 geo AS (
-    SELECT duid, max(latitude) AS latitude, max(longitude) AS longitude
-    FROM geo_data
+    SELECT
+        DUID,
+        MAX(CAST(latitude AS DOUBLE)) AS latitude,
+        MAX(CAST(longitude AS DOUBLE)) AS longitude
+    FROM {{ spark_reference_relation('geo_data') }}
     WHERE latitude IS NOT NULL
-    GROUP BY duid
+    GROUP BY DUID
 )
 
 SELECT
     a.DUID,
-    first(a.Region) AS Region,
-    first(concat(upper(substring(trim(FuelSourceDescriptor), 1, 1)), lower(substring(trim(FuelSourceDescriptor), 2)))) AS FuelSourceDescriptor,
-    first(a.Participant) AS Participant,
-    first(states.State) AS State,
-    first(geo.latitude) AS latitude,
-    first(geo.longitude) AS longitude
+    MAX(a.Region) AS Region,
+    MAX(concat(upper(substring(trim(a.FuelSourceDescriptor), 1, 1)), lower(substring(trim(a.FuelSourceDescriptor), 2)))) AS FuelSourceDescriptor,
+    MAX(a.Participant) AS Participant,
+    MAX(states.State) AS State,
+    MAX(geo.latitude) AS latitude,
+    MAX(geo.longitude) AS longitude
 FROM duid_all a
 JOIN states ON a.Region = states.RegionID
-LEFT JOIN geo ON a.duid = geo.duid
+LEFT JOIN geo ON a.DUID = geo.DUID
 GROUP BY a.DUID

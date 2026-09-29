@@ -1,8 +1,7 @@
 """Pin macros/aemo_columns.sql against the AEMO CSV layout, and prove every engine uses it.
 
-The whole reason this repo exists is that the AEMO column lists were written out four times
-in four repos. They were verified byte-identical as data before being collapsed into one
-macro; these tests keep them that way.
+The AEMO column lists live once, in that macro, and both engines' models read them from
+it; these tests keep it that way.
 
 Column ORDER is load-bearing: the AEMO CSVs are headerless positional records, dwh's
 OPENROWSET binds by ordinal and Spark's from_csv binds by position, so a reordering is a
@@ -22,7 +21,7 @@ from _layout import REPO, SHARED_MACROS, models_dir, singular_tests_dir
 # That this file has exactly one home is the point of the whole module.
 SPEC = SHARED_MACROS / "aemo_columns.sql"
 
-# The record layouts, as measured across all four source repos before the merge.
+# The record layouts, as measured from the AEMO files.
 EXPECTED = {
     "price": (130, 125),
     "scada": (53, 48),

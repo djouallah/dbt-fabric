@@ -43,7 +43,7 @@
 
 
 {#-- The files this model folds this run: all of the source type on a first build, else the
-     ones {{ this }} does not hold yet. Same rule as every other engine. --#}
+     ones {{ this }} does not hold yet. The same rule as dwh's new_source_files. --#}
 {% macro spark_stage_files(record) %}
   {%- set spec = aemo_spec(record) -%}
   {{ return(spark_new_files(spec['source_type'], this if is_incremental() else none)) }}
@@ -98,7 +98,34 @@
 {% endmacro %}
 
 
-{#-- The record-selection predicate, Spark quoting. Same rule as every other dialect.
+{#-- The DUID reference CSVs (<landing>/duid/<file>.csv) are HEADERED, so they are read by
+     name, not through aemo_columns. dim_duid is an incremental merge, so it cannot read their
+     csv temp view either (see the top of this file): the same stage, one table per file,
+     <model>__<file>. The stage selects only the columns the model uses, renamed where Delta
+     would reject the name (a space). --#}
+{% macro spark_reference_view(file) %}
+  CREATE OR REPLACE TEMPORARY VIEW {{ file | lower }} USING csv OPTIONS
+  (path '{{ get_csv_archive_path() }}/duid/{{ file }}.csv', header 'true', inferSchema 'true')
+{% endmacro %}
+
+
+{% macro spark_reference_relation(file) %}
+  {{ return(this.incorporate(path={'identifier': this.identifier ~ '__' ~ (file | lower)})) }}
+{% endmacro %}
+
+
+{% macro spark_reference_stage(file, columns) %}
+  CREATE OR REPLACE TABLE {{ spark_reference_relation(file) }} USING DELTA AS
+  SELECT {{ columns }} FROM {{ file | lower }}
+{% endmacro %}
+
+
+{% macro spark_drop_reference_stage(file) %}
+  DROP TABLE IF EXISTS {{ spark_reference_relation(file) }}
+{% endmacro %}
+
+
+{#-- The record-selection predicate, Spark quoting. The same rule as dwh's.
 
      The `nonzero` column MUST be cast before the comparison. This predicate runs on the csv
      temp view, where every column is STRING, and Spark resolves `STRING != 0` by casting the

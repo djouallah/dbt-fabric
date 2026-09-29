@@ -19,12 +19,8 @@ diverge.
 
 This repo is used for training and must rest on supported pieces:
 
-- **dbt adapters: `dbt-fabric` (dwh) and `dbt-fabricspark` (spark), nothing else.** No DuckDB
-  dbt adapter (dbt-duckdb, duckrun, DuckLake, Iceberg-via-DuckDB). Those engines live in
-  [fabric-medallion-dbt-community](https://github.com/djouallah/fabric-medallion-dbt-community);
-  do not port them back.
-- **No `duckrun` package, anywhere** — not for tokens, not for OneLake I/O, not for deploy.
-  Tokens come from `azure/login` + azure-identity (or `notebookutils` in a Fabric notebook);
+- **dbt adapters: `dbt-fabric` (dwh) and `dbt-fabricspark` (spark), nothing else.**
+- **Nothing but Microsoft's own SDKs for tokens, OneLake I/O and deploy.** Tokens come from `azure/login` + azure-identity (or `notebookutils` in a Fabric notebook);
   `deploy.py` uploads to OneLake with azure-storage-file-datalake.
 - **DuckDB as a LIBRARY is fine** — the role pandas or pyarrow would play, and it ships
   preinstalled in Fabric's Python notebook. The `ingest` notebook uses it for the nemweb
@@ -43,8 +39,8 @@ python .github/scripts/check_gating.py spark   # needs dbt-fabricspark, in its O
 
 `dbt-fabric` and `dbt-fabricspark` cannot share an environment (they shadow each other under
 `dbt.adapters`, "has no attribute 'Plugin'"), so on a laptop keep them in separate venvs and
-point `DBT_BIN` at the one you are not running from. Use the OFFICIAL `dbt-fabric`, never the
-`dbt-fabric-samdebruyn` fork.
+point `DBT_BIN` at the one you are not running from. Use the official `dbt-fabric`, never a
+fork.
 
 `check_gating.py` is not optional. **The default failure mode of this layout is a run that
 builds NOTHING and exits 0** — a target name that stops matching a folder name disables
@@ -166,8 +162,7 @@ The user's path is two steps: install `fabric_items/`, then run or schedule
   `spark_landing`/`spark_mart` in the shared `dbt` lakehouse. `generate_schema_name()` is what
   keeps them apart, so a change there is a cross-engine data-collision risk, not a cosmetic
   rename. `check_gating.py` asserts `<engine>_landing` / `<engine>_mart` offline; do not
-  weaken it. The community repo writes the SAME schema names into the same workspace, so the
-  two repos' pipelines must never run at the same time.
+  weaken it.
 - **`LANDING_PATH` and `FILES_PATH` are different variables on purpose.** The landing zone is
   `LANDING_PATH`, which is identical on both legs; `FILES_PATH` is how that engine's dbt READS
   the zone (a shortcut, for dwh). They were one variable, and `provision.py` re-pointed it for
@@ -263,9 +258,8 @@ The user's path is two steps: install `fabric_items/`, then run or schedule
 ## Domain facts worth keeping
 
 - **The latest day is almost always PARTIAL.** Never divide by 288.
-- **`fct_summary.time` is HHMM**, not minutes past midnight. (An earlier note in one of the
-  source repos claimed otherwise; it only looked right because the first hour — 0, 5, 10,
-  15 — is identical either way.)
+- **`fct_summary.time` is HHMM**, not minutes past midnight. The two look alike for the
+  first hour (0, 5, 10, 15 are identical either way), which makes the mistake easy.
 - `fct_price` is AEMO's DREGION record (all 130 columns) and `fct_scada` is the DUNIT record
   (all 53). `fct_summary` exposes 5 of those ~180 columns; the wide facts are the analytical
   surface.

@@ -2,8 +2,6 @@
 #
 # dbt-fabric depends on mssql-python, i.e. the pure-Python TDS driver — so there is no ODBC
 # to install (no msodbcsql18/unixODBC), and the profile has no `driver:` and no `port:`.
-# That is why this is no longer the dbt-fabric-samdebruyn fork: the fork existed to get a
-# non-ODBC driver, and the official adapter supports TDS directly now.
 #
 # NOTE this is also why the dbt project is named `aemo_electricity` and not `dbt_fabric`:
 # dbt-fabric ships an internal macro package called `dbt_fabric`, and a project of the same

@@ -11,12 +11,6 @@
      for every date it touches; no cutoff watermark, no run-history dependence, no
      runner-decided branch. This is the dwh fct_summary of djouallah/direct-lake-parquet-layout.
 
-     The previous copy here was the original dwh repo's: `append` of today's intraday on a
-     plain run and a runner-decided delete+insert of the whole history when new daily files
-     landed (a `check_new_daily` probe before the build). Correct only while the runner ran
-     the probe, and it retracted whole dates, which made dwh the one engine whose row count
-     could differ from the others on identical inputs.
-
      STRATEGY: `merge` on the full [date],[time],[DUID] grain — the SAME semantics as spark
      (update matched + insert new). dbt-fabric's merge is default__get_merge_sql, which always
      emits WHEN MATCHED THEN UPDATE SET <every column>, so a revised mw/price overwrites the
