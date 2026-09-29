@@ -51,7 +51,7 @@ def test_the_downloader_lands_newest_first():
     """Same reason one layer up: a download_limit smaller than the backlog should land the
     recent end of the archive. The intraday candidate tables were already newest-first; the
     daily one is the nemweb listing with the GitHub-mirror backfill appended, unordered."""
-    notebook = REPO / "fabric-medallion-dbt" / "ingest.Notebook" / "notebook-content.ipynb"
+    notebook = REPO / "fabric_items" / "ingest.Notebook" / "notebook-content.ipynb"
     cells = json.loads(notebook.read_text(encoding="utf-8"))["cells"]
     src = "\n".join("".join(c["source"]) for c in cells if c["cell_type"] == "code")
     m = re.search(r"def new_files\(table, source_type\):(.*?)\.fetchall\(\)", src, re.S)

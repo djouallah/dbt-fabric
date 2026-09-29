@@ -1,6 +1,6 @@
 name: deploy
 
-# THE PRODUCTION INSTALL: publishes fabric-medallion-dbt/ from this checkout with fabric-cicd
+# THE PRODUCTION INSTALL: publishes fabric_items/ from this checkout with fabric-cicd
 # and ships the project to OneLake, where run_pipeline reads it. Nothing is fetched from
 # GitHub, at deploy or at run time, so this is the one that works from a private repo.
 # install.yml is the demo install, Jumpstart from the public repo.

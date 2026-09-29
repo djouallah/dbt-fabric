@@ -20,7 +20,7 @@ import pytest
 
 from _layout import REPO
 
-NOTEBOOK = REPO / "fabric-medallion-dbt" / "run.Notebook" / "notebook-content.ipynb"
+NOTEBOOK = REPO / "fabric_items" / "run.Notebook" / "notebook-content.ipynb"
 
 FINGERPRINT = {
     "engine": "spark", "adapter": "fabricspark", "model": "fct_summary",

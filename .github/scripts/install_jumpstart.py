@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Install fabric-medallion-dbt/ into a workspace with Fabric Jumpstart, then check what landed.
+"""Install fabric_items/ into a workspace with Fabric Jumpstart, then check what landed.
 
     FABRIC_WORKSPACE_ID=<guid> python .github/scripts/install_jumpstart.py <branch or tag>
 
@@ -22,12 +22,14 @@ import sys
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[2]
-# Named after the logical_id: that is where Jumpstart looks when no workspace_path is given.
-ITEMS = REPO / "fabric-medallion-dbt"
+ITEMS = REPO / "fabric_items"
 
 INSTALL = {
+    # Also the name of the workspace folder the items are installed into.
     "logical_id": "fabric-medallion-dbt",
     "repo_url": "https://github.com/djouallah/fabric-medallion-dbt",
+    # Where the items are in the repo. Without it Jumpstart looks in `<logical_id>/`.
+    "workspace_path": "fabric_items/",
     "entry_point": "run_pipeline.DataPipeline",
     "items_in_scope": ["VariableLibrary", "Lakehouse", "Warehouse", "Notebook", "SemanticModel",
                        "DataPipeline"],

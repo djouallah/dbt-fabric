@@ -29,6 +29,7 @@ jumpstart._install_from_github(
     logical_id="fabric-medallion-dbt",
     repo_url="https://github.com/djouallah/fabric-medallion-dbt",
     repo_ref="main",
+    workspace_path="fabric_items/",
     entry_point="run_pipeline.DataPipeline",
     items_in_scope=["VariableLibrary", "Lakehouse", "Warehouse", "Notebook", "SemanticModel",
                     "DataPipeline"],

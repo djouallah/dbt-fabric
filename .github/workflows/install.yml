@@ -1,6 +1,6 @@
 name: install
 
-# Installs fabric-medallion-dbt/ into the test workspace with Fabric Jumpstart -- the call
+# Installs fabric_items/ into the test workspace with Fabric Jumpstart -- the call
 # a user pastes into a Fabric notebook -- and checks that every item landed.
 #
 # Manual only: it creates Fabric items. It installs and stops there; the run itself is

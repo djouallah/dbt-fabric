@@ -23,20 +23,20 @@ log is the watermark, so a re-run fetches only what it has not already landed.
 | notebook | parameters | what it does |
 |---|---|---|
 | `ingest` | none | lands the AEMO files in `dbt_landing` |
-| `run` | `engine`, `run_id` | fetches the dbt project, installs the adapter, `dbt build`, fingerprints the gold table |
+| `run` | `engine`, `run_id` | fetches the dbt project, installs the adapter, connects, `dbt build`, fingerprints the gold table |
 | `parity` | `run_id` | compares the two fingerprints and fails the run if they differ |
 
-Each holds its own code; open one to see what the step does. All three have `dbt_landing` as
-their default lakehouse. `run` is the only one that needs the dbt project: it downloads it
+Each holds its own code and calls no script; open one to see what the step does. All three
+have `dbt_landing` as their default lakehouse. `run` is the only one that needs the dbt project: it downloads it
 from GitHub, or copies it from `dbt_landing/Files/project/` after a deploy from CI.
 
 ## What it creates in Fabric
 
-Three items, all inside one workspace folder (`FOLDER`, default `dbt`), created if missing
-and kept if present by `.github/scripts/provision.py`:
+Three items hold the data, all inside one workspace folder, `fabric-medallion-dbt`, created
+by the install:
 
 ```
-dbt/
+fabric-medallion-dbt/
 ├── dbt_landing   Lakehouse  csv_raw/ + the archive log. Written ONCE, read by both engines.
 ├── dbt           Lakehouse  spark_landing, spark_mart; and Files/landing, a shortcut to
 │                            dbt_landing that the Warehouse reads through
@@ -44,9 +44,9 @@ dbt/
 ```
 
 The Warehouse cannot share the lakehouse: a Warehouse cannot hold Delta tables another engine
-wrote. That is an engine-forced floor, not a layout choice. `provision.py landing` creates
-the shared items only (folder, `dbt_landing`, `dbt`); `provision.py dwh` / `spark` adds that
-engine's and prints the env vars its profile reads.
+wrote. That is an engine-forced floor, not a layout choice. The `run` notebook looks the
+items up by name and hands the dbt profile what it reads: the warehouse's server, the
+lakehouse's id, the path of the landed files.
 
 Two landing variables, and the difference matters:
 
@@ -75,8 +75,8 @@ still green. `check_gating.py` asserts the prefix offline.
 
 ## Serving
 
-`fabric-medallion-dbt/` holds one Direct Lake semantic model per engine, `aemo_dwh` and
+`fabric_items/` holds one Direct Lake semantic model per engine, `aemo_dwh` and
 `aemo_spark`, over `<engine>_mart`. They are the same `model.bim`;
-`fabric-medallion-dbt/parameter.yml` binds each to its engine's item and schema when they are
+`fabric_items/parameter.yml` binds each to its engine's item and schema when they are
 installed, by Microsoft Fabric Jumpstart or by the `deploy` workflow (see the
 [README](../README.md)).

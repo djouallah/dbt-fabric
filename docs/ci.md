@@ -36,8 +36,8 @@ share a concurrency group, because they write the same items.
   repo, and the login is OIDC, with no secret.
 
 What is uploaded is the dbt project, not the repo: `dbt_project.yml`, `profiles.yml`,
-`models/`, `macros/`, `tests/`, plus the two things the `run` notebook needs beside them,
-`requirements/` to install dbt from and `provision.py` to find the warehouse and lakehouse.
+`models/`, `macros/`, `tests/`, plus `requirements/`, which the `run` notebook installs dbt
+from.
 
 The upload is of the commit, not the working tree, so a deploy from a laptop and one from CI
 leave the same files. The folder is deleted first: a model removed from the repo must not

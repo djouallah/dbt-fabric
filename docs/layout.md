@@ -18,8 +18,9 @@ macros/                                    the AEMO CSV layout (aemo_columns.sql
                                            tables, the Warehouse schema pre-create
 tests/aemo/<engine>/                       the same 12 assertions, per dialect
 .github/scripts/check_gating.py            proves the gating, offline
-.github/scripts/provision.py               creates the Fabric items, prints the profile's env
-fabric-medallion-dbt/                      what gets installed in Fabric: the lakehouses, the
+.github/scripts/provision.py               for a build by hand: finds or creates the Fabric
+                                           items, prints the profile's env
+fabric_items/                              what gets installed in Fabric: the lakehouses, the
                                            warehouse, the pipeline and its three notebooks
                                            (ingest: one landing zone, plain CSV; run: dbt on
                                            one engine; parity: proves the engines agree), and

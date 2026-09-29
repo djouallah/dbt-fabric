@@ -1,6 +1,6 @@
 """Pin the Fabric items against each other and against the scripts they run.
 
-fabric-medallion-dbt/ is what Fabric Jumpstart installs and what deploy.py publishes, and
+fabric_items/ is what Fabric Jumpstart installs and what deploy.py publishes, and
 nothing parses it before a user does. Every check here is a way it has gone wrong, or would,
 with the install still green: a notebook reading a variable the library does not declare, a
 pipeline pointing at no notebook, a leg that lands, a deploy that leaves the run on GitHub.
@@ -19,7 +19,7 @@ import yaml
 
 from _layout import ENGINES, REPO, patch_dir
 
-ITEMS = REPO / "fabric-medallion-dbt"
+ITEMS = REPO / "fabric_items"
 # The three steps of a run, each its own notebook: land the files, build one engine, compare.
 NOTEBOOKS = ("ingest", "run", "parity")
 LIBRARY = ITEMS / "deploy_config.VariableLibrary"
@@ -79,7 +79,7 @@ def test_every_item_folder_is_named_after_its_platform_file():
     """Jumpstart and fabric-cicd read the name and type from the FOLDER in some places and
     from .platform in others."""
     folders = [p for p in ITEMS.iterdir() if p.is_dir()]
-    assert folders, "fabric-medallion-dbt/ holds no item folders"
+    assert folders, "fabric_items/ holds no item folders"
     for folder in folders:
         meta = _platform(folder)["metadata"]
         assert folder.name == f"{meta['displayName']}.{meta['type']}"
@@ -238,12 +238,18 @@ def test_the_deploy_uploads_what_the_run_notebook_uses():
     for key in ("model-paths", "macro-paths", "test-paths", "seed-paths", "snapshot-paths"):
         needed |= {p for p in project.get(key, []) if (REPO / p).exists()}
     # What the notebook's own code reads from the project folder.
-    for path in ("requirements", ".github/scripts/provision.py"):
-        assert path in _code("run"), f"the run notebook no longer uses {path}"
-        needed.add(path)
+    assert "requirements/" in _code("run")
+    needed.add("requirements")
     assert needed == set(deploy.UPLOADED)
     for path in deploy.UPLOADED:
         assert (REPO / path).exists(), path
+
+
+@pytest.mark.parametrize("name", NOTEBOOKS)
+def test_no_notebook_runs_a_python_script(name):
+    """A notebook holds its own code. The only things it runs are pip and dbt, so there is
+    nothing to follow into another file."""
+    assert not re.search(r"\.py\b", _code(name)), f"{name} names a .py file"
 
 
 def test_only_ci_runs_on_push():
@@ -364,10 +370,13 @@ def test_the_repo_root_holds_no_dbt_plugin():
     assert not [p.name for p in REPO.glob("dbt_*.py")]
 
 
-def test_the_items_folder_is_the_default_workspace_path():
-    """Jumpstart looks in `<logical_id>/` when no workspace_path is given, which is what keeps
-    that argument out of the snippet in README.md. A missing folder is not an error: the
-    install falls back to the repo root and never finds parameter.yml."""
-    assert "workspace_path" not in install_jumpstart.INSTALL
-    assert ITEMS.name == install_jumpstart.INSTALL["logical_id"]
+def test_both_installs_find_the_items_folder():
+    """Jumpstart looks in `<logical_id>/` unless it is given a workspace_path, and a missing
+    folder is not an error: the install falls back to the repo root and never finds
+    parameter.yml. The README's snippet is the call a user pastes, so it names the folder too."""
+    assert install_jumpstart.INSTALL["workspace_path"] == f"{ITEMS.name}/"
+    assert install_jumpstart.ITEMS == deploy.ITEMS == ITEMS
     assert (ITEMS / "parameter.yml").is_file()
+    readme = (REPO / "README.md").read_text(encoding="utf-8")
+    for key in ("logical_id", "repo_url", "workspace_path", "entry_point"):
+        assert f'{key}="{install_jumpstart.INSTALL[key]}"' in readme, key

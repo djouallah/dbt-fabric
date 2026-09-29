@@ -31,7 +31,7 @@ This repo is used for training and must rest on supported pieces:
   listings and the archive log, and installs nothing.
 - **Installing into a workspace is Microsoft Fabric Jumpstart** (`fabric-jumpstart`, on
   `fabric-cicd`) for the demo, **and `fabric-cicd` itself from CI** for production, both from
-  `fabric-medallion-dbt/`; see "Running in Fabric" below.
+  `fabric_items/`; see "Running in Fabric" below.
 
 ## Verify before you spend anything
 
@@ -55,7 +55,7 @@ Fabric workspace. CI checks the project offline and installs it; it never builds
 
 ## Running in Fabric
 
-The user's path is two steps: install `fabric-medallion-dbt/`, then run or schedule
+The user's path is two steps: install `fabric_items/`, then run or schedule
 `run_pipeline`. There are two installs, and `README.md` has both.
 
 - **`run_pipeline` is ingest -> [dwh, spark] -> parity, on THREE notebooks.** `ingest` lands
@@ -63,10 +63,11 @@ The user's path is two steps: install `fabric-medallion-dbt/`, then run or sched
   engine), `parity` compares the two fingerprints (parameter `run_id`,
   `@pipeline().RunId`). Each activity is its own session, which is what lets both adapters
   run. There is no step switch in any notebook; do not bring one back.
-- **Each notebook holds its own code, and is the ONLY copy of it.** They are there to be
-  read: how the files land, how dbt gets installed and run, how the engines are compared
+- **Each notebook holds its own code, and is the ONLY copy of it. NO NOTEBOOK CALLS A PYTHON
+  SCRIPT**; the only things `run` runs are `pip` and `dbt`. They are there to be read: how
+  the files land, how dbt gets installed, connected and run, how the engines are compared
   should not need a second file open. There is no `download_aemo.py`, `parity.py` or
-  `fabric_run.py`. The price is that a change to a notebook reaches a workspace at the next
+  `fabric_run.py`, and `provision.py` is for a build by hand from a laptop, not for Fabric. The price is that a change to a notebook reaches a workspace at the next
   install or deploy, not at the next run.
 - **Only `ingest` lands.** It rewrites `csv_raw_archive_log.parquet` in place, so two steps
   landing at once would race on that one file, and the engines would be compared on
@@ -96,19 +97,21 @@ The user's path is two steps: install `fabric-medallion-dbt/`, then run or sched
   a laptop and one from CI leave the same files. The folder is deleted first, so a model
   removed from the repo does not survive there. Its `COMMIT` file names the commit.
 - **Only the dbt project is uploaded, not the repo**: `deploy.py`'s `UPLOADED` is
-  `dbt_project.yml`, `profiles.yml`, `models/`, `macros/`, `tests/`, plus the two things the
-  `run` notebook needs beside them, `requirements/` and `provision.py`. A path the notebook
-  starts to read must be added there, or the run breaks after a deploy and only then: a run
+  `dbt_project.yml`, `profiles.yml`, `models/`, `macros/`, `tests/`, plus `requirements/`,
+  which the `run` notebook installs dbt from. A path the notebook starts to read must be
+  added there, or the run breaks after a deploy and only then: a run
   from GitHub has the whole repo. `tests_py/test_fabric_items.py` pins the list.
 - **An install after a deploy switches the workspace back to `github`**, and a deploy after an
   install switches it to `onelake`: each one re-publishes `deploy_config` and sets the active
   value set. They share a concurrency group.
 - **Do not deploy while `run_pipeline` is running**: the two engines would build from two
   commits.
-- **The items folder is named after the `logical_id`**, which is where Jumpstart looks when
-  no `workspace_path` is given. Rename one and you must rename the other.
+- **The items are in `fabric_items/`, and both installs are told so.** Jumpstart looks in
+  `<logical_id>/` unless it is given `workspace_path`, so the README's snippet and
+  `install_jumpstart.py` pass `workspace_path="fabric_items/"`. Both installs put the items
+  in a workspace folder named after the `logical_id`, `fabric-medallion-dbt`.
 - **Item names are rewritten as whole words when Jumpstart applies a prefix**, in every text
-  file under `fabric-medallion-dbt/`. No prefix is applied by default. Before one is, `run`,
+  file under `fabric_items/`. No prefix is applied by default. Before one is, `run`,
   `dbt`, `ingest` and `parity` have to be renamed: as they stand, a prefix would rewrite
   `dbt build` and `subprocess.run`.
 - `.github/workflows/install.yml` and `deploy.yml` (both manual) install into the test
@@ -162,7 +165,7 @@ The user's path is two steps: install `fabric-medallion-dbt/`, then run or sched
 - **`install.yml` and `deploy.yml` log in with `azure/login`** (OIDC, no secret). In a
   notebook each adapter asks `notebookutils` for its token, and each has its own name for
   that: `notebookutils` for dbt-fabric, `fabric_notebook` for dbt-fabricspark. On a laptop it
-  is the Azure CLI. `provision.py` emits `FABRIC_AUTH=CLI`; the `run` notebook overrides it.
+  is the Azure CLI, and `provision.py` emits `FABRIC_AUTH=CLI` for that.
 - **`dbt retry` REBUILDS THE ORIGINAL COMMAND'S FLAGS, so `flags.WHICH` is `'build'` inside a
   retried build.** dbt 1.11's `dbt/task/retry.py` calls
   `set_flags(Flags.from_dict(CMD_DICT[previous_command], ...))` before it parses or runs
@@ -224,7 +227,7 @@ The user's path is two steps: install `fabric-medallion-dbt/`, then run or sched
   declaring it.
 - **Direct Lake has no schema parameter.** A partition's `schemaName` is a literal in the
   model definition, so `model.bim` carries placeholders (`mart`, Desktop's GUIDs) and
-  `fabric-medallion-dbt/parameter.yml` rewrites them at install, per engine: `aemo_dwh` to
+  `fabric_items/parameter.yml` rewrites them at install, per engine: `aemo_dwh` to
   `dwh_mart` in the Warehouse item, `aemo_spark` to `spark_mart` in the `dbt` lakehouse.
   The two `model.bim` files are the SAME file; change both, `tests_py/test_fabric_items.py`
   pins it. A model is installed before its engine has built, so it is empty until

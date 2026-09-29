@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Deploy from CI: publish fabric-medallion-dbt/ from THIS CHECKOUT, and upload the project
+"""Deploy from CI: publish fabric_items/ from THIS CHECKOUT, and upload the project
 to OneLake for the `run` notebook to read.
 
     FABRIC_WORKSPACE_ID=<guid> python .github/scripts/deploy.py
@@ -44,12 +44,8 @@ ENVIRONMENT = "production"
 # Where the project goes in the landing lakehouse. The `run` notebook's PROJECT is this
 # folder, seen through its default lakehouse.
 PROJECT = "Files/project"
-# What is uploaded: the dbt project, and the two things the `run` notebook needs beside it.
-UPLOADED = [
-    "dbt_project.yml", "profiles.yml", "models", "macros", "tests",
-    "requirements",                     # what the notebook pip-installs dbt from
-    ".github/scripts/provision.py",     # gives the dbt profile the warehouse and lakehouse
-]
+# What is uploaded: the dbt project, and the lists the `run` notebook pip-installs dbt from.
+UPLOADED = ["dbt_project.yml", "profiles.yml", "models", "macros", "tests", "requirements"]
 
 
 def publish() -> None:
@@ -60,7 +56,7 @@ def publish() -> None:
         # The layout Jumpstart publishes from: parameter.yml at the root, the items in a
         # folder named after the logical_id, which becomes the workspace folder.
         shutil.copy(ITEMS / "parameter.yml", tmp)
-        shutil.copytree(ITEMS, Path(tmp, ITEMS.name),
+        shutil.copytree(ITEMS, Path(tmp, install_jumpstart.INSTALL["logical_id"]),
                         ignore=shutil.ignore_patterns("parameter.yml"))
         publish_all_items(FabricWorkspace(
             workspace_id=os.environ["FABRIC_WORKSPACE_ID"],

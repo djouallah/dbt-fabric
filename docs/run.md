@@ -28,9 +28,10 @@ The run is `run_pipeline`, in the workspace: see the [README](../README.md) for 
 to install it. Its `ingest` notebook is the only thing that lands the AEMO files.
 
 One engine can also be built by hand from a laptop, against files the pipeline has already
-landed. These are the commands the `run` notebook runs. `provision.py` creates the items if
-they are missing and prints the `KEY=value` lines the profile reads; the Azure CLI login is
-what it and both adapters authenticate with (`FABRIC_AUTH=CLI`).
+landed. `provision.py` does from a laptop what the `run` notebook's connect cell does in
+Fabric: it finds the items, creating them if they are missing, and prints the `KEY=value`
+lines the profile reads. The Azure CLI login is what it and both adapters authenticate with
+(`FABRIC_AUTH=CLI`).
 
 ```bash
 az login
