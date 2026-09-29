@@ -23,7 +23,7 @@ more engines, is at
 In a Fabric notebook, in the workspace you want it in:
 
 ```python
-%pip install fabric-jumpstart
+!pip install fabric-jumpstart
 import fabric_jumpstart as jumpstart
 jumpstart._install_from_github(
     logical_id="fabric-medallion-dbt",
