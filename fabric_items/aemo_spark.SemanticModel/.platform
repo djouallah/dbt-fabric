@@ -1,0 +1,11 @@
+{
+  "$schema": "https://developer.microsoft.com/json-schemas/fabric/gitIntegration/platformProperties/2.0.0/schema.json",
+  "metadata": {
+    "type": "SemanticModel",
+    "displayName": "aemo_spark"
+  },
+  "config": {
+    "version": "2.0",
+    "logicalId": "b84048c9-b4c4-4b27-a9a9-da1c553d63ce"
+  }
+}

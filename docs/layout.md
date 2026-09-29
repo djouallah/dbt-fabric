@@ -26,8 +26,10 @@ ingest/onelake.py                          OneLake I/O for the scripts (azure-id
 .github/scripts/record.py                  the run record: items by GUID, each leg's window
 .github/scripts/layout.py                  what each engine wrote: files, row groups, encodings, order
 history/                                   parity/ fingerprints, runs/ records
-semantic_model/                            one Direct Lake semantic model over <engine>_mart;
-                                           deployment is coming next (Fabric Jumpstart)
+fabric_items/                              what Fabric Jumpstart installs: the lakehouses, the
+                                           warehouse, the run notebook and pipeline, and a
+                                           Direct Lake semantic model per engine
+fabric_run.py                              one pipeline step; the notebook runs it
 docs/                                      this, and the rest of docs/README.md
 ```
 

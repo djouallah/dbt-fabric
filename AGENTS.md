@@ -31,8 +31,7 @@ This repo is used for training and must rest on supported pieces:
   and the archive log; `layout.py` for parquet footers. `requirements/ops.txt` pins it to the
   version the notebook ships (1.4.4) so a script behaves the same on a runner and in Fabric.
 - **Installing into a workspace is Microsoft Fabric Jumpstart** (`fabric-jumpstart`, on
-  `fabric-cicd`), from `fabric_items/`; see "Running in Fabric" below. The Direct Lake models
-  are not installed yet; their source is `semantic_model/`.
+  `fabric-cicd`), from `fabric_items/`; see "Running in Fabric" below.
 
 ## Verify before you spend anything
 
@@ -185,10 +184,12 @@ The user's path is two steps: install `fabric_items/` with Fabric Jumpstart (the
   `requirements/spark.txt` names `dbt-spark` explicitly: dbt-fabricspark imports it without
   declaring it.
 - **Direct Lake has no schema parameter.** A partition's `schemaName` is a literal in the
-  model definition, so `semantic_model/.../model.bim` carries placeholders (`mart`, Desktop's
-  GUIDs) that deploy must rewrite per engine (`dwh_mart` bound to the Warehouse item,
-  `spark_mart` bound to the `dbt` lakehouse). A model reframes on deploy, so the engine must
-  have built once before its model can be deployed.
+  model definition, so `model.bim` carries placeholders (`mart`, Desktop's GUIDs) and
+  `fabric_items/parameter.yml` rewrites them at install, per engine: `aemo_dwh` to
+  `dwh_mart` in the Warehouse item, `aemo_spark` to `spark_mart` in the `dbt` lakehouse.
+  The two `model.bim` files are the SAME file; change both, `tests_py/test_fabric_items.py`
+  pins it. A model is installed before its engine has built, so it is empty until
+  `run_pipeline` has run once.
 
 ## Things not to "fix"
 

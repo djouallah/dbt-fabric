@@ -1,0 +1,51 @@
+# What fabric-cicd rewrites in the item definitions at install. `_ALL_` because Fabric
+# Jumpstart installs without naming an environment.
+#
+# DIRECT LAKE HAS NO SCHEMA PARAMETER, and no workspace or item parameter either: all three
+# are literals in model.bim. So the two semantic models carry the SAME model.bim, with the
+# placeholders Power BI Desktop wrote, and this file is what makes one of them the Warehouse's
+# model and the other the lakehouse's. tests_py/test_fabric_items.py pins that the copies are
+# identical and that every placeholder in them is rewritten here.
+find_replace:
+  # ---- where the tables are: the workspace, then the item ---------------------------------
+  - find_value: "e446a5e7-6666-42ad-a331-0bfef3187fbf"
+    replace_value:
+      _ALL_: "$workspace.$id"
+    item_type: "SemanticModel"
+
+  - find_value: "cf8bbf8a-5488-4020-ac8f-293727b447b1"
+    replace_value:
+      _ALL_: "$items.Warehouse.dbt_dwh.$id"
+    item_type: "SemanticModel"
+    item_name: "aemo_dwh"
+
+  - find_value: "cf8bbf8a-5488-4020-ac8f-293727b447b1"
+    replace_value:
+      _ALL_: "$items.Lakehouse.dbt.$id"
+    item_type: "SemanticModel"
+    item_name: "aemo_spark"
+
+  # ---- which schema: <engine>_mart, the rule of macros/generate_schema_name.sql ------------
+  - find_value: '"schemaName": "mart"'
+    replace_value:
+      _ALL_: '"schemaName": "dwh_mart"'
+    item_type: "SemanticModel"
+    item_name: "aemo_dwh"
+
+  - find_value: '"schemaName": "mart"'
+    replace_value:
+      _ALL_: '"schemaName": "spark_mart"'
+    item_type: "SemanticModel"
+    item_name: "aemo_spark"
+
+  - find_value: "[aemo].["
+    replace_value:
+      _ALL_: "[dwh_mart].["
+    item_type: "SemanticModel"
+    item_name: "aemo_dwh"
+
+  - find_value: "[aemo].["
+    replace_value:
+      _ALL_: "[spark_mart].["
+    item_type: "SemanticModel"
+    item_name: "aemo_spark"

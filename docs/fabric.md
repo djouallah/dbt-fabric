@@ -61,6 +61,7 @@ still green. `check_gating.py` asserts the prefix offline.
 
 ## Serving
 
-`semantic_model/` holds one Direct Lake semantic model over `<engine>_mart`. Deploying it —
-and scheduling the pipeline from inside Fabric — is coming next, through Microsoft Fabric
-Jumpstart (fabric-jumpstart / fabric-cicd).
+`fabric_items/` holds one Direct Lake semantic model per engine, `aemo_dwh` and
+`aemo_spark`, over `<engine>_mart`. They are the same `model.bim`;
+`fabric_items/parameter.yml` binds each to its engine's item and schema when Microsoft
+Fabric Jumpstart installs them (see the [README](../README.md)).

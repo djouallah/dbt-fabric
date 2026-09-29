@@ -41,7 +41,8 @@ schema.
 Note: cancelling a GitHub job does **not** stop Fabric — a Warehouse query or Livy session
 keeps running, and billing.
 
-## Deploying the semantic models
+## Installing into Fabric
 
-Coming next: the Direct Lake semantic models in `semantic_model/` will be deployed through
-Microsoft Fabric Jumpstart (fabric-jumpstart / fabric-cicd). There is no deploy job today.
+`install.yml` (manual) installs `fabric_items/` into the test workspace with Microsoft
+Fabric Jumpstart, the call in the [README](../README.md), and fails if an item did not
+land. It installs and stops; the run is `run_pipeline`, in the workspace.

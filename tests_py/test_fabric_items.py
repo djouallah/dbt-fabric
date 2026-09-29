@@ -13,7 +13,7 @@ import json
 import re
 import sys
 
-from _layout import ENGINES, REPO
+from _layout import ENGINES, REPO, patch_dir
 
 ITEMS = REPO / "fabric_items"
 NOTEBOOK = ITEMS / "run.Notebook" / "notebook-content.ipynb"
@@ -141,6 +141,106 @@ def test_the_legs_do_not_land():
     assert "download_aemo" in inspect.getsource(fabric_run.land)
     for fn in (fabric_run.build, fabric_run.parity):
         assert "download_aemo" not in inspect.getsource(fn), fn.__name__
+
+
+def _bim(engine: str) -> str:
+    return (ITEMS / f"aemo_{engine}.SemanticModel" / "model.bim").read_text(encoding="utf-8-sig")
+
+
+def _rebound(engine: str) -> str:
+    """model.bim as fabric-cicd leaves it: every find_replace whose filters match this model,
+    applied in file order. The `$...` values are resolved at install, so they stay as written."""
+    import yaml
+
+    text = _bim(engine)
+    doc = yaml.safe_load((ITEMS / "parameter.yml").read_text(encoding="utf-8"))
+    for rule in doc["find_replace"]:
+        assert set(rule["replace_value"]) == {"_ALL_"}, "Jumpstart installs with no environment"
+        if rule.get("item_type", "SemanticModel") != "SemanticModel":
+            continue
+        if rule.get("item_name", f"aemo_{engine}") != f"aemo_{engine}":
+            continue
+        assert rule["find_value"] in text, f"{rule['find_value']!r} matches nothing in model.bim"
+        text = text.replace(rule["find_value"], rule["replace_value"]["_ALL_"])
+    return text
+
+
+def test_the_two_models_are_one_model():
+    """One gold layer: the engines' models differ in what parameter.yml rewrites and in
+    nothing else. A measure added to one copy only is a divergence no engine test sees."""
+    assert _bim("dwh") == _bim("spark")
+    assert set(ENGINES) == {p.name[len("aemo_"):-len(".SemanticModel")]
+                            for p in ITEMS.glob("*.SemanticModel")}
+
+
+def test_parameter_yml_rebinds_every_placeholder():
+    """Direct Lake has no schema, workspace or item parameter. A placeholder that survives
+    the install is a model bound to a schema no engine writes, or to Desktop's workspace."""
+    item = {"dwh": "$items.Warehouse.dbt_dwh.$id", "spark": "$items.Lakehouse.dbt.$id"}
+    for engine in ENGINES:
+        out = _rebound(engine)
+        assert not re.search(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", out)
+        assert f"onelake.dfs.fabric.microsoft.com/$workspace.$id/{item[engine]}" in out
+        for table in json.loads(_bim(engine))["model"]["tables"]:
+            assert f'"sourceLineageTag": "[{engine}_mart].[{table["name"]}]"' in out
+        schemas = set(re.findall(r'"schemaName": "(\w+)"', out))
+        assert schemas == {f"{engine}_mart"}, schemas
+
+
+def test_parameter_yml_names_items_that_exist():
+    import yaml
+
+    doc = yaml.safe_load((ITEMS / "parameter.yml").read_text(encoding="utf-8"))
+    folders = {p.name for p in ITEMS.iterdir() if p.is_dir()}
+    for rule in doc["find_replace"]:
+        if "item_name" in rule:
+            assert f"{rule['item_name']}.{rule['item_type']}" in folders
+        m = re.fullmatch(r"\$items\.(\w+)\.(\w+)\.\$id", rule["replace_value"]["_ALL_"])
+        if m:
+            assert f"{m.group(2)}.{m.group(1)}" in folders
+
+
+def _documented_columns() -> dict[str, set[str]]:
+    import yaml
+
+    cols: dict[str, set[str]] = {}
+    for f in ("_marts.yml", "_dimensions.yml"):
+        doc = yaml.safe_load((patch_dir("dwh") / f).read_text(encoding="utf-8"))
+        for m in doc.get("models", []):
+            cols[m["name"]] = {c["name"] for c in m.get("columns", [])}
+    return cols
+
+
+def test_bim_matches_the_documented_mart():
+    """A Direct Lake model that binds a missing column does not fail the install with a
+    useful message; it fails the refresh, minutes later. Check the three ways the bim goes
+    stale against the model YML both engines are tested against: a column that does not
+    exist, a relationship endpoint that was never added, DAX naming a dropped column."""
+    model = json.loads(_bim("dwh"))["model"]
+    documented = _documented_columns()
+    bim_cols = {t["name"]: {c["name"] for c in t.get("columns", [])} for t in model["tables"]}
+    measures = {m["name"].lower() for t in model["tables"] for m in t.get("measures", [])}
+    problems = []
+    for t in model["tables"]:
+        assert t["name"] in documented, f"{t['name']} is not a documented model"
+        for c in t.get("columns", []):
+            src = c.get("sourceColumn", c["name"])
+            if src not in documented[t["name"]]:
+                problems.append(f"{t['name']}.{src}: not a documented column of {t['name']}")
+        for m in t.get("measures", []):
+            expression = m["expression"]
+            if isinstance(expression, list):
+                expression = "\n".join(expression)
+            for table, column in re.findall(r"(\w+)\[([^\]]+)\]", expression):
+                known = {x.lower() for x in bim_cols.get(table, set())} | measures
+                if column.lower() not in known:
+                    problems.append(f"measure {m['name']}: {table}[{column}] undefined")
+    for r in model.get("relationships", []):
+        for side in ("from", "to"):
+            table, column = r[f"{side}Table"], r[f"{side}Column"]
+            if column not in bim_cols.get(table, set()):
+                problems.append(f"relationship {r.get('name', '?')}: {table}[{column}] undefined")
+    assert not problems, "semantic model is stale against the mart:\n  " + "\n  ".join(problems)
 
 
 def test_fabric_run_is_not_a_dbt_plugin():

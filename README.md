@@ -31,12 +31,14 @@ jumpstart._install_from_github(
     repo_ref="main",
     workspace_path="fabric_items/",
     entry_point="run_pipeline.DataPipeline",
-    items_in_scope=["VariableLibrary", "Lakehouse", "Warehouse", "Notebook", "DataPipeline"],
+    items_in_scope=["VariableLibrary", "Lakehouse", "Warehouse", "Notebook", "SemanticModel",
+                    "DataPipeline"],
 )
 ```
 
 That creates the two lakehouses, the warehouse, the `deploy_config` variable library, the
-`run` notebook and the `run_pipeline` pipeline. Open `run_pipeline` and click **Run**, or give
+`run` notebook, the `run_pipeline` pipeline and a Direct Lake semantic model per engine
+(`aemo_dwh`, `aemo_spark`). Open `run_pipeline` and click **Run**, or give
 it a schedule: it lands the AEMO files once, builds both engines in parallel, and fails if
 their gold tables disagree. `deploy_config` holds the settings (`engines`: `all`, `dwh` or
 `spark`; the download and process limits).
