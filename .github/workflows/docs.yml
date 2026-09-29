@@ -1,7 +1,7 @@
 name: docs
 
 # THE DAG AND THE CATALOG, PUBLISHED. Runs `dbt docs generate --static` and deploys the one
-# self-contained page it produces to GitHub Pages -- https://djouallah.github.io/dbt-fabric/.
+# self-contained page it produces to GitHub Pages -- https://djouallah.github.io/fabric-medallion-dbt/.
 # It builds nothing, commits nothing and spends no Fabric compute.
 #
 #   pipeline         builds, records the run, commits history/runs/ + history/parity/   dispatch

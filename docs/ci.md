@@ -31,7 +31,7 @@ record: the Fabric items each leg touched, what it wrote, and what it cost in ca
 - `capacity.yml` — fires after every pipeline run and once a day: reads capacity units per
   run and engine from the Fabric Capacity Metrics model and commits `history/cu.json`.
 - `docs.yml` — fires after every pipeline run: `dbt docs generate --static` and deploys the
-  one self-contained page to GitHub Pages — **[the DAG and the catalog](https://djouallah.github.io/dbt-fabric/)**.
+  one self-contained page to GitHub Pages — **[the DAG and the catalog](https://djouallah.github.io/fabric-medallion-dbt/)**.
   It builds nothing and spends no Fabric compute. **duckrun of the five**, because the DAG is
   the same on all of them and the *catalog* is not: duckrun reports `num_rows`, `bytes` and
   `last_modified` out of the Delta log, where dbt-fabric's catalog query gives an approximate
