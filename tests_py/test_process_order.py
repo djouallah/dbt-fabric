@@ -28,8 +28,8 @@ from _layout import REPO, singular_tests_dir
 
 # Where each engine decides which files to fold: one macro each.
 MACROS = [
-    REPO / "dbt1" / "macros" / "new_source_files.sql",    # dwh
-    REPO / "dbt1" / "macros" / "spark_new_files.sql",     # spark
+    REPO / "macros" / "new_source_files.sql",    # dwh
+    REPO / "macros" / "spark_new_files.sql",     # spark
 ]
 
 

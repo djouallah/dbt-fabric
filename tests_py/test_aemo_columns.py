@@ -19,8 +19,7 @@ import pytest
 
 from _layout import REPO, SHARED_MACROS, models_dir, singular_tests_dir
 
-# The SHARED macro dir, at the REPO ROOT rather than inside dbt1/. That this file has exactly
-# one home is the point of the whole module.
+# That this file has exactly one home is the point of the whole module.
 SPEC = SHARED_MACROS / "aemo_columns.sql"
 
 # The record layouts, as measured across all four source repos before the merge.

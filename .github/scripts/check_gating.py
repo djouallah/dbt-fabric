@@ -6,7 +6,7 @@ NOTHING and exits 0. If a target name stops matching a folder name, every +enabl
 false, `dbt build` reports "Nothing to do", and the job goes green having done nothing.
 Nothing else in the repo catches that.
 
-ONE PROJECT, dbt1/, TWO ENGINES: dwh (dbt-fabric) and spark (dbt-fabricspark). ENGINES
+ONE PROJECT, at the repo root, TWO ENGINES: dwh (dbt-fabric) and spark (dbt-fabricspark). ENGINES
 below is the engine -> project mapping, and tests_py/_layout.py's PROJECT_OF holds the same
 dict; the two must agree.
 
@@ -48,8 +48,8 @@ DATASET = "aemo"
 # engine -> the dbt project directory it lives in. The KEY is the dbt target name, the
 # models/aemo/<engine>/ folder name and the schema prefix, all at once.
 ENGINES = {
-    "dwh": "dbt1",
-    "spark": "dbt1",
+    "dwh": ".",
+    "spark": ".",
 }
 
 MODELS = {

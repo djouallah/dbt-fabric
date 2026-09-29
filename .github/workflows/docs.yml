@@ -11,7 +11,7 @@ name: docs
 # **WHY dwh, AND WHY NO CATALOG.** The models are identical on both engines, so either draws
 # the same DAG. The catalog half is left empty (`--empty-catalog`, `--no-compile`): generating
 # it would open a real connection, and on dwh a compile fires real OPENROWSET queries --
-# dbt1/macros/new_source_files.sql guards its parse-time `run_query` only on `not execute`,
+# macros/new_source_files.sql guards its parse-time `run_query` only on `not execute`,
 # the exact trap AGENTS.md warns about. What is published is the lineage and every model,
 # column and test description; row counts and sizes live in the run record's `layout` instead.
 # So the profile gets dummy values, as in check_gating.py -- nothing is ever contacted.
@@ -80,7 +80,6 @@ jobs:
 
       # `--no-compile` reads target/manifest.json, so parse writes it first.
       - name: dbt docs generate
-        working-directory: dbt1
         run: |
           dbt parse --target dwh --profiles-dir .
           dbt docs generate --static --no-compile --empty-catalog --target dwh --profiles-dir .
@@ -91,7 +90,7 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p site
-          cp dbt1/target/static_index.html site/index.html
+          cp target/static_index.html site/index.html
 
       - uses: actions/upload-pages-artifact@v3
         with:

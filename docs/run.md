@@ -45,7 +45,7 @@ pip install -r requirements/ops.txt -r requirements/dwh.txt     # or spark.txt
 
 while IFS= read -r kv; do export "$kv"; done < <(python .github/scripts/provision.py dwh)
 python download_aemo.py                                         # writes to LANDING_PATH
-cd dbt1 && dbt build --target dwh --profiles-dir .
+dbt build --target dwh --profiles-dir .
 ```
 
 For `spark`, also `export DBT_FABRICSPARK_SKIP_OPTIMIZE=true` (see

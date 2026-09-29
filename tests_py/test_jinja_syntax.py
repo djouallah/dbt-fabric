@@ -34,8 +34,6 @@ def _templates():
                 yield pytest.param(p, id=f"{engine}/{p.parent.name}/{p.stem}")
     for p in sorted(SHARED_MACROS.rglob("*.sql")):
         yield pytest.param(p, id=f"macros/{p.stem}")
-    for engine_macros in sorted((REPO / "dbt1" / "macros").rglob("*.sql")):
-        yield pytest.param(engine_macros, id=f"dbt1-macros/{engine_macros.stem}")
 
 
 @pytest.mark.parametrize("path", list(_templates()))

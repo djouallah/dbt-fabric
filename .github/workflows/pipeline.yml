@@ -242,7 +242,6 @@ jobs:
 
       # ---- build -------------------------------------------------------------------
       - name: dbt build
-        working-directory: dbt1
         # `dbt retry` needs --target too, or it renders the profile's default target.
         run: |
           dbt build --target "$ENGINE" --profiles-dir . \
@@ -250,12 +249,9 @@ jobs:
 
       # ---- fingerprint -------------------------------------------------------------
       - name: Fingerprint gold layer
-        working-directory: dbt1
-        # parity.py is addressed through $GITHUB_WORKSPACE: this step's cwd is the project, not
-        # the repo root, and the artifact path below is repo-relative.
         run: |
           dbt run-operation parity_fingerprint --target "$ENGINE" --profiles-dir . \
-            | python "$GITHUB_WORKSPACE/.github/scripts/parity.py" capture "$GITHUB_WORKSPACE/history/parity"
+            | python .github/scripts/parity.py capture history/parity
 
       - uses: actions/upload-artifact@v6
         if: always()

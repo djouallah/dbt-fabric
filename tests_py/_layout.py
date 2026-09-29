@@ -1,6 +1,6 @@
 """Where each engine's files live, for the tests that walk the trees.
 
-ONE dbt project, dbt1/, holding both engines. The mapping below is a single dict rather than
+ONE dbt project, at the repo root, holding both engines. The mapping below is a single dict rather than
 a path recomputed in every test, because a test that globs a path no longer there matches
 NOTHING, and a parametrized test with no cases PASSES.
 """
@@ -14,14 +14,13 @@ REPO = Path(__file__).resolve().parents[1]
 # folder name and the schema prefix, all at once. Keep in step with
 # .github/scripts/check_gating.py's ENGINES.
 PROJECT_OF = {
-    "dwh": "dbt1",
-    "spark": "dbt1",
+    "dwh": ".",
+    "spark": ".",
 }
 
 ENGINES = list(PROJECT_OF)
 
-# The AEMO column layout and everything else the project reads from the REPO ROOT rather
-# than from dbt1/macros. Kept separate because it is shared data, not engine logic.
+# Every macro: the AEMO column layout and the engine-specific readers.
 SHARED_MACROS = REPO / "macros"
 
 

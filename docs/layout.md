@@ -5,20 +5,18 @@ models are. The gating is the part worth reading twice: its default failure mode
 builds NOTHING and exits 0.
 
 ```
-dbt1/                                      the dbt project: both engines, dbt-core 1.x
-dbt1/models/aemo/<engine>/<layer>/<model>.sql
+dbt_project.yml, profiles.yml              the dbt project, at the repo root: both engines
+models/aemo/<engine>/<layer>/<model>.sql
                                            the same 8 model names in both trees (dwh, spark)
-dbt1/models/aemo/_staging.yml _dimensions.yml _marts.yml
+models/aemo/_staging.yml _dimensions.yml _marts.yml
                                            ONE patch file per layer, above the engine folders,
                                            so one patch documents whichever tree is enabled
-macros/                                    shared across engines, at the REPO ROOT (dbt1 reads
-                                           it through ../macros): the AEMO CSV layout
-                                           (aemo_columns.sql, the single source of truth), the
-                                           schema rule, the parity fingerprint
-dbt1/macros/                               what one engine's adapter forces: the T-SQL
-                                           OPENROWSET reader, the Spark staging tables, the
-                                           Warehouse schema pre-create
-dbt1/tests/aemo/<engine>/                  the same 12 assertions, per dialect
+macros/                                    the AEMO CSV layout (aemo_columns.sql, the single
+                                           source of truth), the schema rule, the parity
+                                           fingerprint, and what one engine's adapter forces:
+                                           the T-SQL OPENROWSET reader, the Spark staging
+                                           tables, the Warehouse schema pre-create
+tests/aemo/<engine>/                       the same 12 assertions, per dialect
 download_aemo.py                           one downloader, one landing zone, plain CSV
 onelake.py                                 OneLake I/O for the scripts (azure-identity +
                                            azure-storage-file-datalake)
@@ -37,12 +35,11 @@ docs/                                      this, and the rest of docs/README.md
 Two copies of each model is the design, not an accident. They are gated so exactly one is
 live, and the duplication is what lets each engine say what its adapter forces in plain SQL,
 without a thicket of `{% if target.type %}` conditionals. The shared *data* — the AEMO
-column layout — lives once, in `macros/aemo_columns.sql`. `dbt1` is a historical name; it is
-the only dbt project in the repo.
+column layout — lives once, in `macros/aemo_columns.sql`.
 
 ### How one run selects one engine
 
-`dbt build --target dwh` in `dbt1/` sets `target.name == 'dwh'`, so only
+`dbt build --target dwh` sets `target.name == 'dwh'`, so only
 `models/aemo/dwh/**` is `+enabled` and the spark tree parses into `manifest['disabled']`.
 The model file names are *identical* across both trees — legal only because exactly one tree
 is enabled per run. There is no `--select` anywhere.
@@ -55,7 +52,7 @@ than engine (`parse_filename`).
 that matches no folder disables everything, and `dbt build` then reports "Nothing to do" and
 exits 0. That is what `check_gating.py` is for, and why CI runs it before anything spends.
 
-Two more rules, each of which has already cost a silent failure (`dbt1/dbt_project.yml`
+Two more rules, each of which has already cost a silent failure (`dbt_project.yml`
 carries them at their site):
 
 - **Nothing on the `aemo_electricity` project key.** A generic test declared in a patch file

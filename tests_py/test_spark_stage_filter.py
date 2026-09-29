@@ -1,7 +1,7 @@
 """Pin the spark stage filter's numeric predicate to an explicit CAST.
 
 The spark fact models read the landed CSVs through a temp view whose every column is STRING
-(dbt1/macros/spark_read_csv.sql). Spark resolves `STRING != 0` by casting the STRING to the
+(macros/spark_read_csv.sql). Spark resolves `STRING != 0` by casting the STRING to the
 literal's type, INT, and that cast truncates a decimal fraction -- so `'0.5' != 0` is FALSE.
 A bare `SCADAVALUE != 0` in the stage filter therefore dropped every intraday SCADA row with
 0 < |value| < 1 (12-16% of the non-zero rows) on spark alone, with every dbt test green.
@@ -18,7 +18,7 @@ import re
 
 from _layout import REPO
 
-MACRO = REPO / "dbt1" / "macros" / "spark_read_csv.sql"
+MACRO = REPO / "macros" / "spark_read_csv.sql"
 
 
 def nonzero_branch() -> str:

@@ -113,7 +113,7 @@ def compare(in_dir: Path) -> int:
             "  * a string join key with a trailing space (T-SQL pads on comparison; Spark\n"
             "    does not), which changes row counts, not just sums\n"
             "  * one engine's model drifting from the shared business logic — diff the\n"
-            "    dbt1/models/aemo/dwh/ and dbt1/models/aemo/spark/ copies against each other.",
+            "    models/aemo/dwh/ and models/aemo/spark/ copies against each other.",
             file=sys.stderr,
         )
         return 1

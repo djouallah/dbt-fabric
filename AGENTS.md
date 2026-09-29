@@ -6,7 +6,7 @@ run if you do not know them.
 ## The rule that governs every change
 
 **One gold layer. The same business logic on both engines.** If you change what a model
-*computes*, change it in both `dbt1/models/aemo/<engine>/` copies (`dwh`, `spark`). The only
+*computes*, change it in both `models/aemo/<engine>/` copies (`dwh`, `spark`). The only
 thing allowed to differ between engines is *operational* — dialect, adapter capability,
 incremental strategy, maintenance — and every such difference is commented at its site with
 the reason.
@@ -56,7 +56,7 @@ alone can be dry-run into a local directory (`LANDING_PATH=./landing`).
 
 ## Gating
 
-- **ONE dbt PROJECT, `dbt1/`, two engines.** Every dbt command runs from inside it
+- **ONE dbt PROJECT, at the repo root, two engines.** Every dbt command runs from the root
   (`--profiles-dir .`). `.github/scripts/check_gating.py`'s `ENGINES` maps engine → project
   dir; keep `tests_py/_layout.py`'s `PROJECT_OF` in step with it.
 - Gate on **`target.name`**, never `target.type`. `target.type` is right only inside a macro
@@ -121,7 +121,7 @@ alone can be dry-run into a local directory (`LANDING_PATH=./landing`).
   1.0, which cannot parse the ragged/quoted AEMO rows. Plain CSV + PARSER 2.0 is the only
   working combination, and it is why everything lands uncompressed.
 - **dbt-fabric wraps singular tests in a CTE of its own**, so a test's SQL cannot start with
-  `WITH` — use nested derived tables (`dbt1/tests/aemo/dwh/*`). Merge models are built as a CTAS
+  `WITH` — use nested derived tables (`tests/aemo/dwh/*`). Merge models are built as a CTAS
   temp table and merged FROM it, so `fct_summary` may start with `WITH` (it does). Views are
   wrapped in `EXEC('create view ... as <sql>')`, where a leading `-- {{ ref(...) }}` comment
   collapses onto the SELECT and comments it out.
@@ -138,7 +138,7 @@ alone can be dry-run into a local directory (`LANDING_PATH=./landing`).
   `parquet.\`path\`` works only because every letter of `parquet` is inside the alphabet. And
   on a schema-enabled lakehouse dbt-fabricspark's `__dbt_tmp` is a PERSISTENT view, so a model
   body cannot read a TEMPORARY VIEW either. The spark fact models therefore read through a
-  `<model>__stage` Delta table built by two pre_hooks (`dbt1/macros/spark_read_csv.sql`). Do not
+  `<model>__stage` Delta table built by two pre_hooks (`macros/spark_read_csv.sql`). Do not
   "simplify" it back to a direct read.
 - **Spark's `CAST(string AS TIMESTAMP)` returns NULL for `yyyy/MM/dd` instead of erroring.**
   AEMO ships slashes. Parse the format explicitly. T-SQL accepts slashes, so only the spark
@@ -178,11 +178,9 @@ alone can be dry-run into a local directory (`LANDING_PATH=./landing`).
 - The duplicated model files. Two copies of `fct_summary.sql` is the design: they are gated so
   exactly one is live, and the duplication is what lets each engine say what its adapter
   forces without a thicket of conditionals. The shared *data* — the AEMO column layout — lives
-  in `macros/aemo_columns.sql`, at the REPO ROOT, and must stay there: `dbt1` reaches it
-  through `macro-paths: [..., "../macros"]`. Keeping the shared spec outside `dbt1/macros` is
-  what says it is shared data rather than engine logic, and `tests_py/test_aemo_columns.py`
-  pins it there. The three model patch files (`_staging.yml`, `_dimensions.yml`, `_marts.yml`)
-  sit at `dbt1/models/aemo/`, one level ABOVE the engine folders, so ONE patch documents and
+  in `macros/aemo_columns.sql`, once, and `tests_py/test_aemo_columns.py` pins that no model
+  carries its own column list. The three model patch files (`_staging.yml`, `_dimensions.yml`, `_marts.yml`)
+  sit at `models/aemo/`, one level ABOVE the engine folders, so ONE patch documents and
   tests whichever tree is enabled — moving them to the root of `models/` loses the gateable
   segment.
 - `pipeline.yml` being manual. It commits to `history/parity/`, so a push trigger makes the

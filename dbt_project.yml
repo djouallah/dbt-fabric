@@ -3,12 +3,11 @@ version: '1.0.0'
 profile: 'aemo_electricity'
 
 model-paths: ["models"]
-# TWO macro paths. `macros/` here is what is specific to one engine — the T-SQL OPENROWSET
-# reader, the Spark staging dance, the dwh schema pre-create. `../macros`, at the REPO ROOT,
-# is the shared set: the AEMO column layout (aemo_columns.sql) lives there so it exists in
-# exactly ONE place, and tests_py/test_aemo_columns.py pins that. A macro that is genuinely
-# engine- or dialect-specific belongs here, never up there.
-macro-paths: ["macros", "../macros"]
+# ONE macro folder. The AEMO column layout (aemo_columns.sql) lives there so it exists in
+# exactly ONE place, and tests_py/test_aemo_columns.py pins that; the engine-specific readers
+# (openrowset_csv / new_source_files for dwh, spark_read_csv / spark_new_files for spark) sit
+# beside it and say which engine they serve in their names.
+macro-paths: ["macros"]
 test-paths: ["tests"]
 clean-targets: ["target", "dbt_packages"]
 

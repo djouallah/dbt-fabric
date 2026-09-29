@@ -322,4 +322,4 @@ if __name__ == "__main__":
     for source_type, files in summary.fetchall():
         print(f"  {source_type:<16}{files:>6} files")
     print("Landed this run: " + ", ".join(f"{k}={v}" for k, v in landed.items()))
-    print("Done. Now run:  cd dbt1 && dbt build --target <dwh|spark> --profiles-dir .")
+    print("Done. Now run:  dbt build --target <dwh|spark> --profiles-dir .")

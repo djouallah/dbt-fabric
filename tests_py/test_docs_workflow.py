@@ -39,7 +39,7 @@ def test_the_engine_is_a_real_model_tree():
         f"docs.yml targets {ENGINE} but {models_dir(ENGINE)} does not exist -- dbt would "
         f"enable no models and publish an empty DAG, green"
     )
-    assert step.get("working-directory") == "dbt1"
+    assert "working-directory" not in step, "the dbt project is at the repo root"
 
 
 def test_the_gate_runs_before_the_generate():
