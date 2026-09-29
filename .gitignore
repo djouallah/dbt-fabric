@@ -18,3 +18,9 @@ nul
 blog.md
 PLAN.md
 
+
+# Local development (see README, "Develop in VS Code"): the DEV workspace id, and one venv
+# per engine, because the two adapters cannot share one.
+.env
+.venv-dwh/
+.venv-spark/

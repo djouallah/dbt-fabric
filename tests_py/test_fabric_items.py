@@ -224,15 +224,21 @@ def test_ingest_downloads_what_the_deploy_uploads():
 
 def test_a_deploy_never_falls_back_to_github():
     """fabric-cicd activates the value set named after the environment it publishes as, and
-    deploy.py publishes as ENVIRONMENT. The three names are in three files. The value set
-    blanks repo_ref: with the deployed folder gone, ingest stops rather than download the
-    public repo into a private copy's workspace."""
+    deploy.py publishes as one of ENVIRONMENTS, which deploy.yml offers as its choice. The
+    names are in four files. Every value set blanks repo_ref: with the deployed folder gone,
+    ingest stops rather than download the public repo into a private copy's workspace."""
     declared = {v["name"] for v in json.loads(VARIABLES.read_text(encoding="utf-8"))["variables"]}
     sets = {p.stem: json.loads(p.read_text(encoding="utf-8"))
             for p in (LIBRARY / "valueSets").glob("*.json")}
-    assert set(sets) == {deploy.ENVIRONMENT}
+    assert set(sets) == set(deploy.ENVIRONMENTS)
     order = json.loads((LIBRARY / "settings.json").read_text(encoding="utf-8"))["valueSetsOrder"]
-    assert order == [deploy.ENVIRONMENT]
+    assert order == list(deploy.ENVIRONMENTS)
+    doc = yaml.safe_load((WORKFLOWS / "deploy.yml").read_text(encoding="utf-8"))
+    on = doc[True] if True in doc else doc["on"]
+    choice = on["workflow_dispatch"]["inputs"]["environment"]
+    assert choice["options"] == list(deploy.ENVIRONMENTS)
+    assert doc["jobs"]["deploy"]["environment"] == "${{ inputs.environment }}", (
+        "the GitHub Environment is what picks the workspace and gates production")
     for name, doc in sets.items():
         assert doc["name"] == name, "the file name must be the value set's name"
         overrides = {o["name"]: o["value"] for o in doc["variableOverrides"]}
@@ -267,6 +273,15 @@ def test_no_notebook_runs_a_python_script(name):
     """A notebook holds its own code. The only things it runs are pip and dbt, so there is
     nothing to follow into another file."""
     assert not re.search(r"\.py\b", _code(name)), f"{name} names a .py file"
+
+
+def test_dev_launcher_sets_what_run_sets():
+    """dev.py builds from VS Code what the `run` notebook builds in Fabric. A variable one
+    sets and the other does not is a laptop build that differs from production."""
+    run = set(re.findall(r'os\.environ\["(\w+)"\] =', _code("run")))
+    dev = set(re.findall(r'env\["(\w+)"\] =',
+                         (REPO / ".github" / "scripts" / "dev.py").read_text(encoding="utf-8")))
+    assert run and dev == run, sorted(dev ^ run)
 
 
 def test_only_ci_runs_on_push():

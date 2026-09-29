@@ -5,19 +5,30 @@ name: deploy
 # GitHub, at deploy or at run time, so this is the one that works from a private repo.
 # install.yml is the demo install, Jumpstart from the public repo.
 #
+# TWO WORKSPACES, ONE GITHUB ENVIRONMENT EACH: `dev` and `production`. The environment holds
+# that workspace's FABRIC_WORKSPACE_ID and the service principal that deploys to it, and
+# `production` has required reviewers, so a release waits for approval. The name is also the
+# Variable Library value set fabric-cicd activates.
+#
 # Manual only: it creates Fabric items, and it switches the workspace's run to the commit
 # it was dispatched on. It deploys and stops there; the run itself is run_pipeline, in the
 # workspace.
 
 on:
   workflow_dispatch:
+    inputs:
+      environment:
+        description: Workspace to deploy to
+        type: choice
+        options: [dev, production]
+        default: dev
 
 permissions:
   id-token: write
   contents: read
 
 concurrency:
-  # The same group as install.yml: both write the same items into the same workspace.
+  # The same group as install.yml: both write Fabric items.
   group: install
   cancel-in-progress: false
 
@@ -25,6 +36,7 @@ jobs:
   deploy:
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    environment: ${{ inputs.environment }}
     env:
       FABRIC_WORKSPACE_ID: ${{ secrets.FABRIC_WORKSPACE_ID }}
     steps:
@@ -41,4 +53,4 @@ jobs:
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           allow-no-subscriptions: true
       - name: Deploy from this checkout
-        run: python .github/scripts/deploy.py
+        run: python .github/scripts/deploy.py ${{ inputs.environment }}

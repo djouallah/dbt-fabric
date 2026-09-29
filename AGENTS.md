@@ -49,6 +49,15 @@ every model, and `dbt build` reports "Nothing to do" and goes green. Nothing els
 There is no Fabric-free run, and no run from a GitHub runner: the run is `run_pipeline`, in a
 Fabric workspace. CI checks the project offline and installs it; it never builds it.
 
+**Development is from VS Code against a DEV workspace, production is Fabric only.**
+`deploy.yml` installs the same items into DEV or PROD (`dev` / `production`, see below).
+`.github/scripts/dev.py <engine> <dbt args>` builds one engine into the DEV workspace named
+in the gitignored `.env`, as the developer's `az login`, run with that engine's own venv
+(`.venv-dwh`, `.venv-spark`). It creates nothing, and sets exactly the env vars the `run`
+notebook sets, with `deploy_config`'s values: `tests_py/test_fabric_items.py` pins the two
+sets equal, so a variable added to one must be added to the other. Nothing builds PROD but
+its `run_pipeline`.
+
 ## Running in Fabric
 
 The user's path is two steps: install `fabric_items/`, then run or schedule
@@ -90,10 +99,12 @@ The user's path is two steps: install `fabric_items/`, then run or schedule
   deployed folder has no `REF` and is never replaced. There is no per-run download: the
   ref is a tag, fixed.
 - **A deploy blanks `repo_ref`, so there is NO fallback to GitHub.** `deploy.py` publishes
-  as the environment `production`, and `fabric-cicd` activates the Variable Library value set
-  of that name, which overrides `repo_ref` to `""`; `ingest` then stops rather than download
-  the public repo into a private copy's workspace. The value set's name, `settings.json`'s
-  `valueSetsOrder` and `deploy.py`'s `ENVIRONMENT` are one name in three files. On `main`,
+  as an environment, `dev` or `production`, and `fabric-cicd` activates the Variable Library
+  value set of that name, and both override `repo_ref` to `""`; `ingest` then stops rather
+  than download the public repo into a private copy's workspace. The environment names are
+  written in four places: the value sets, `settings.json`'s `valueSetsOrder`, `deploy.py`'s
+  `ENVIRONMENTS` and `deploy.yml`'s choice. Each is also a GitHub Environment, which holds
+  that workspace's `FABRIC_WORKSPACE_ID`. `production` has required reviewers. On `main`,
   `repo_ref` is `main` and the folder is NOT refreshed by a push: delete it to pick one up.
 - **The project is uploaded as a FOLDER, of the COMMIT.** Not a zip: what is deployed can be
   opened and read in the lakehouse. `git archive HEAD`, not the working tree, so a deploy from

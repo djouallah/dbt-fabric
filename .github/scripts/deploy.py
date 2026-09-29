@@ -2,10 +2,12 @@
 """Deploy from CI: publish fabric_items/ from THIS CHECKOUT, and upload the project
 to OneLake for the `run` notebook to read.
 
-    FABRIC_WORKSPACE_ID=<guid> python .github/scripts/deploy.py
+    FABRIC_WORKSPACE_ID=<guid> python .github/scripts/deploy.py <dev | production>
 
-THE PRODUCTION INSTALL; install_jumpstart.py is the demo one. The demo needs the repo to be
-public twice over: Jumpstart clones it from GitHub to install, and the `ingest` notebook
+THE PRODUCTION INSTALL, into the DEV workspace or the PRODUCTION one: the same items, the
+same project, a different value set. deploy.yml runs it as the GitHub Environment of the
+same name, which is what holds that workspace's id. install_jumpstart.py is the demo
+install. The demo needs the repo to be public twice over: Jumpstart clones it from GitHub to install, and the `ingest` notebook
 downloads the dbt project from it once. Nothing here or after it fetches from GitHub, so
 this works from a private copy of the repo, and with no secret: the login is OIDC.
 
@@ -40,8 +42,8 @@ import install_jumpstart
 REPO = install_jumpstart.REPO
 ITEMS = install_jumpstart.ITEMS
 
-# The value set in deploy_config.VariableLibrary/valueSets/ that this deploy activates.
-ENVIRONMENT = "production"
+# The value sets in deploy_config.VariableLibrary/valueSets/; a deploy activates one.
+ENVIRONMENTS = ("dev", "production")
 # Where the project goes in the landing lakehouse. The `run` notebook's PROJECT is this
 # folder, seen through its default lakehouse.
 PROJECT = "Files/project"
@@ -49,7 +51,7 @@ PROJECT = "Files/project"
 UPLOADED = ["dbt_project.yml", "profiles.yml", "models", "macros", "tests", "requirements"]
 
 
-def publish() -> None:
+def publish(environment: str) -> None:
     from azure.identity import AzureCliCredential
     from fabric_cicd import FabricWorkspace, publish_all_items
 
@@ -63,7 +65,7 @@ def publish() -> None:
             workspace_id=os.environ["FABRIC_WORKSPACE_ID"],
             repository_directory=tmp,
             item_type_in_scope=install_jumpstart.INSTALL["items_in_scope"],
-            environment=ENVIRONMENT,
+            environment=environment,
             token_credential=AzureCliCredential(),
         ))
 
@@ -101,13 +103,17 @@ def upload() -> None:
 
 
 def main() -> int:
-    publish()
+    if len(sys.argv) != 2 or sys.argv[1] not in ENVIRONMENTS:
+        print(f"usage: deploy.py <{' | '.join(ENVIRONMENTS)}>", file=sys.stderr)
+        return 2
+    environment = sys.argv[1]
+    publish(environment)
     missing = sorted(install_jumpstart.expected() - install_jumpstart.deployed())
     if missing:
         print("published, but not in the workspace: "
               + ", ".join(f"{n}.{t}" for n, t in missing), file=sys.stderr)
         return 1
-    print(f"published {len(install_jumpstart.expected())} items as {ENVIRONMENT}")
+    print(f"published {len(install_jumpstart.expected())} items as {environment}")
     upload()
     return 0
 

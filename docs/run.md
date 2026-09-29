@@ -27,21 +27,7 @@ runs it as a two-way matrix, so each engine is validated against exactly its own
 The run is `run_pipeline`, in the workspace: see the [README](../README.md) for the two ways
 to install it. Its `ingest` notebook is the only thing that lands the AEMO files.
 
-One engine can also be built by hand from a laptop, against files the pipeline has already
-landed. `provision.py` does from a laptop what the `run` notebook's connect cell does in
-Fabric: it finds the items, creating them if they are missing, and prints the `KEY=value`
-lines the profile reads. The Azure CLI login is what it and both adapters authenticate with
-(`FABRIC_AUTH=CLI`).
-
-```bash
-az login
-export FABRIC_WORKSPACE_ID=<workspace GUID>
-pip install -r requirements/dwh.txt                             # or spark.txt
-
-while IFS= read -r kv; do export "$kv"; done < <(python .github/scripts/provision.py dwh)
-dbt build --target dwh --profiles-dir .
-```
-
-For `spark`, also `export DBT_FABRICSPARK_SKIP_OPTIMIZE=true` (see
-[engine nuances](engine-nuances.md)). `process_limit` (default `1000`) caps how many archive
-files each fact model folds per run; set it low for a first build.
+To build from a laptop, run `.github/scripts/dev.py` against your DEV workspace. The
+[README](../README.md#develop-in-vs-code) covers the setup. `process_limit`, set in `.env`
+and defaulting to the Variable Library's `1000`, caps how many archive files each fact model
+folds per build. Set it low for a quick first build.

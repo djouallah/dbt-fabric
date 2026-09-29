@@ -1,0 +1,54 @@
+{
+  // Terminal > Run Task. Each engine runs from its own venv (see README, "Develop in VS
+  // Code"): dbt-fabric and dbt-fabricspark cannot share one. The dbt builds go to the DEV
+  // workspace in .env, as your `az login`; for a --select, run dev.py in the terminal.
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "dbt build: dwh (dev)",
+      "type": "process",
+      "command": "${workspaceFolder}/.venv-dwh/bin/python",
+      "windows": { "command": "${workspaceFolder}\\.venv-dwh\\Scripts\\python.exe" },
+      "args": [".github/scripts/dev.py", "dwh", "build"],
+      "options": { "cwd": "${workspaceFolder}" },
+      "problemMatcher": []
+    },
+    {
+      "label": "dbt build: spark (dev)",
+      "type": "process",
+      "command": "${workspaceFolder}/.venv-spark/bin/python",
+      "windows": { "command": "${workspaceFolder}\\.venv-spark\\Scripts\\python.exe" },
+      "args": [".github/scripts/dev.py", "spark", "build"],
+      "options": { "cwd": "${workspaceFolder}" },
+      "problemMatcher": []
+    },
+    {
+      "label": "pytest",
+      "type": "process",
+      "command": "${workspaceFolder}/.venv-dwh/bin/python",
+      "windows": { "command": "${workspaceFolder}\\.venv-dwh\\Scripts\\python.exe" },
+      "args": ["-m", "pytest", "tests_py/", "-q"],
+      "options": { "cwd": "${workspaceFolder}" },
+      "group": { "kind": "test", "isDefault": true },
+      "problemMatcher": []
+    },
+    {
+      "label": "check gating: dwh",
+      "type": "process",
+      "command": "${workspaceFolder}/.venv-dwh/bin/python",
+      "windows": { "command": "${workspaceFolder}\\.venv-dwh\\Scripts\\python.exe" },
+      "args": [".github/scripts/check_gating.py", "dwh"],
+      "options": { "cwd": "${workspaceFolder}" },
+      "problemMatcher": []
+    },
+    {
+      "label": "check gating: spark",
+      "type": "process",
+      "command": "${workspaceFolder}/.venv-spark/bin/python",
+      "windows": { "command": "${workspaceFolder}\\.venv-spark\\Scripts\\python.exe" },
+      "args": [".github/scripts/check_gating.py", "spark"],
+      "options": { "cwd": "${workspaceFolder}" },
+      "problemMatcher": []
+    }
+  ]
+}

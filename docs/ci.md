@@ -29,9 +29,10 @@ share a concurrency group, because they write the same items.
   `repo_ref`, into `dbt_landing/Files/project/`. Both need the repo to be public.
 - `deploy.yml`, the production install: `deploy.py` publishes the items from the checkout
   with `fabric-cicd`, which is what Jumpstart installs with, and uploads the project to
-  `dbt_landing/Files/project/`, file by file, with a `COMMIT` file naming the commit. It
-  publishes as the environment `production`, which activates the `deploy_config` value set
-  of that name and so blanks `repo_ref`: `ingest` never downloads, and the `run` notebook
+  `dbt_landing/Files/project/`, file by file, with a `COMMIT` file naming the commit. It is
+  dispatched with an environment, `dev` or `production`. Each is a GitHub Environment,
+  holding its workspace's id, and `production` has required reviewers. Each is also the
+  `deploy_config` value set that the deploy activates. Both value sets blank `repo_ref`: `ingest` never downloads, and the `run` notebook
   copies the project from the lakehouse. Nothing is fetched from GitHub, so it works from a private
   repo, and the login is OIDC, with no secret.
 
