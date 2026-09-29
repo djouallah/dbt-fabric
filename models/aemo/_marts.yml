@@ -109,7 +109,7 @@ models:
       THE GOLD TABLE, and the one every engine is compared on. One row per
       (date, time, DUID) joining generation (mw) to the matching regional price. Rebuilt
       from the daily facts when new daily files land, topped up from the intraday facts in
-      between. parity.py compares this table across engines.
+      between. The parity notebook compares this table across engines.
     columns:
       - name: date
         description: Calendar date of the dispatch interval

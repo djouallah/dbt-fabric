@@ -4,16 +4,15 @@
     THIS IS THE MEASUREMENT THE REPO EXISTS TO MAKE. Two adapters run the same business
     logic; this is what turns "the same" from a claim into a check.
 
-    Run per engine, and capture stdout:
-        dbt run-operation parity_fingerprint --target <engine> --profiles-dir . \
-            | python .github/scripts/parity.py capture history/parity
-    then compare with `parity.py compare history/parity`.
+    Run per engine, by the `run` notebook, which lifts the JSON out of the log:
+        dbt run-operation parity_fingerprint --target <engine> --profiles-dir .
+    The `parity` notebook then compares the two.
 
     Aggregates rather than a row-by-row diff on purpose: each engine reports through its OWN
     adapter (a Fabric Warehouse, a Fabric Lakehouse), and only the numbers are compared.
 
     Two known reasons the numbers can differ WITHOUT the logic differing, both measured
-    elsewhere and both handled in parity.py rather than here:
+    elsewhere and both handled in the parity notebook rather than here:
       * T-SQL pads strings on comparison ('ERB01' = 'ERB01 ' is TRUE); Spark does not. A single trailing space in a join key split the engines for over a year.
       * DOUBLE -> DECIMAL tie-breaking is HALF_UP on Spark and something else in T-SQL, so the money columns get a relative tolerance, not equality.
 --#}

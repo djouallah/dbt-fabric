@@ -95,12 +95,12 @@ def test_the_write_permissions_do_not_spread():
     assert publish.get("contents") != "write"
 
 
-def test_it_chains_off_the_pipeline_and_checks_out_that_branch():
-    """On a `workflow_run` event the default checkout is the TRIGGERING run's SHA and `github.ref_name` is the default branch, so a topic-branch
-    pipeline would publish main's models as if they were the ones that ran."""
+def test_it_chains_off_the_deploy_and_checks_out_that_branch():
+    """On a `workflow_run` event `github.ref_name` is the default branch, so a deploy from a
+    topic branch would publish main's models as if they were the ones deployed."""
     d = doc()
     on = d[True] if True in d else d["on"]
     assert set(on) == {"workflow_dispatch", "workflow_run"}, sorted(on)
-    assert on["workflow_run"]["workflows"] == ["pipeline"]
+    assert on["workflow_run"]["workflows"] == ["deploy"]
     checkout = next(s for s in steps("site") if "actions/checkout" in str(s.get("uses", "")))
     assert "github.event.workflow_run.head_branch" in checkout["with"]["ref"]

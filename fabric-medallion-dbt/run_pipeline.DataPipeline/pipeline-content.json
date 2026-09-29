@@ -3,7 +3,7 @@
     "concurrency": 1,
     "activities": [
       {
-        "name": "land",
+        "name": "ingest",
         "type": "TridentNotebook",
         "dependsOn": [],
         "policy": {
@@ -14,21 +14,8 @@
           "secureInput": false
         },
         "typeProperties": {
-          "notebookId": "6586342f-fb32-4c4d-bdf8-3d61a765751e",
-          "workspaceId": "00000000-0000-0000-0000-000000000000",
-          "parameters": {
-            "step": {
-              "value": "land",
-              "type": "string"
-            },
-            "run_id": {
-              "value": {
-                "value": "@pipeline().RunId",
-                "type": "Expression"
-              },
-              "type": "string"
-            }
-          }
+          "notebookId": "1aa13615-9238-43ca-9963-5d1950632f16",
+          "workspaceId": "00000000-0000-0000-0000-000000000000"
         }
       },
       {
@@ -36,7 +23,7 @@
         "type": "TridentNotebook",
         "dependsOn": [
           {
-            "activity": "land",
+            "activity": "ingest",
             "dependencyConditions": [
               "Succeeded"
             ]
@@ -53,7 +40,7 @@
           "notebookId": "6586342f-fb32-4c4d-bdf8-3d61a765751e",
           "workspaceId": "00000000-0000-0000-0000-000000000000",
           "parameters": {
-            "step": {
+            "engine": {
               "value": "dwh",
               "type": "string"
             },
@@ -72,7 +59,7 @@
         "type": "TridentNotebook",
         "dependsOn": [
           {
-            "activity": "land",
+            "activity": "ingest",
             "dependencyConditions": [
               "Succeeded"
             ]
@@ -89,7 +76,7 @@
           "notebookId": "6586342f-fb32-4c4d-bdf8-3d61a765751e",
           "workspaceId": "00000000-0000-0000-0000-000000000000",
           "parameters": {
-            "step": {
+            "engine": {
               "value": "spark",
               "type": "string"
             },
@@ -128,13 +115,9 @@
           "secureInput": false
         },
         "typeProperties": {
-          "notebookId": "6586342f-fb32-4c4d-bdf8-3d61a765751e",
+          "notebookId": "9caec688-0490-4185-be95-69698527b1bf",
           "workspaceId": "00000000-0000-0000-0000-000000000000",
           "parameters": {
-            "step": {
-              "value": "parity",
-              "type": "string"
-            },
             "run_id": {
               "value": {
                 "value": "@pipeline().RunId",

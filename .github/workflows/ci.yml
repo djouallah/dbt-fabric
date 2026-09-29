@@ -10,7 +10,6 @@ on:
     branches: ["**"]
   pull_request:
     branches: [main]
-  workflow_call:
   workflow_dispatch:
 
 permissions:
@@ -50,9 +49,7 @@ jobs:
   # the dependencies it builds with.
   gating:
     # `label` is cosmetic — the only thing the Actions UI shows. `engine` is the real target
-    # name that dbt, the folder layout and every script key on; do not rename those. The same
-    # labels are in pipeline.yml's `plan` step and in layout.py's LABEL, and the three are
-    # meant to match.
+    # name that dbt, the folder layout and every script key on; do not rename those.
     name: gating (${{ matrix.label }})
     strategy:
       fail-fast: false

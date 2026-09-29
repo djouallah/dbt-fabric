@@ -3,7 +3,7 @@
 One dbt project builds the same AEMO gold layer on two Microsoft-supported adapters: Fabric
 Warehouse (`dbt-fabric`) and Fabric Spark (`dbt-fabricspark`). The business logic is the same
 on both; every pipeline run fingerprints the gold table on each engine and compares them
-([`parity.py`](../.github/scripts/parity.py)).
+(the `parity` notebook).
 
 Each engine keeps its own copy of the models, because two things differ between them:
 

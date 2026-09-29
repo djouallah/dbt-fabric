@@ -24,7 +24,7 @@
        NEWEST first: a from-scratch backfill (e.g. fresh warehouse, ~3000 files in the log) then
        converges over a few runs instead of blowing the limit, and what it has folded meanwhile is
        the RECENT end of the archive. Steady-state new files (<= the daily download limit) are well
-       under the cap. The direction must match spark's to the letter -- parity.py compares the
+       under the cap. The direction must match spark's to the letter -- the parity notebook compares the
        two gold tables, so engines folding different subsets of one backlog reads as a logic
        difference rather than as a backlog. --#}
   {%- set process_limit = env_var('process_limit', '1000') | int -%}

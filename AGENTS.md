@@ -25,11 +25,10 @@ This repo is used for training and must rest on supported pieces:
   do not port them back.
 - **No `duckrun` package, anywhere** — not for tokens, not for OneLake I/O, not for deploy.
   Tokens come from `azure/login` + azure-identity (or `notebookutils` in a Fabric notebook);
-  OneLake bytes go through `ingest/onelake.py` (azure-storage-file-datalake).
+  `deploy.py` uploads to OneLake with azure-storage-file-datalake.
 - **DuckDB as a LIBRARY is fine** — the role pandas or pyarrow would play, and it ships
-  preinstalled in Fabric's Python notebook. `ingest/download_aemo.py` uses it for the nemweb listings
-  and the archive log; `layout.py` for parquet footers. `requirements/ops.txt` pins it to the
-  version the notebook ships (1.4.4) so a script behaves the same on a runner and in Fabric.
+  preinstalled in Fabric's Python notebook. The `ingest` notebook uses it for the nemweb
+  listings and the archive log, and installs nothing.
 - **Installing into a workspace is Microsoft Fabric Jumpstart** (`fabric-jumpstart`, on
   `fabric-cicd`) for the demo, **and `fabric-cicd` itself from CI** for production, both from
   `fabric-medallion-dbt/`; see "Running in Fabric" below.
@@ -51,58 +50,65 @@ point `DBT_BIN` at the one you are not running from. Use the OFFICIAL `dbt-fabri
 builds NOTHING and exits 0** — a target name that stops matching a folder name disables
 every model, and `dbt build` reports "Nothing to do" and goes green. Nothing else catches it.
 
-There is no Fabric-free run: both engines' compute is in Fabric, and everything lands in
-OneLake — `ingest/onelake.py` accepts only `abfss://` paths.
+There is no Fabric-free run, and no run from a GitHub runner: the run is `run_pipeline`, in a
+Fabric workspace. CI checks the project offline and installs it; it never builds it.
 
 ## Running in Fabric
 
 The user's path is two steps: install `fabric-medallion-dbt/`, then run or schedule
 `run_pipeline`. There are two installs, and `README.md` has both.
 
+- **`run_pipeline` is ingest -> [dwh, spark] -> parity, on THREE notebooks.** `ingest` lands
+  the files, `run` builds one engine (parameters `engine` and `run_id`, called once per
+  engine), `parity` compares the two fingerprints (parameter `run_id`,
+  `@pipeline().RunId`). Each activity is its own session, which is what lets both adapters
+  run. There is no step switch in any notebook; do not bring one back.
+- **Each notebook holds its own code, and is the ONLY copy of it.** They are there to be
+  read: how the files land, how dbt gets installed and run, how the engines are compared
+  should not need a second file open. There is no `download_aemo.py`, `parity.py` or
+  `fabric_run.py`. The price is that a change to a notebook reaches a workspace at the next
+  install or deploy, not at the next run.
+- **Only `ingest` lands.** It rewrites `csv_raw_archive_log.parquet` in place, so two steps
+  landing at once would race on that one file, and the engines would be compared on
+  different inputs. `tests_py/test_fabric_items.py` pins it.
+- **All three notebooks have `dbt_landing` as their default lakehouse**, so every path is a
+  plain one under `/lakehouse/default/Files`. The binding in the notebook metadata is the
+  lakehouse's `logicalId` and the all-zero workspace id; `fabric-cicd` swaps both at install,
+  the way it does for the `notebookId` of a pipeline activity. No `parameter.yml` rule.
+- **dbt runs as a subprocess of the `run` notebook, never imported into the kernel**, so the
+  `pip install` needs no restart.
+- **Fingerprints go to `dbt_landing/Files/parity/<run_id>/`** and `parity` reads that run's
+  only: the folder also holds every earlier run's, and a leg that failed this run must not be
+  graded on a stale one.
 - **The demo install is Fabric Jumpstart, the production install is `deploy.yml`.** Jumpstart
-  clones the repo from GitHub and `run` downloads it again on every step, so the demo needs a
-  PUBLIC repo. `deploy.py` publishes the items from the CI checkout with `fabric-cicd` and
-  uploads the project to `dbt_landing/Files/project/`, so nothing is fetched from GitHub and
-  the repo can be private.
+  clones the repo from GitHub and `run` downloads the project from it on every run, so the
+  demo needs a PUBLIC repo. `deploy.py` publishes the items from the CI checkout with
+  `fabric-cicd` and uploads the project to `dbt_landing/Files/project/`, file by file, so
+  nothing is fetched from GitHub and the repo can be private.
 - **`project_source` decides where `run` gets the project: `github` or `onelake`.** The
   default is `github`. `deploy.py` publishes as the environment `production`, and
   `fabric-cicd` activates the Variable Library value set of that name, which overrides it to
   `onelake`. The value set's name, `settings.json`'s `valueSetsOrder` and `deploy.py`'s
   `ENVIRONMENT` are one name in three files. There is NO fallback to GitHub: in a private
   copy that would run the public repo's code against the workspace.
+- **The project is uploaded as a FOLDER, of the COMMIT.** Not a zip: what is deployed can be
+  opened and read in the lakehouse. `git archive HEAD`, not the working tree, so a deploy from
+  a laptop and one from CI leave the same files. The folder is deleted first, so a model
+  removed from the repo does not survive there. Its `COMMIT` file names the commit.
 - **An install after a deploy switches the workspace back to `github`**, and a deploy after an
   install switches it to `onelake`: each one re-publishes `deploy_config` and sets the active
   value set. They share a concurrency group.
-- **Do not deploy while `run_pipeline` is running.** Each step fetches the project again, so a
-  deploy mid-run builds the legs from two commits.
-- **`run_pipeline` is land -> [dwh, spark] -> parity, four activities on the ONE notebook**,
-  each passing `step` and `run_id` (`@pipeline().RunId`). Each activity is its own session,
-  which is what lets both adapters run.
-- **The whole run is in `run.Notebook`, a cell per move**: settings, fetch the project,
-  `pip install` the step's `requirements/<name>.txt`, then land, build or parity. It is there
-  to be read: how dbt gets installed and run in a notebook should not need a second file
-  open. There is no `fabric_run.py` any more. The price is that a change to the notebook
-  reaches a workspace at the next install or deploy, not at the next run; a change to a
-  script or a model still arrives with the project.
-- **The notebook runs the commands `pipeline.yml` runs**, and nothing else. Do not give it
-  logic the workflow does not have.
-- **dbt runs as a subprocess of the notebook, never imported into the kernel**, so the
-  `pip install` needs no restart. For the same reason the fingerprints go through
-  `notebookutils.fs`, not `ingest/onelake.py`: that would import the Azure SDKs into the
-  kernel right after pip changed them.
-- **Fingerprints go to `dbt_landing/Files/parity/<run_id>/`** and `parity` reads that run's
-  only, for the same reason the workflow never compares `history/parity/`.
-- **`run_pipeline` and `pipeline.yml` must never run at the same time**: they land into the
-  same lakehouse and build the same schemas.
+- **Do not deploy while `run_pipeline` is running**: the two engines would build from two
+  commits.
 - **The items folder is named after the `logical_id`**, which is where Jumpstart looks when
   no `workspace_path` is given. Rename one and you must rename the other.
 - **Item names are rewritten as whole words when Jumpstart applies a prefix**, in every text
-  file under `fabric-medallion-dbt/`. No prefix is applied by default. Before one is, `run`
-  and `dbt` have to be renamed: as they stand, a prefix would rewrite `dbt build` and
-  `subprocess.run`.
+  file under `fabric-medallion-dbt/`. No prefix is applied by default. Before one is, `run`,
+  `dbt`, `ingest` and `parity` have to be renamed: as they stand, a prefix would rewrite
+  `dbt build` and `subprocess.run`.
 - `.github/workflows/install.yml` and `deploy.yml` (both manual) install into the test
   workspace and check every item landed; `tests_py/test_fabric_items.py` pins the items, the
-  notebook's steps and the deploy's names offline.
+  notebooks and the deploy's names offline.
 
 ## Gating
 
@@ -142,15 +148,16 @@ The user's path is two steps: install `fabric-medallion-dbt/`, then run or sched
   rename. `check_gating.py` asserts `<engine>_landing` / `<engine>_mart` offline; do not
   weaken it. The community repo writes the SAME schema names into the same workspace, so the
   two repos' pipelines must never run at the same time.
-- **`LANDING_PATH` and `FILES_PATH` are different variables on purpose.** `download_aemo.py`
-  writes to `LANDING_PATH`, which is identical on both legs; `FILES_PATH` is how that engine's
-  dbt READS the zone (a shortcut, for dwh). They were one variable, and `provision.py`
-  re-pointed it for dwh — so that leg downloaded its own private copy of the CSVs and
-  `parity.py` was grading engines on different inputs. Never re-emit `FILES_PATH` to move an
-  engine's data somewhere; give it its own key.
-- **Every job that touches Fabric has an `azure/login` step** (OIDC, no secret). The dwh leg
-  captures its `database.windows.net` token right after provisioning: the OIDC client
-  assertion lasts ~5 minutes and provisioning can outlive it (AADSTS700024).
+- **`LANDING_PATH` and `FILES_PATH` are different variables on purpose.** The landing zone is
+  `LANDING_PATH`, which is identical on both legs; `FILES_PATH` is how that engine's dbt READS
+  the zone (a shortcut, for dwh). They were one variable, and `provision.py` re-pointed it for
+  dwh — so that leg downloaded its own private copy of the CSVs and parity was grading
+  engines on different inputs. Never re-emit `FILES_PATH` to move an engine's data somewhere;
+  give it its own key.
+- **`install.yml` and `deploy.yml` log in with `azure/login`** (OIDC, no secret). In a
+  notebook each adapter asks `notebookutils` for its token, and each has its own name for
+  that: `notebookutils` for dbt-fabric, `fabric_notebook` for dbt-fabricspark. On a laptop it
+  is the Azure CLI. `provision.py` emits `FABRIC_AUTH=CLI`; the `run` notebook overrides it.
 - **`dbt retry` REBUILDS THE ORIGINAL COMMAND'S FLAGS, so `flags.WHICH` is `'build'` inside a
   retried build.** dbt 1.11's `dbt/task/retry.py` calls
   `set_flags(Flags.from_dict(CMD_DICT[previous_command], ...))` before it parses or runs
@@ -159,7 +166,7 @@ The user's path is two steps: install `fabric-medallion-dbt/`, then run or sched
 - **Both engines fold files NEWEST FIRST, and the direction is load-bearing.**
   `process_limit` caps how many unprocessed archive-log files a fact model ingests per run;
   `ORDER BY archive_path DESC` is what decides WHICH (`new_source_files.sql` for dwh,
-  `spark_new_files.sql` for spark, and `download_aemo.py`'s `new_files()` one layer up). Change
+  `spark_new_files.sql` for spark, and the `ingest` notebook's `new_files()` one layer up). Change
   the direction in one place and you must change it in all three;
   `tests_py/test_process_order.py` pins it. Newest first is also what makes a partial load
   *recent* data, which is why the four `assert_all_*_files_processed_*` tests and
@@ -203,10 +210,10 @@ The user's path is two steps: install `fabric-medallion-dbt/`, then run or sched
 - **T-SQL pads strings on comparison** (`'ERB01' = 'ERB01 '` is TRUE); Spark does not. One
   trailing space in a join key can split the engines while every test stays green.
 - **`DOUBLE → DECIMAL` tie-breaking differs** (HALF_UP on Spark, something else in T-SQL),
-  which is why `parity.py` gives the money columns a relative tolerance and exact-matches
-  everything else.
+  which is why the `parity` notebook gives the money columns a relative tolerance and
+  exact-matches everything else.
 - **dbt-fabricspark is pinned to 1.13.4** (1.13.5 rejects the profile with "'database' is a
-  required property"), and CI sets `DBT_FABRICSPARK_SKIP_OPTIMIZE=true` because 1.13.x runs
+  required property"), and the `run` notebook sets `DBT_FABRICSPARK_SKIP_OPTIMIZE=true` because 1.13.x runs
   OPTIMIZE after every Delta build, rewriting the layout the run just produced.
   `requirements/spark.txt` names `dbt-spark` explicitly: dbt-fabricspark imports it without
   declaring it.
@@ -220,13 +227,6 @@ The user's path is two steps: install `fabric-medallion-dbt/`, then run or sched
 
 ## Things not to "fix"
 
-- **`pipeline.yml` lands once, then fans out.** The legs are a MATRIX JOB in that one file.
-  They run in PARALLEL and do not land; the shared `land` job runs `download_aemo.py` before
-  them. Do not move landing back into the legs to "make them independent": download_aemo.py
-  rewrites `csv_raw_archive_log.parquet` in place, so concurrent legs race on that one file.
-  The `land` job also provisions the folder, `dbt_landing` and the shared `dbt` lakehouse up
-  front (`provision.py landing`), which stops parallel create-if-missing calls colliding.
-  `tests_py/test_pipeline_compact.py` pins that the legs do not land.
 - The duplicated model files. Two copies of `fct_summary.sql` is the design: they are gated so
   exactly one is live, and the duplication is what lets each engine say what its adapter
   forces without a thicket of conditionals. The shared *data* — the AEMO column layout — lives
@@ -235,39 +235,10 @@ The user's path is two steps: install `fabric-medallion-dbt/`, then run or sched
   sit at `models/aemo/`, one level ABOVE the engine folders, so ONE patch documents and
   tests whichever tree is enabled — moving them to the root of `models/` loses the gateable
   segment.
-- `pipeline.yml` being manual. It commits to `history/parity/`, so a push trigger makes the
-  commit start the next run.
-
-## What each engine wrote
-
-Ported from `djouallah/direct-lake-parquet-layout` (`record.py`, `stats.py`);
-`history/README.md` is the reader-facing account.
-
-- **The run record is run stamp + inputs + `layout` + `parity`.** `record.py init` in `land`,
-  `layout.py` merges `layout`, `record.py finish` in the `record` job folds in this run's
-  fingerprints and commits it to `history/runs/`.
-- **Everything in the record is keyed by name, never a list.** The fragment merge is a
-  recursive dict union that REPLACES lists. Fragments merge in BASENAME order
-  (`download-artifact` nests each in its own directory).
-- **`RUN_RECORD` unset is a silent no-op**, so the scripts stay runnable by hand. Every
-  fragment upload is `if-no-files-found: ignore`.
-- **`runner.temp` is not a named value at job level.** `RUN_RECORD` is set from a step into
-  `$GITHUB_ENV`, and the fragment lives outside the checkout so the committing job never sees
-  an untracked `record/`.
-- **Compare this run's downloaded fingerprints, never `history/parity/`.** After the first
-  commit that directory also holds the previous run's, so a leg that failed this run would be
-  graded — and folded into the record — on a stale fingerprint.
-- **`layout.py` reads only `<prefix>_landing` and `<prefix>_mart`**, never every schema in the
-  item, which would sweep each `test_*` isolation schema's footers over OneLake. It replays each
-  table's `_delta_log` itself (checkpoint + later JSON commits) to get the live files. The
-  schema rule is `layout.mart_schema()` — the one Python copy of `generate_schema_name()`.
-  Its heavy imports (`duckdb`, `onelake`, `provision`) are lazy so `tests_py/test_layout.py`
-  runs in `ci.yml`'s unit job; `provision.py` reads `FABRIC_WORKSPACE_ID` at import.
-- **`pipeline.yml` must never gain a `push:` trigger.** It commits to `history/`; GITHUB_TOKEN
-  pushes trigger nothing, which is what makes that safe. `tests_py/test_parity_record.py` pins
-  the trigger set. On a `workflow_run` event (`docs.yml`) the checkout MUST use
-  `github.event.workflow_run.head_branch`: the default is the triggering run's SHA, from before
-  the record job pushed.
+- `install.yml` and `deploy.yml` being manual. They create Fabric items and decide what a
+  workspace runs. Only `ci.yml` runs on push; `tests_py/test_fabric_items.py` pins it.
+- `docs.yml`'s checkout naming `github.event.workflow_run.head_branch`. On a `workflow_run`
+  event `github.ref_name` is the default branch, wherever the deploy ran.
 
 ## Domain facts worth keeping
 

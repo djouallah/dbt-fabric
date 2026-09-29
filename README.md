@@ -36,21 +36,28 @@ jumpstart._install_from_github(
 ```
 
 That creates the two lakehouses, the warehouse, the `deploy_config` variable library, the
-`run` notebook, the `run_pipeline` pipeline and a Direct Lake semantic model per engine
-(`aemo_dwh`, `aemo_spark`). Open `run_pipeline` and click **Run**, or give
-it a schedule: it lands the AEMO files once, builds both engines in parallel, and fails if
-their gold tables disagree. `deploy_config` holds the settings (`engines`: `all`, `dwh` or
+`run_pipeline` pipeline with its three notebooks and a Direct Lake semantic model per engine
+(`aemo_dwh`, `aemo_spark`). Open `run_pipeline` and click **Run**, or give it a schedule:
+
+| step | notebook | what it does |
+|---|---|---|
+| 1 | `ingest` | lands the AEMO files, once |
+| 2 | `run`, once per engine, in parallel | installs dbt and the adapter, `dbt build` |
+| 3 | `parity` | fails the run if the two gold tables disagree |
+
+Each notebook holds its own code, so opening one shows what the step does. `deploy_config` holds the settings (`engines`: `all`, `dwh` or
 `spark`; the download and process limits).
 
 This is the demo install, and it needs a public repo: Jumpstart clones it from GitHub, and
-`run` downloads it again at the start of every step.
+the `run` notebook downloads the dbt project from it on every run.
 
 ## Production: deploy from CI
 
 For your own copy of the repo, private or not. The `deploy` workflow publishes the same items
 from its checkout with [`fabric-cicd`](https://microsoft.github.io/fabric-cicd) and uploads
-the dbt project to OneLake, where `run_pipeline` reads it. Nothing is fetched from GitHub,
-and there is no secret to store or rotate: the login is OpenID Connect.
+the dbt project to the `dbt_landing` lakehouse, as a folder you can open and read. Nothing
+is fetched from GitHub, and there is no secret to store or rotate: the login is OpenID
+Connect.
 
 1. Copy this repo into your own.
 2. Create a service principal (an app registration) with a federated credential for your
@@ -68,7 +75,7 @@ What differs from the demo install:
 | the repo | public | public or private |
 | items installed by | a notebook cell, from a GitHub clone | CI, from its checkout |
 | `project_source` | `github` | `onelake` |
-| `run` gets the project from | GitHub, at `repo_ref` | `dbt_landing/Files/project/` |
+| `run` gets the dbt project from | GitHub, at `repo_ref` | `dbt_landing/Files/project/` |
 | a change reaches the workspace | at the next run | at the next deploy |
 
 ## Docs

@@ -1,45 +1,22 @@
 # CI
 
-What the workflows do and why only `ci.yml` runs on push, plus the run record: what each
-engine wrote.
+What the workflows do, and why only `ci.yml` runs on push. None of them runs the pipeline:
+the run is `run_pipeline`, in the Fabric workspace.
 
 - `ci.yml` — free and credential-less: pytest, plus `check_gating.py` as a two-way matrix
   (one environment per engine). Runs on every push. The matrix cannot be collapsed into one
   job: `dbt-fabric` and `dbt-fabricspark` shadow each other under `dbt.adapters`.
-- `pipeline.yml` — manual only, and the whole pipeline in one file:
-  `checks` (ci.yml) → `plan` → `land` → `build` (matrix: dwh, spark) → `layout` → `record`.
-  `land` provisions the shared items and runs `download_aemo.py` ONCE; the build legs then
-  run in parallel and never land, because the downloader rewrites the archive log in place
-  and concurrent legs would race on that one file. Each leg provisions its own items, does
-  `dbt build` (models and tests, then `dbt retry` on failure) and fingerprints its gold
-  table. dbt runs on the runner as a client; the compute is the Warehouse or a Livy session.
-  The **layout** job reads both engines' tables back, and the **record** job compares the
-  fingerprints and commits one run record to `history/runs/`. Every job authenticates with
-  `azure/login` (OIDC). `process_limit` is a dispatch input: files each fact model folds per
-  run, **newest first**, on both engines — so a partial load is recent data, and the backlog
-  shows up as test WARNINGS that fall run by run rather than as a failed build.
-- `docs.yml` — fires after every pipeline run: `dbt docs generate --static --no-compile
-  --empty-catalog --target dwh` and deploys the one self-contained page to GitHub Pages —
+- `install.yml` and `deploy.yml` — the two installs, below. Manual only: they create Fabric
+  items and decide what a workspace runs.
+- `docs.yml` — after every deploy, and by hand: `dbt docs generate --static --no-compile
+  --empty-catalog --target dwh`, and deploys the one self-contained page to GitHub Pages —
   **[the DAG and the model docs](https://djouallah.github.io/fabric-medallion-dbt/)**. It
   builds nothing, spends no Fabric compute and needs no credentials: the profile gets dummy
   values and nothing is contacted. What is published is the lineage and every model, column
   and test description; the catalog is left empty, because generating it would open a real
-  connection. Row counts and sizes live in the run record's `layout` instead.
+  connection.
 
-`pipeline.yml` is manual because provisioning Fabric items and spending capacity is a
-deliberate act, and because the record job commits to `history/`, so a push trigger would
-make the commit start the next run. `tests_py/test_parity_record.py` pins the trigger set.
-
-## What it wrote
-
-Ported from [`direct-lake-parquet-layout`](https://github.com/djouallah/direct-lake-parquet-layout).
-Every pipeline run leaves one record in `history/runs/` — the run's inputs, the parquet layout
-of both engines' tables (files, row groups, `fct_summary`'s per-column encodings and physical
-row order) and the parity fingerprints. [`history/README.md`](../history/README.md) has the
-schema.
-
-Note: cancelling a GitHub job does **not** stop Fabric — a Warehouse query or Livy session
-keeps running, and billing.
+`tests_py/test_fabric_items.py` pins that only `ci.yml` runs on push.
 
 ## Installing into Fabric
 
@@ -48,13 +25,18 @@ did not land, and each installs and stops; the run is `run_pipeline`, in the wor
 share a concurrency group, because they write the same items.
 
 - `install.yml`, the demo install: Microsoft Fabric Jumpstart, which clones the repo from
-  GitHub. `run` then downloads the project from GitHub at the start of every step. Both need
+  GitHub. The `run` notebook then downloads the project from GitHub on every run. Both need
   the repo to be public.
 - `deploy.yml`, the production install: `deploy.py` publishes the items from the checkout
   with `fabric-cicd`, which is what Jumpstart installs with, and uploads the project to
-  `dbt_landing/Files/project/` as one zip. It publishes as the environment `production`,
-  which activates the `deploy_config` value set of that name and so sets `project_source`
-  to `onelake`: `run` then reads the project from OneLake. Nothing is fetched from GitHub,
-  so it works from a private repo, and the login is the same OIDC one.
+  `dbt_landing/Files/project/`, file by file, with a `COMMIT` file naming the commit. It
+  publishes as the environment `production`, which activates the `deploy_config` value set
+  of that name and so sets `project_source` to `onelake`: the `run` notebook then copies the
+  project from the lakehouse. Nothing is fetched from GitHub, so it works from a private
+  repo, and the login is OIDC, with no secret.
 
-Do not deploy while `run_pipeline` is running: each step of a run fetches the project again.
+The upload is of the commit, not the working tree, so a deploy from a laptop and one from CI
+leave the same files. The folder is deleted first: a model removed from the repo must not
+survive in the lakehouse.
+
+Do not deploy while `run_pipeline` is running: the two engines would build from two commits.

@@ -1,4 +1,4 @@
--- View over the archive log download_aemo.py writes to the landing lakehouse
+-- View over the archive log the ingest notebook writes to the landing lakehouse
 -- (csv_raw_archive_log.parquet), read through the shortcut with OPENROWSET. The name is the
 -- same on every engine, so every ref('stg_csv_archive_log') (models, tests) is shared.
 {{ config(materialized='view', schema='landing') }}

@@ -24,17 +24,20 @@ runs it as a two-way matrix, so each engine is validated against exactly its own
 
 ## Against Fabric
 
-The same steps as one leg of `pipeline.yml`, by hand. `provision.py` creates the items if they
-are missing and prints the `KEY=value` lines the profile reads; the Azure CLI login is what
-every script and both adapters authenticate with (`FABRIC_AUTH=CLI`).
+The run is `run_pipeline`, in the workspace: see the [README](../README.md) for the two ways
+to install it. Its `ingest` notebook is the only thing that lands the AEMO files.
+
+One engine can also be built by hand from a laptop, against files the pipeline has already
+landed. These are the commands the `run` notebook runs. `provision.py` creates the items if
+they are missing and prints the `KEY=value` lines the profile reads; the Azure CLI login is
+what it and both adapters authenticate with (`FABRIC_AUTH=CLI`).
 
 ```bash
 az login
 export FABRIC_WORKSPACE_ID=<workspace GUID>
-pip install -r requirements/ops.txt -r requirements/dwh.txt     # or spark.txt
+pip install -r requirements/dwh.txt                             # or spark.txt
 
 while IFS= read -r kv; do export "$kv"; done < <(python .github/scripts/provision.py dwh)
-python ingest/download_aemo.py                                  # writes to LANDING_PATH
 dbt build --target dwh --profiles-dir .
 ```
 

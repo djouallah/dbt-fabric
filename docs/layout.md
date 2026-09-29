@@ -17,18 +17,13 @@ macros/                                    the AEMO CSV layout (aemo_columns.sql
                                            the T-SQL OPENROWSET reader, the Spark staging
                                            tables, the Warehouse schema pre-create
 tests/aemo/<engine>/                       the same 12 assertions, per dialect
-ingest/download_aemo.py                    one downloader, one landing zone, plain CSV
-ingest/onelake.py                          OneLake I/O for the scripts (azure-identity +
-                                           azure-storage-file-datalake)
 .github/scripts/check_gating.py            proves the gating, offline
 .github/scripts/provision.py               creates the Fabric items, prints the profile's env
-.github/scripts/parity.py                  proves the engines agree
-.github/scripts/record.py                  the run record: items by GUID, each leg's window
-.github/scripts/layout.py                  what each engine wrote: files, row groups, encodings, order
-history/                                   parity/ fingerprints, runs/ records
 fabric-medallion-dbt/                      what gets installed in Fabric: the lakehouses, the
-                                           warehouse, the run notebook and pipeline, and a
-                                           Direct Lake semantic model per engine
+                                           warehouse, the pipeline and its three notebooks
+                                           (ingest: one landing zone, plain CSV; run: dbt on
+                                           one engine; parity: proves the engines agree), and
+                                           a Direct Lake semantic model per engine
 .github/scripts/install_jumpstart.py       the demo install, Fabric Jumpstart from GitHub
 .github/scripts/deploy.py                  the production install, from the CI checkout
 docs/                                      this, and the rest of docs/README.md

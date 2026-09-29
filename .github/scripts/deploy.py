@@ -1,36 +1,36 @@
 #!/usr/bin/env python3
-"""Deploy from CI: publish fabric-medallion-dbt/ from THIS CHECKOUT, and ship the project
-to OneLake for run_pipeline to read.
+"""Deploy from CI: publish fabric-medallion-dbt/ from THIS CHECKOUT, and upload the project
+to OneLake for the `run` notebook to read.
 
     FABRIC_WORKSPACE_ID=<guid> python .github/scripts/deploy.py
 
 THE PRODUCTION INSTALL; install_jumpstart.py is the demo one. The demo needs the repo to be
-public twice over: Jumpstart clones it from GitHub to install, and run.Notebook downloads it
-from GitHub on every run. Nothing here or after it fetches from GitHub, so this works from a
-private copy of the repo, and with no secret: the login is the OIDC one every other workflow
-uses.
+public twice over: Jumpstart clones it from GitHub to install, and the `run` notebook
+downloads it from GitHub on every run. Nothing here or after it fetches from GitHub, so this
+works from a private copy of the repo, and with no secret: the login is OIDC.
 
   * THE ITEMS are published with fabric-cicd, which is what Jumpstart installs with, from
     the checkout instead of a clone.
-  * THE PROJECT goes to dbt_landing/Files/project/ as one zip, the shape GitHub's archive
-    has, so run.Notebook unpacks either the same way.
+  * THE PROJECT goes to dbt_landing/Files/project/ as a folder, file by file, so what is
+    deployed can be opened and read in the lakehouse. Its COMMIT file names the commit.
   * `project_source` BECOMES `onelake` because fabric-cicd activates the Variable Library
     value set named after the environment it publishes as. Jumpstart names none, so a demo
     install keeps the default, `github`. tests_py/test_fabric_items.py pins the names.
 
-A change reaches the workspace at the next deploy, not at the next run: the run is of the
-commit that was deployed. Do not deploy while run_pipeline is running; each step of a run
-fetches the project again.
+A change reaches the workspace at the next deploy, not at the next run. Do not deploy while
+run_pipeline is running: the two engines would build from two commits.
 
 Needs `az login` (azure/login on CI).
 """
 from __future__ import annotations
 
+import io
 import os
 import shutil
 import subprocess
 import sys
 import tempfile
+import zipfile
 from pathlib import Path
 
 import install_jumpstart
@@ -40,8 +40,9 @@ ITEMS = install_jumpstart.ITEMS
 
 # The value set in deploy_config.VariableLibrary/valueSets/ that this deploy activates.
 ENVIRONMENT = "production"
-# Where run.Notebook looks, relative to the landing lakehouse. Its PROJECT_ZIP is the same.
-PROJECT_ZIP = "Files/project/fabric-medallion-dbt.zip"
+# Where the project goes in the landing lakehouse. The `run` notebook's PROJECT is this
+# folder, seen through its default lakehouse.
+PROJECT = "Files/project"
 
 
 def publish() -> None:
@@ -63,25 +64,36 @@ def publish() -> None:
         ))
 
 
-def ship() -> None:
-    """HEAD as one zip, into the landing lakehouse."""
-    import provision  # reads FABRIC_WORKSPACE_ID at import
+def upload() -> None:
+    """HEAD, file by file, into the landing lakehouse.
 
-    sys.path.insert(0, str(REPO / "ingest"))
-    from onelake import Store
+    HEAD AND NOT THE WORKING TREE, so a deploy from a laptop and one from CI upload the same
+    files. THE FOLDER IS DELETED FIRST: a model removed from the repo must not survive in
+    OneLake, where dbt would still build it."""
+    import provision  # reads FABRIC_WORKSPACE_ID at import
+    from azure.identity import AzureCliCredential
+    from azure.storage.filedatalake import DataLakeServiceClient
 
     landing = provision.find("lakehouses", provision.LANDING_LAKEHOUSE)
     if not landing:
         raise SystemExit(f"{provision.LANDING_LAKEHOUSE} is not in the workspace after the publish")
-    section, folder, name = PROJECT_ZIP.split("/")
-    with tempfile.TemporaryDirectory() as tmp:
-        # git archive writes the commit into the zip comment, which run.Notebook prints.
-        subprocess.run(["git", "archive", "--format=zip", f"--prefix={ITEMS.name}/",
-                        "-o", str(Path(tmp, name)), "HEAD"], cwd=REPO, check=True)
-        Store(provision.abfss(landing, section)).push(tmp, folder, overwrite=True)
     commit = subprocess.run(["git", "rev-parse", "HEAD"], cwd=REPO, check=True,
                             capture_output=True, text=True).stdout.strip()
-    print(f"shipped {commit} to {provision.LANDING_LAKEHOUSE}/{PROJECT_ZIP}")
+    archive = zipfile.ZipFile(io.BytesIO(subprocess.run(
+        ["git", "archive", "--format=zip", "HEAD"], cwd=REPO, check=True,
+        capture_output=True).stdout))
+
+    onelake = DataLakeServiceClient("https://onelake.dfs.fabric.microsoft.com",
+                                    credential=AzureCliCredential())
+    workspace = onelake.get_file_system_client(provision.WS)
+    folder = workspace.get_directory_client(f"{landing}/{PROJECT}")
+    if folder.exists():
+        folder.delete_directory()
+    files = {n: archive.read(n) for n in archive.namelist() if not n.endswith("/")}
+    files["COMMIT"] = f"{commit}\n".encode()
+    for name, data in files.items():
+        workspace.get_file_client(f"{landing}/{PROJECT}/{name}").upload_data(data, overwrite=True)
+    print(f"uploaded {len(files)} files of {commit} to {provision.LANDING_LAKEHOUSE}/{PROJECT}")
 
 
 def main() -> int:
@@ -92,7 +104,7 @@ def main() -> int:
               + ", ".join(f"{n}.{t}" for n, t in missing), file=sys.stderr)
         return 1
     print(f"published {len(install_jumpstart.expected())} items as {ENVIRONMENT}")
-    ship()
+    upload()
     return 0
 
 

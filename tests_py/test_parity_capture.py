@@ -1,27 +1,26 @@
-"""parity.py must lift the fingerprint JSON out of BOTH dbt versions' logs.
+"""The run notebook must lift the fingerprint JSON out of BOTH dbt versions' logs.
 
 The fingerprint is the measurement the whole repo exists to make, and it survives the trip
-from the engine to history/parity/<engine>.json as text scraped out of a log. dbt 1.x and
-dbt OSS 2 do not format log lines the same way -- v2 can put its own output on the line that
-carries the closing brace -- so the scrape is version-sensitive in a way nothing else is.
+from the engine to Files/parity/<run_id>/<engine>.json as text scraped out of a log. dbt 1.x
+and dbt OSS 2 do not format log lines the same way -- v2 can put its own output on the line
+that carries the closing brace -- so the scrape is version-sensitive in a way nothing else is.
 
-It also fails QUIETLY in the worst way: a leg that builds perfectly and then fails to yield
-a fingerprint looks like a broken engine, and `parity.py compare` simply sees one fewer
-engine and still says OK. These cases are cheap; the round trip to Fabric is not.
+A leg that builds perfectly and then fails to yield a fingerprint looks like a broken engine.
+These cases are cheap; the round trip to Fabric is not.
 
 Run: python -m pytest tests_py/ -q
 """
 from __future__ import annotations
 
+import ast
 import json
-import sys
+import re
 
 import pytest
 
 from _layout import REPO
 
-sys.path.insert(0, str(REPO / ".github" / "scripts"))
-import parity  # noqa: E402
+NOTEBOOK = REPO / "fabric-medallion-dbt" / "run.Notebook" / "notebook-content.ipynb"
 
 FINGERPRINT = {
     "engine": "spark", "adapter": "fabricspark", "model": "fct_summary",
@@ -46,26 +45,24 @@ LOGS = {
 }
 
 
+def pattern() -> str:
+    """FINGERPRINT_JSON, as the run notebook assigns it."""
+    cells = json.loads(NOTEBOOK.read_text(encoding="utf-8"))["cells"]
+    source = "\n".join("".join(c["source"]) for c in cells if c["cell_type"] == "code")
+    m = re.search(r"^FINGERPRINT_JSON = (.+)$", source, re.M)
+    assert m, "the run notebook assigns no FINGERPRINT_JSON"
+    assert "re.search(FINGERPRINT_JSON, log.stdout, re.S)" in source
+    return ast.literal_eval(m.group(1))
+
+
 @pytest.mark.parametrize("name", sorted(LOGS))
-def test_capture_finds_the_fingerprint(name, tmp_path, monkeypatch, capsys):
-    monkeypatch.setattr("sys.stdin", __import__("io").StringIO(LOGS[name]))
-    assert parity.capture(tmp_path) == 0, f"{name}: capture() found no fingerprint"
-
-    written = tmp_path / "spark.json"
-    assert written.is_file(), f"{name}: nothing written"
-    got = json.loads(written.read_text(encoding="utf-8"))
-    assert got["engine"] == "spark"
-    assert got["rows_total"] == FINGERPRINT["rows_total"]
-    capsys.readouterr()
+def test_the_pattern_finds_the_fingerprint(name):
+    found = re.search(pattern(), LOGS[name], re.S)
+    assert found, f"{name}: no fingerprint found"
+    assert json.loads(found.group(0)) == FINGERPRINT
 
 
-def test_capture_reports_failure_when_there_is_no_fingerprint(tmp_path, monkeypatch, capsys):
-    """A build that died before the run-operation must be a non-zero exit, not an empty file.
-
-    The fingerprint step fails the leg on it -- which is the only thing standing between a
-    silent measurement gap and a parity run that compares one engine and calls it agreement.
-    """
-    monkeypatch.setattr("sys.stdin", __import__("io").StringIO("22:00:00  Done. PASS=60\n"))
-    assert parity.capture(tmp_path) == 1
-    assert not list(tmp_path.glob("*.json"))
-    capsys.readouterr()
+def test_the_pattern_finds_nothing_when_there_is_no_fingerprint():
+    """A build that died before the run-operation must fail the leg, not yield a fingerprint:
+    that is what stands between a measurement gap and a parity run with one engine missing."""
+    assert re.search(pattern(), "22:00:00  Done. PASS=60\n", re.S) is None

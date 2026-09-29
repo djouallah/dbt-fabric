@@ -9,7 +9,7 @@ version: 2
 models:
   - name: stg_csv_archive_log
     description: >
-      One row per source file landed by download_aemo.py, read from
+      One row per source file landed by the ingest notebook, read from
       csv_raw_archive_log.parquet. Every engine reads the SAME parquet file, which is what
       makes the fact models' file-selection logic identical across engines.
     columns:

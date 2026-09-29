@@ -18,5 +18,3 @@ nul
 blog.md
 PLAN.md
 
-# Parity fingerprints are written by CI; a laptop run would poison the comparison.
-history/parity/*.json

@@ -4,7 +4,7 @@
 # fabric-cicd is what Fabric Jumpstart installs with; the deploy calls it directly, on the
 # checkout instead of a clone from GitHub.
 fabric-cicd
-# The project zip goes up through ingest/onelake.py, on Microsoft's own SDKs.
+# The project is uploaded to OneLake file by file, on Microsoft's own SDKs.
 azure-identity
 azure-storage-file-datalake
 # provision.py talks to the Fabric REST API; stated rather than left to arrive transitively.

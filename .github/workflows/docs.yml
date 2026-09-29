@@ -3,32 +3,29 @@ name: docs
 # THE DAG, PUBLISHED. Runs `dbt docs generate --static` and deploys the one self-contained page
 # it produces to GitHub Pages -- https://djouallah.github.io/fabric-medallion-dbt/.
 # It builds nothing, commits nothing, spends no Fabric compute and needs NO CREDENTIALS.
-#
-#   pipeline         builds, records the run, commits history/runs/ + history/parity/   dispatch
-#   docs             this -- generates the DAG, deploys to Pages              after pipeline · dispatch
+# It runs after every deploy, which is when the models reach a workspace, and by hand.
 #
 # **WHY dwh, AND WHY NO CATALOG.** The models are identical on both engines, so either draws
 # the same DAG. The catalog half is left empty (`--empty-catalog`, `--no-compile`): generating
 # it would open a real connection, and on dwh a compile fires real OPENROWSET queries --
 # macros/new_source_files.sql guards its parse-time `run_query` only on `not execute`,
 # the exact trap AGENTS.md warns about. What is published is the lineage and every model,
-# column and test description; row counts and sizes live in the run record's `layout` instead.
+# column and test description.
 # So the profile gets dummy values, as in check_gating.py -- nothing is ever contacted.
 #
 # **THE PAGE IS ONE FILE.** `--static` inlines the manifest and the catalog into
 # `target/static_index.html`. The alternative -- uploading `target/` wholesale -- also
 # publishes run_results.json and every compiled .sql, and can half-load. One file cannot.
 #
-# **NEVER ADD A `push:` TRIGGER.** tests_py/test_parity_record.py::test_only_ci_runs_on_push
-# pins the trigger set for every workflow but ci.yml; `workflow_run` already republishes
-# whenever the pipeline runs.
+# **ONLY ci.yml RUNS ON PUSH.** tests_py/test_fabric_items.py::test_only_ci_runs_on_push pins
+# the trigger set for every other workflow.
 on:
   workflow_dispatch:
   workflow_run:
-    workflows: [pipeline]
+    workflows: [deploy]
     types: [completed]
     # NO conclusion filter: the page documents the models in the repo, and they are the same
-    # whether or not a leg's build succeeded.
+    # whether or not the deploy succeeded.
 
 # Pages serialises deploys on its own side; queue behind an in-flight publish rather than
 # racing it, and never cancel one -- a half-replaced page is the one outcome worth avoiding.
@@ -57,9 +54,9 @@ jobs:
       DBT_SCHEMA: mart
       PYTHONIOENCODING: utf-8
     steps:
-      # `ref:` IS LOAD-BEARING. On a `workflow_run` event a default checkout takes the TRIGGERING run's head SHA -- from before the record
-      # job pushed -- and `github.ref_name` is the default branch regardless of where the
-      # pipeline ran, so a topic-branch pipeline would document main's models instead of its own.
+      # `ref:` IS LOAD-BEARING. On a `workflow_run` event `github.ref_name` is the default
+      # branch regardless of where the deploy ran, so a deploy from a topic branch would
+      # document main's models instead of its own.
       - uses: actions/checkout@v5
         with:
           ref: ${{ github.event.workflow_run.head_branch || github.ref_name }}

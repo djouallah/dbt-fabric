@@ -14,13 +14,20 @@ import json
 import re
 import sys
 
+import pytest
+import yaml
+
 from _layout import ENGINES, REPO, patch_dir
 
 ITEMS = REPO / "fabric-medallion-dbt"
-NOTEBOOK = ITEMS / "run.Notebook" / "notebook-content.ipynb"
+# The three steps of a run, each its own notebook: land the files, build one engine, compare.
+NOTEBOOKS = ("ingest", "run", "parity")
 LIBRARY = ITEMS / "deploy_config.VariableLibrary"
 VARIABLES = LIBRARY / "variables.json"
 PIPELINE = ITEMS / "run_pipeline.DataPipeline" / "pipeline-content.json"
+WORKFLOWS = REPO / ".github" / "workflows"
+# "The workspace being installed into"; fabric-cicd swaps it for the real one.
+THIS_WORKSPACE = "00000000-0000-0000-0000-000000000000"
 
 sys.path.insert(0, str(REPO / ".github" / "scripts"))
 import deploy  # noqa: E402
@@ -31,26 +38,36 @@ def _platform(folder) -> dict:
     return json.loads((folder / ".platform").read_text(encoding="utf-8"))
 
 
-def _cells() -> list[dict]:
-    return json.loads(NOTEBOOK.read_text(encoding="utf-8"))["cells"]
+def _notebook(name: str) -> dict:
+    path = ITEMS / f"{name}.Notebook" / "notebook-content.ipynb"
+    return json.loads(path.read_text(encoding="utf-8"))
 
 
-def _notebook_source() -> str:
-    return "\n".join("".join(c["source"]) for c in _cells() if c["cell_type"] == "code")
+def _source(name: str) -> str:
+    return "\n".join("".join(c["source"]) for c in _notebook(name)["cells"]
+                     if c["cell_type"] == "code")
 
 
-def _code_cells() -> list[str]:
-    """Each code cell with its comments dropped, so a rule quoted in one is not mistaken for
-    the code it describes."""
-    return ["".join(s for s in c["source"] if not s.lstrip().startswith("#"))
-            for c in _cells() if c["cell_type"] == "code"]
+def _code(name: str) -> str:
+    """The notebook's code with its comments dropped, so a rule quoted in a comment is not
+    mistaken for the code it describes."""
+    return "\n".join(line for line in _source(name).splitlines()
+                     if not line.lstrip().startswith("#"))
 
 
-def _constant(name: str):
+def _constant(notebook: str, name: str):
     """A literal the notebook assigns at the top level, e.g. ENGINES."""
-    m = re.search(rf"^{name} = (.+)$", _notebook_source(), re.M)
-    assert m, f"the notebook assigns no {name}"
+    m = re.search(rf"^{name} = (.+)$", _source(notebook), re.M)
+    assert m, f"the {notebook} notebook assigns no {name}"
     return ast.literal_eval(m.group(1))
+
+
+def _parameters(name: str) -> set[str]:
+    """What the notebook's parameters cell assigns; empty when it has no such cell."""
+    tagged = [c for c in _notebook(name)["cells"]
+              if "parameters" in c.get("metadata", {}).get("tags", [])]
+    assert len(tagged) <= 1, f"{name}: more than one parameters cell"
+    return set(re.findall(r"^(\w+) = ", "".join(tagged[0]["source"]), re.M)) if tagged else set()
 
 
 def _activities() -> dict[str, dict]:
@@ -91,97 +108,100 @@ def test_lakehouses_are_schema_enabled():
         assert "defaultSchema" in meta, lh.name
 
 
-def test_notebook_cell_sources_are_arrays_of_lines():
-    for c in _cells():
+def test_the_notebooks_are_the_three_steps():
+    assert {p.name for p in ITEMS.glob("*.Notebook")} == {f"{n}.Notebook" for n in NOTEBOOKS}
+
+
+@pytest.mark.parametrize("name", NOTEBOOKS)
+def test_notebook_cell_sources_are_arrays_of_lines(name):
+    for c in _notebook(name)["cells"]:
         assert isinstance(c["source"], list) and all(isinstance(s, str) for s in c["source"])
+        if c["cell_type"] == "code":
+            compile("".join(c["source"]), name, "exec")
+
+
+@pytest.mark.parametrize("name", NOTEBOOKS)
+def test_every_notebook_has_the_landing_lakehouse_as_its_default(name):
+    """Every path in the notebooks is under /lakehouse/default/Files. The binding is the
+    lakehouse's logicalId and the all-zero workspace: fabric-cicd swaps both at install, the
+    way it does for the notebook a pipeline activity names."""
+    landing = _platform(ITEMS / "dbt_landing.Lakehouse")["config"]["logicalId"]
+    lakehouse = _notebook(name)["metadata"]["dependencies"]["lakehouse"]
+    assert lakehouse["default_lakehouse"] == landing
+    assert lakehouse["default_lakehouse_name"] == "dbt_landing"
+    assert lakehouse["default_lakehouse_workspace_id"] == THIS_WORKSPACE
+    assert lakehouse["known_lakehouses"] == [{"id": landing}]
 
 
 def test_notebook_variables_match_the_library():
-    """Every library variable the notebook reads is declared, and none is declared for nothing."""
-    src = _notebook_source()
-    read = set(re.findall(r"\bvl\.(\w+)", src))
-    for names in re.findall(r"for k in \((.*?)\):\s*\n\s*os\.environ\[k\] = getattr\(vl, k\)",
-                            src, re.S):
-        read |= set(re.findall(r"[\"'](\w+)[\"']", names))
+    """Every library variable a notebook reads is declared, and none is declared for nothing."""
+    read = {v for name in NOTEBOOKS for v in re.findall(r"\bvl\.(\w+)", _source(name))}
     declared = {v["name"] for v in json.loads(VARIABLES.read_text(encoding="utf-8"))["variables"]}
-    assert read == declared, f"notebook reads {sorted(read)}, library declares {sorted(declared)}"
+    assert read == declared, f"notebooks read {sorted(read)}, library declares {sorted(declared)}"
 
 
-def test_the_notebook_takes_its_step_from_a_parameters_cell():
-    tagged = [c for c in _cells() if "parameters" in c.get("metadata", {}).get("tags", [])]
-    assert len(tagged) == 1, "exactly one cell is the parameters cell"
-    src = "".join(tagged[0]["source"])
-    assert re.search(r"^step = ", src, re.M) and re.search(r"^run_id = ", src, re.M)
-
-
-def test_pipeline_runs_the_notebook_in_this_folder():
-    notebook = _platform(NOTEBOOK.parent)["config"]["logicalId"]
-    for name, a in _activities().items():
-        props = a["typeProperties"]
-        assert props["notebookId"] == notebook, name
-        # All zeros is "the workspace being installed into"; a real GUID is somebody else's.
-        assert props["workspaceId"] == "00000000-0000-0000-0000-000000000000", name
-
-
-def test_pipeline_steps_are_the_ones_the_notebook_runs():
-    steps = {name: a["typeProperties"]["parameters"]["step"]["value"]
-             for name, a in _activities().items()}
-    assert set(_constant("ENGINES")) == set(ENGINES)
-    assert 'STEPS = ("land", *ENGINES, "parity")' in _notebook_source()
-    assert set(steps.values()) == {"land", *ENGINES, "parity"}
-    # One cell per kind of step, and every one of them guarded by the step it is.
-    for guard in ('if step == "land":', "if step in ENGINES:", 'if step == "parity":'):
-        assert sum(guard in cell for cell in _code_cells()) == 1, guard
-    for name, a in _activities().items():
-        run_id = a["typeProperties"]["parameters"]["run_id"]["value"]
-        assert run_id == {"value": "@pipeline().RunId", "type": "Expression"}, (
-            f"{name}: parity compares the fingerprints of ONE run, found by this id"
-        )
-
-
-def test_pipeline_lands_once_then_fans_out():
+def test_the_pipeline_is_ingest_then_the_engines_then_parity():
     acts = _activities()
 
     def needs(name):
         assert all(d["dependencyConditions"] == ["Succeeded"] for d in acts[name]["dependsOn"])
         return {d["activity"] for d in acts[name]["dependsOn"]}
 
-    assert needs("land") == set()
+    assert set(acts) == {"ingest", *ENGINES, "parity"}
+    assert needs("ingest") == set()
     for engine in ENGINES:
-        assert needs(engine) == {"land"}
+        assert needs(engine) == {"ingest"}
     assert needs("parity") == set(ENGINES)
 
 
-def test_the_legs_do_not_land():
-    """download_aemo.py rewrites csv_raw_archive_log.parquet in place, so legs landing at
-    once race on that one file, and the engines would be compared on different inputs."""
-    landing = [cell for cell in _code_cells() if "download_aemo" in cell]
-    assert len(landing) == 1, "exactly one cell lands"
-    assert landing[0].startswith('if step == "land":\n')
-    assert "step in ENGINES" not in landing[0] and '"parity"' not in landing[0]
+def test_every_activity_runs_a_notebook_in_this_folder_with_its_parameters():
+    notebook_of = {"ingest": "ingest", "parity": "parity", **{e: "run" for e in ENGINES}}
+    for name, a in _activities().items():
+        props = a["typeProperties"]
+        notebook = notebook_of[name]
+        folder = ITEMS / f"{notebook}.Notebook"
+        assert props["notebookId"] == _platform(folder)["config"]["logicalId"], name
+        assert props["workspaceId"] == THIS_WORKSPACE, name
+        passed = props.get("parameters", {})
+        assert set(passed) == _parameters(notebook), (
+            f"{name} passes {sorted(passed)}, {notebook} takes {sorted(_parameters(notebook))}"
+        )
+        if "engine" in passed:
+            assert passed["engine"]["value"] == name
+        if "run_id" in passed:
+            assert passed["run_id"]["value"] == {"value": "@pipeline().RunId", "type": "Expression"}, (
+                f"{name}: parity compares the fingerprints of ONE run, found by this id"
+            )
+    assert set(_constant("run", "ENGINES")) == set(ENGINES)
+    assert set(_constant("parity", "ENGINES")) == set(ENGINES)
 
 
-def test_the_notebook_installs_each_steps_own_requirements():
-    """dbt is pip-installed by the notebook, from the lists CI installs from. One adapter
-    per step: dbt-fabric and dbt-fabricspark cannot share an environment."""
-    m = re.search(r"^requirements = (\{.*?\})\.get\(step\)$", _notebook_source(), re.M)
-    assert m, "the notebook no longer names what each step installs"
-    needs = ast.literal_eval(m.group(1))
-    assert set(needs) == {"land", *ENGINES, "parity"}
+def test_only_ingest_lands():
+    """The ingest notebook rewrites csv_raw_archive_log.parquet in place, so two steps
+    landing at once would race on that one file, and the engines would be compared on
+    different inputs."""
+    assert "nemweb" in _code("ingest") and "csv_raw" in _code("ingest")
+    for name in ("run", "parity"):
+        assert "nemweb" not in _code(name) and "csv_raw" not in _code(name), name
+
+
+def test_the_run_notebook_installs_the_engines_own_requirements():
+    """dbt is pip-installed by the notebook, from the list CI tests the project with. One
+    adapter per session: dbt-fabric and dbt-fabricspark cannot share an environment."""
+    assert '"pip", "install", "-q", "-r", f"requirements/{engine}.txt"' in _code("run")
     for engine in ENGINES:
-        assert needs[engine] == engine
-    for name in set(needs.values()):
-        assert (REPO / "requirements" / f"{name}.txt").is_file(), name
+        assert (REPO / "requirements" / f"{engine}.txt").is_file(), engine
+    for name in ("ingest", "parity"):
+        assert "pip" not in _code(name), f"{name} installs nothing"
 
 
-def test_the_notebook_fetches_from_github_or_onelake_and_nowhere_else():
+def test_the_run_notebook_fetches_from_github_or_onelake_and_nowhere_else():
     """No fallback to GitHub: in a private copy of the repo that would run the public
     repo's code against the workspace."""
-    fetch = [cell for cell in _code_cells() if "vl.project_source" in cell]
-    assert len(fetch) == 1
-    branches = re.findall(r"^(?:if|elif) vl\.project_source == \"(\w+)\":$", fetch[0], re.M)
+    code = _code("run")
+    branches = re.findall(r"^(?:if|elif) vl\.project_source == \"(\w+)\":$", code, re.M)
     assert branches == ["github", "onelake"]
-    assert re.search(r"^else:\n    raise ValueError", fetch[0], re.M)
+    assert re.search(r"^else:\n    raise ValueError", code, re.M)
     default = {v["name"]: v["value"]
                for v in json.loads(VARIABLES.read_text(encoding="utf-8"))["variables"]}
     assert default["project_source"] == "github", "a Jumpstart install runs from the public repo"
@@ -203,11 +223,22 @@ def test_a_deploy_switches_the_run_to_onelake():
         assert overrides == {"project_source": "onelake"}
 
 
-def test_the_deploy_ships_the_zip_the_notebook_reads():
-    assert _constant("PROJECT_ZIP") == deploy.PROJECT_ZIP
-    assert deploy.PROJECT_ZIP.split("/")[0] == "Files"
-    # The zip's one top-level folder; the notebook takes the project folder's name from it.
-    assert deploy.ITEMS.name == install_jumpstart.INSTALL["logical_id"]
+def test_the_deploy_uploads_the_folder_the_run_notebook_copies():
+    assert _constant("run", "PROJECT") == f"/lakehouse/default/{deploy.PROJECT}"
+    assert 'Path(repo, "COMMIT")' in _code("run"), "the run prints the commit it builds"
+    assert '"COMMIT"' in (REPO / ".github" / "scripts" / "deploy.py").read_text(encoding="utf-8")
+
+
+def test_only_ci_runs_on_push():
+    """install.yml and deploy.yml create Fabric items and decide what a workspace runs; a
+    push must not do that by itself."""
+    for wf in sorted(WORKFLOWS.glob("*.yml")):
+        doc = yaml.safe_load(wf.read_text(encoding="utf-8"))
+        # PyYAML parses the bare key `on` as the boolean True.
+        on = doc[True] if True in doc else doc["on"]
+        triggers = {on} if isinstance(on, str) else set(on)
+        if wf.name != "ci.yml":
+            assert "push" not in triggers, f"{wf.name} must not run on push"
 
 
 def _bim(engine: str) -> str:

@@ -11,7 +11,7 @@ THREE ITEMS, ALL INSIDE ONE WORKSPACE FOLDER, separated by SCHEMA (see
 macros/generate_schema_name.sql):
 
     <FOLDER>/
-      dbt_landing        Lakehouse  the CSVs download_aemo.py lands. Written ONCE, read by both.
+      dbt_landing        Lakehouse  the CSVs the ingest notebook lands. Written ONCE, read by both.
       dbt                Lakehouse  spark_landing, spark_mart (Tables/), and the Files/landing
                                     shortcut the dwh leg reads through
       dbt_dwh            Warehouse  dwh_landing, dwh_mart
@@ -21,9 +21,9 @@ another engine wrote. That is an engine-forced floor, not a layout choice.
 
 THE LANDING PATH AND THE READ PATH ARE DIFFERENT VARIABLES, deliberately:
 
-    LANDING_PATH  where download_aemo.py writes. IDENTICAL on both legs, always
-                  dbt_landing/Files. This is the whole basis of parity.py — if the engines
-                  read different bytes, comparing their output means nothing.
+    LANDING_PATH  where the ingest notebook writes. IDENTICAL on both legs, always
+                  dbt_landing/Files. This is the whole basis of the parity check — if the
+                  engines read different bytes, comparing their output means nothing.
     FILES_PATH    how THIS engine's dbt reads that zone. Same as LANDING_PATH for spark;
                   the dwh leg reads through a shortcut because a Warehouse has no Files
                   section of its own.
@@ -209,8 +209,7 @@ def workspace_name() -> str:
 
 
 def main() -> int:
-    # `landing`: the shared items alone (folder, dbt_landing, dbt) -- what pipeline.yml's
-    # `land` job needs.
+    # `landing`: the shared items alone (folder, dbt_landing, dbt).
     if len(sys.argv) != 2 or sys.argv[1] not in ENGINES | {"landing"}:
         print(f"usage: provision.py [{' | '.join(sorted(ENGINES | {'landing'}))}]", file=sys.stderr)
         return 2
@@ -223,7 +222,7 @@ def main() -> int:
                         {"creationPayload": {"enableSchemas": True}}, folder_id)
     landing_path = abfss(landing_id, "Files")
 
-    # Every engine's download_aemo.py writes HERE, and only here.
+    # The ingest notebook writes HERE, and only here.
     emit("LANDING_PATH", landing_path)
 
     # The shared data lakehouse is provisioned on both legs, not just spark, which writes to
@@ -235,7 +234,7 @@ def main() -> int:
         wh_id = ensure("warehouses", DWH_WAREHOUSE, None, folder_id)
         emit("FABRIC_DWH_SERVER", warehouse_connection(wh_id))
         emit("FABRIC_DWH_NAME", DWH_WAREHOUSE)
-        # The item, not just the name: layout.py reads the warehouse's Tables by GUID.
+        # The item, not just the name: a reader of the warehouse's Tables needs the GUID.
         emit("FABRIC_DWH_ID", wh_id)
         emit("FABRIC_AUTH", "CLI")
         # A Warehouse has no Files section, so it reads the landing zone through a shortcut
