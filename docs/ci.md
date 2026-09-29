@@ -43,6 +43,6 @@ keeps running, and billing.
 
 ## Installing into Fabric
 
-`install.yml` (manual) installs `fabric_items/` into the test workspace with Microsoft
+`install.yml` (manual) installs `fabric-medallion-dbt/` into the test workspace with Microsoft
 Fabric Jumpstart, the call in the [README](../README.md), and fails if an item did not
 land. It installs and stops; the run is `run_pipeline`, in the workspace.

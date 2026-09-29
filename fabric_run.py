@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""One step of the in-Fabric run. fabric_items/run.Notebook calls it; run_pipeline orders it.
+"""One step of the in-Fabric run. run.Notebook calls it; run_pipeline orders it.
 
     python fabric_run.py <land | dwh | spark | parity> <run_id>
 

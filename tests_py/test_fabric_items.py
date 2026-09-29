@@ -1,8 +1,8 @@
 """Pin the Fabric items against each other and against the scripts they run.
 
-fabric_items/ is what Fabric Jumpstart installs, and nothing parses it before a user does.
-Every check here is a way it has gone wrong, or would, with the install still green: a
-notebook reading a variable the library does not declare, a pipeline pointing at no
+fabric-medallion-dbt/ is what Fabric Jumpstart installs, and nothing parses it before a user
+does. Every check here is a way it has gone wrong, or would, with the install still green:
+a notebook reading a variable the library does not declare, a pipeline pointing at no
 notebook, a leg that lands.
 
 Run: python -m pytest tests_py/ -q
@@ -15,7 +15,7 @@ import sys
 
 from _layout import ENGINES, REPO, patch_dir
 
-ITEMS = REPO / "fabric_items"
+ITEMS = REPO / "fabric-medallion-dbt"
 NOTEBOOK = ITEMS / "run.Notebook" / "notebook-content.ipynb"
 VARIABLES = ITEMS / "deploy_config.VariableLibrary" / "variables.json"
 PIPELINE = ITEMS / "run_pipeline.DataPipeline" / "pipeline-content.json"
@@ -47,7 +47,7 @@ def test_every_item_folder_is_named_after_its_platform_file():
     """Jumpstart and fabric-cicd read the name and type from the FOLDER in some places and
     from .platform in others."""
     folders = [p for p in ITEMS.iterdir() if p.is_dir()]
-    assert folders, "fabric_items/ holds no item folders"
+    assert folders, "fabric-medallion-dbt/ holds no item folders"
     for folder in folders:
         meta = _platform(folder)["metadata"]
         assert folder.name == f"{meta['displayName']}.{meta['type']}"
@@ -247,3 +247,12 @@ def test_fabric_run_is_not_a_dbt_plugin():
     """dbt imports every importable module named dbt_* when a command starts, and the repo
     root is the project directory."""
     assert not [p.name for p in REPO.glob("dbt_*.py")]
+
+
+def test_the_items_folder_is_the_default_workspace_path():
+    """Jumpstart looks in `<logical_id>/` when no workspace_path is given, which is what keeps
+    that argument out of the snippet in README.md. A missing folder is not an error: the
+    install falls back to the repo root and never finds parameter.yml."""
+    assert "workspace_path" not in install_jumpstart.INSTALL
+    assert ITEMS.name == install_jumpstart.INSTALL["logical_id"]
+    assert (ITEMS / "parameter.yml").is_file()

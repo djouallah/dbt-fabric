@@ -31,7 +31,7 @@ This repo is used for training and must rest on supported pieces:
   and the archive log; `layout.py` for parquet footers. `requirements/ops.txt` pins it to the
   version the notebook ships (1.4.4) so a script behaves the same on a runner and in Fabric.
 - **Installing into a workspace is Microsoft Fabric Jumpstart** (`fabric-jumpstart`, on
-  `fabric-cicd`), from `fabric_items/`; see "Running in Fabric" below.
+  `fabric-cicd`), from `fabric-medallion-dbt/`; see "Running in Fabric" below.
 
 ## Verify before you spend anything
 
@@ -55,7 +55,7 @@ OneLake — `ingest/onelake.py` accepts only `abfss://` paths.
 
 ## Running in Fabric
 
-The user's path is two steps: install `fabric_items/` with Fabric Jumpstart (the snippet in
+The user's path is two steps: install `fabric-medallion-dbt/` with Fabric Jumpstart (the snippet in
 `README.md`), then run or schedule `run_pipeline`.
 
 - **`run_pipeline` is land -> [dwh, spark] -> parity, four activities on the ONE notebook**,
@@ -71,9 +71,12 @@ The user's path is two steps: install `fabric_items/` with Fabric Jumpstart (the
   only, for the same reason the workflow never compares `history/parity/`.
 - **`run_pipeline` and `pipeline.yml` must never run at the same time**: they land into the
   same lakehouse and build the same schemas.
+- **The items folder is named after the `logical_id`**, which is where Jumpstart looks when
+  no `workspace_path` is given. Rename one and you must rename the other.
 - **Item names are rewritten as whole words when Jumpstart applies a prefix**, in every text
-  file under `fabric_items/`. No prefix is applied by default. Before one is, `run` and `dbt`
-  have to be renamed: as they stand, a prefix would rewrite `dbt build` and `subprocess.run`.
+  file under `fabric-medallion-dbt/`. No prefix is applied by default. Before one is, `run`
+  and `dbt` have to be renamed: as they stand, a prefix would rewrite `dbt build` and
+  `subprocess.run`.
 - `.github/workflows/install.yml` (manual) installs into the test workspace and checks every
   item landed; `tests_py/test_fabric_items.py` pins the items offline.
 
@@ -185,7 +188,7 @@ The user's path is two steps: install `fabric_items/` with Fabric Jumpstart (the
   declaring it.
 - **Direct Lake has no schema parameter.** A partition's `schemaName` is a literal in the
   model definition, so `model.bim` carries placeholders (`mart`, Desktop's GUIDs) and
-  `fabric_items/parameter.yml` rewrites them at install, per engine: `aemo_dwh` to
+  `fabric-medallion-dbt/parameter.yml` rewrites them at install, per engine: `aemo_dwh` to
   `dwh_mart` in the Warehouse item, `aemo_spark` to `spark_mart` in the `dbt` lakehouse.
   The two `model.bim` files are the SAME file; change both, `tests_py/test_fabric_items.py`
   pins it. A model is installed before its engine has built, so it is empty until
