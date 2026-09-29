@@ -7,7 +7,6 @@
         {"name": "daily_download_limit", "type": "String", "value": "60"},
         {"name": "dbt_schema", "type": "String", "value": "mart"},
         {"name": "spark_resource_profile", "type": "String", "value": "readHeavyForPBI"},
-        {"name": "spark_native_enabled", "type": "String", "value": "true"},
         {"name": "repo_ref", "type": "String", "value": "main"}
     ]
 }
