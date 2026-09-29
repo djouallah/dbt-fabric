@@ -23,7 +23,8 @@ catalog's CI asks for these two files only when an entry has one.
 
 - **`id`**: the next free one in `jumpstarts/` at the time. 30 was free on 2026-09-29.
 - **`date_added` and `last_updated`**: the day of the PR.
-- **`minutes_to_deploy` and `minutes_to_complete_jumpstart`**: these are estimates. Take them from a real install and a first run.
+- **`minutes_to_complete_jumpstart`** is 10, from a real first run on 2026-09-29.
+  **`minutes_to_deploy`** (3) is still an estimate: time an install.
 - **The PR** is titled `feat: add fabric-medallion-dbt jumpstart`. It closes the issue below. Then run
   the install snippet the bot comments and reply that it worked.
 

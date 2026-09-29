@@ -30,7 +30,7 @@ entry_point: run_pipeline.DataPipeline
 test_suite: ""
 owner_email: mimoune.djouallah@gmail.com
 minutes_to_deploy: 3
-minutes_to_complete_jumpstart: 30
+minutes_to_complete_jumpstart: 10
 video_url: ""
 difficulty: Intermediate
 last_updated: "2026-09-29"
