@@ -33,4 +33,4 @@ aemo_electricity:
         name: dbt_fabric_aemo
         conf:
           spark.fabric.resourceProfile: "{{ env_var('SPARK_RESOURCE_PROFILE', 'writeHeavy') }}"
-          spark.native.enabled: "{{ env_var('SPARK_NATIVE_ENABLED', 'false') }}"
+          spark.native.enabled: "{{ env_var('SPARK_NATIVE_ENABLED', 'true') }}"
