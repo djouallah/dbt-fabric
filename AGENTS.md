@@ -95,6 +95,11 @@ The user's path is two steps: install `fabric-medallion-dbt/`, then run or sched
   opened and read in the lakehouse. `git archive HEAD`, not the working tree, so a deploy from
   a laptop and one from CI leave the same files. The folder is deleted first, so a model
   removed from the repo does not survive there. Its `COMMIT` file names the commit.
+- **Only the dbt project is uploaded, not the repo**: `deploy.py`'s `UPLOADED` is
+  `dbt_project.yml`, `profiles.yml`, `models/`, `macros/`, `tests/`, plus the two things the
+  `run` notebook needs beside them, `requirements/` and `provision.py`. A path the notebook
+  starts to read must be added there, or the run breaks after a deploy and only then: a run
+  from GitHub has the whole repo. `tests_py/test_fabric_items.py` pins the list.
 - **An install after a deploy switches the workspace back to `github`**, and a deploy after an
   install switches it to `onelake`: each one re-publishes `deploy_config` and sets the active
   value set. They share a concurrency group.

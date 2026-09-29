@@ -12,7 +12,8 @@ works from a private copy of the repo, and with no secret: the login is OIDC.
   * THE ITEMS are published with fabric-cicd, which is what Jumpstart installs with, from
     the checkout instead of a clone.
   * THE PROJECT goes to dbt_landing/Files/project/ as a folder, file by file, so what is
-    deployed can be opened and read in the lakehouse. Its COMMIT file names the commit.
+    deployed can be opened and read in the lakehouse. Only what the `run` notebook uses
+    (UPLOADED, below), not the repo. Its COMMIT file names the commit.
   * `project_source` BECOMES `onelake` because fabric-cicd activates the Variable Library
     value set named after the environment it publishes as. Jumpstart names none, so a demo
     install keeps the default, `github`. tests_py/test_fabric_items.py pins the names.
@@ -43,6 +44,12 @@ ENVIRONMENT = "production"
 # Where the project goes in the landing lakehouse. The `run` notebook's PROJECT is this
 # folder, seen through its default lakehouse.
 PROJECT = "Files/project"
+# What is uploaded: the dbt project, and the two things the `run` notebook needs beside it.
+UPLOADED = [
+    "dbt_project.yml", "profiles.yml", "models", "macros", "tests",
+    "requirements",                     # what the notebook pip-installs dbt from
+    ".github/scripts/provision.py",     # gives the dbt profile the warehouse and lakehouse
+]
 
 
 def publish() -> None:
@@ -65,7 +72,7 @@ def publish() -> None:
 
 
 def upload() -> None:
-    """HEAD, file by file, into the landing lakehouse.
+    """UPLOADED, as of HEAD, file by file, into the landing lakehouse.
 
     HEAD AND NOT THE WORKING TREE, so a deploy from a laptop and one from CI upload the same
     files. THE FOLDER IS DELETED FIRST: a model removed from the repo must not survive in
@@ -80,7 +87,7 @@ def upload() -> None:
     commit = subprocess.run(["git", "rev-parse", "HEAD"], cwd=REPO, check=True,
                             capture_output=True, text=True).stdout.strip()
     archive = zipfile.ZipFile(io.BytesIO(subprocess.run(
-        ["git", "archive", "--format=zip", "HEAD"], cwd=REPO, check=True,
+        ["git", "archive", "--format=zip", "HEAD", "--", *UPLOADED], cwd=REPO, check=True,
         capture_output=True).stdout))
 
     onelake = DataLakeServiceClient("https://onelake.dfs.fabric.microsoft.com",

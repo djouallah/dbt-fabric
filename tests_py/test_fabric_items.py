@@ -229,6 +229,23 @@ def test_the_deploy_uploads_the_folder_the_run_notebook_copies():
     assert '"COMMIT"' in (REPO / ".github" / "scripts" / "deploy.py").read_text(encoding="utf-8")
 
 
+def test_the_deploy_uploads_what_the_run_notebook_uses():
+    """The upload is the dbt project and what the notebook needs beside it, not the repo. A
+    path missing from it fails only in Fabric, and only after a deploy: a run from GitHub
+    has the whole repo."""
+    project = yaml.safe_load((REPO / "dbt_project.yml").read_text(encoding="utf-8"))
+    needed = {"dbt_project.yml", "profiles.yml"}
+    for key in ("model-paths", "macro-paths", "test-paths", "seed-paths", "snapshot-paths"):
+        needed |= {p for p in project.get(key, []) if (REPO / p).exists()}
+    # What the notebook's own code reads from the project folder.
+    for path in ("requirements", ".github/scripts/provision.py"):
+        assert path in _code("run"), f"the run notebook no longer uses {path}"
+        needed.add(path)
+    assert needed == set(deploy.UPLOADED)
+    for path in deploy.UPLOADED:
+        assert (REPO / path).exists(), path
+
+
 def test_only_ci_runs_on_push():
     """install.yml and deploy.yml create Fabric items and decide what a workspace runs; a
     push must not do that by itself."""
