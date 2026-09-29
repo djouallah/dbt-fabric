@@ -43,8 +43,7 @@ Two landing variables, and the difference matters:
 
 They were one variable once, and re-pointing it for dwh made that leg download its own
 private copy of the CSVs — parity was then grading the engines on different inputs. Never
-re-emit `FILES_PATH` to move an engine's data; give it its own key. For a dry run the
-downloader falls back to `FILES_PATH` when `LANDING_PATH` is unset.
+re-emit `FILES_PATH` to move an engine's data; give it its own key.
 
 ## Isolating a run
 

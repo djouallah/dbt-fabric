@@ -25,7 +25,7 @@ Idempotent: `csv_raw_archive_log.parquet` is the watermark, so a re-run fetches 
 it has not already landed.
 
     export LANDING_PATH=abfss://<workspace>@onelake.dfs.fabric.microsoft.com/<lakehouse>/Files
-    python ingest/download_aemo.py   # or a local directory, for a dry run
+    python ingest/download_aemo.py
 """
 
 import io
@@ -42,13 +42,8 @@ import duckdb
 
 from onelake import Store
 
-# FILES_PATH is the fallback so a hand run still works with one variable; in Fabric,
-# provision.py always sets both.
-LANDING_PATH = (
-    os.environ.get("LANDING_PATH")
-    or os.environ.get("FILES_PATH")
-    or "/tmp/landing"
-).rstrip("/")
+# Always OneLake: provision.py emits it (dbt_landing/Files).
+LANDING_PATH = os.environ["LANDING_PATH"].rstrip("/")
 DOWNLOAD_LIMIT = int(os.environ.get("download_limit", "2"))
 # Daily files are backfilled from a GitHub mirror (raw download_url), not nemweb, so a high
 # limit is safe there. Intraday scada/price hit nemweb directly, which throttles bursts with

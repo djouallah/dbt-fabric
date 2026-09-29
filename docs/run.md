@@ -22,16 +22,6 @@ Gating runs **one engine per environment**, because the two adapters cannot shar
 `dbt-fabric` and `dbt-fabricspark` shadow each other under the `dbt.adapters` namespace. CI
 runs it as a two-way matrix, so each engine is validated against exactly its own pins.
 
-## Landing, dry run
-
-`download_aemo.py` writes to a local directory as readily as to OneLake, so the landing step
-can be tried without a Fabric account:
-
-```bash
-pip install -r requirements/ops.txt
-LANDING_PATH=./landing python ingest/download_aemo.py
-```
-
 ## Against Fabric
 
 The same steps as one leg of `pipeline.yml`, by hand. `provision.py` creates the items if they

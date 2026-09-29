@@ -51,8 +51,8 @@ point `DBT_BIN` at the one you are not running from. Use the OFFICIAL `dbt-fabri
 builds NOTHING and exits 0** — a target name that stops matching a folder name disables
 every model, and `dbt build` reports "Nothing to do" and goes green. Nothing else catches it.
 
-There is no Fabric-free end-to-end run: both engines' compute is in Fabric. `download_aemo.py`
-alone can be dry-run into a local directory (`LANDING_PATH=./landing`).
+There is no Fabric-free run: both engines' compute is in Fabric, and everything lands in
+OneLake — `ingest/onelake.py` accepts only `abfss://` paths.
 
 ## Gating
 
