@@ -1,7 +1,7 @@
 # CI
 
-What the three workflows do and why only `ci.yml` runs on push, plus the run record: what
-each engine wrote.
+What the workflows do and why only `ci.yml` runs on push, plus the run record: what each
+engine wrote.
 
 - `ci.yml` — free and credential-less: pytest, plus `check_gating.py` as a two-way matrix
   (one environment per engine). Runs on every push. The matrix cannot be collapsed into one
@@ -43,6 +43,18 @@ keeps running, and billing.
 
 ## Installing into Fabric
 
-`install.yml` (manual) installs `fabric-medallion-dbt/` into the test workspace with Microsoft
-Fabric Jumpstart, the call in the [README](../README.md), and fails if an item did not
-land. It installs and stops; the run is `run_pipeline`, in the workspace.
+Two manual workflows, one per install in the [README](../README.md). Each fails if an item
+did not land, and each installs and stops; the run is `run_pipeline`, in the workspace. They
+share a concurrency group, because they write the same items.
+
+- `install.yml`, the demo install: Microsoft Fabric Jumpstart, which clones the repo from
+  GitHub. `run` then downloads the project from GitHub at the start of every step. Both need
+  the repo to be public.
+- `deploy.yml`, the production install: `deploy.py` publishes the items from the checkout
+  with `fabric-cicd`, which is what Jumpstart installs with, and uploads the project to
+  `dbt_landing/Files/project/` as one zip. It publishes as the environment `production`,
+  which activates the `deploy_config` value set of that name and so sets `project_source`
+  to `onelake`: `run` then reads the project from OneLake. Nothing is fetched from GitHub,
+  so it works from a private repo, and the login is the same OIDC one.
+
+Do not deploy while `run_pipeline` is running: each step of a run fetches the project again.

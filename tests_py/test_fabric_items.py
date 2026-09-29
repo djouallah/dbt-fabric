@@ -1,14 +1,15 @@
 """Pin the Fabric items against each other and against the scripts they run.
 
-fabric-medallion-dbt/ is what Fabric Jumpstart installs, and nothing parses it before a user
-does. Every check here is a way it has gone wrong, or would, with the install still green:
-a notebook reading a variable the library does not declare, a pipeline pointing at no
-notebook, a leg that lands.
+fabric-medallion-dbt/ is what Fabric Jumpstart installs and what deploy.py publishes, and
+nothing parses it before a user does. Every check here is a way it has gone wrong, or would,
+with the install still green: a notebook reading a variable the library does not declare, a
+pipeline pointing at no notebook, a leg that lands, a deploy that leaves the run on GitHub.
 
 Run: python -m pytest tests_py/ -q
 """
 from __future__ import annotations
 
+import ast
 import json
 import re
 import sys
@@ -17,12 +18,12 @@ from _layout import ENGINES, REPO, patch_dir
 
 ITEMS = REPO / "fabric-medallion-dbt"
 NOTEBOOK = ITEMS / "run.Notebook" / "notebook-content.ipynb"
-VARIABLES = ITEMS / "deploy_config.VariableLibrary" / "variables.json"
+LIBRARY = ITEMS / "deploy_config.VariableLibrary"
+VARIABLES = LIBRARY / "variables.json"
 PIPELINE = ITEMS / "run_pipeline.DataPipeline" / "pipeline-content.json"
 
-sys.path.insert(0, str(REPO))
 sys.path.insert(0, str(REPO / ".github" / "scripts"))
-import fabric_run  # noqa: E402
+import deploy  # noqa: E402
 import install_jumpstart  # noqa: E402
 
 
@@ -36,6 +37,20 @@ def _cells() -> list[dict]:
 
 def _notebook_source() -> str:
     return "\n".join("".join(c["source"]) for c in _cells() if c["cell_type"] == "code")
+
+
+def _code_cells() -> list[str]:
+    """Each code cell with its comments dropped, so a rule quoted in one is not mistaken for
+    the code it describes."""
+    return ["".join(s for s in c["source"] if not s.lstrip().startswith("#"))
+            for c in _cells() if c["cell_type"] == "code"]
+
+
+def _constant(name: str):
+    """A literal the notebook assigns at the top level, e.g. ENGINES."""
+    m = re.search(rf"^{name} = (.+)$", _notebook_source(), re.M)
+    assert m, f"the notebook assigns no {name}"
+    return ast.literal_eval(m.group(1))
 
 
 def _activities() -> dict[str, dict]:
@@ -108,11 +123,15 @@ def test_pipeline_runs_the_notebook_in_this_folder():
         assert props["workspaceId"] == "00000000-0000-0000-0000-000000000000", name
 
 
-def test_pipeline_steps_are_the_ones_fabric_run_knows():
+def test_pipeline_steps_are_the_ones_the_notebook_runs():
     steps = {name: a["typeProperties"]["parameters"]["step"]["value"]
              for name, a in _activities().items()}
-    assert set(steps.values()) == set(fabric_run.STEPS)
-    assert set(fabric_run.ENGINES) == set(ENGINES)
+    assert set(_constant("ENGINES")) == set(ENGINES)
+    assert 'STEPS = ("land", *ENGINES, "parity")' in _notebook_source()
+    assert set(steps.values()) == {"land", *ENGINES, "parity"}
+    # One cell per kind of step, and every one of them guarded by the step it is.
+    for guard in ('if step == "land":', "if step in ENGINES:", 'if step == "parity":'):
+        assert sum(guard in cell for cell in _code_cells()) == 1, guard
     for name, a in _activities().items():
         run_id = a["typeProperties"]["parameters"]["run_id"]["value"]
         assert run_id == {"value": "@pipeline().RunId", "type": "Expression"}, (
@@ -136,11 +155,59 @@ def test_pipeline_lands_once_then_fans_out():
 def test_the_legs_do_not_land():
     """download_aemo.py rewrites csv_raw_archive_log.parquet in place, so legs landing at
     once race on that one file, and the engines would be compared on different inputs."""
-    import inspect
+    landing = [cell for cell in _code_cells() if "download_aemo" in cell]
+    assert len(landing) == 1, "exactly one cell lands"
+    assert landing[0].startswith('if step == "land":\n')
+    assert "step in ENGINES" not in landing[0] and '"parity"' not in landing[0]
 
-    assert "download_aemo" in inspect.getsource(fabric_run.land)
-    for fn in (fabric_run.build, fabric_run.parity):
-        assert "download_aemo" not in inspect.getsource(fn), fn.__name__
+
+def test_the_notebook_installs_each_steps_own_requirements():
+    """dbt is pip-installed by the notebook, from the lists CI installs from. One adapter
+    per step: dbt-fabric and dbt-fabricspark cannot share an environment."""
+    m = re.search(r"^requirements = (\{.*?\})\.get\(step\)$", _notebook_source(), re.M)
+    assert m, "the notebook no longer names what each step installs"
+    needs = ast.literal_eval(m.group(1))
+    assert set(needs) == {"land", *ENGINES, "parity"}
+    for engine in ENGINES:
+        assert needs[engine] == engine
+    for name in set(needs.values()):
+        assert (REPO / "requirements" / f"{name}.txt").is_file(), name
+
+
+def test_the_notebook_fetches_from_github_or_onelake_and_nowhere_else():
+    """No fallback to GitHub: in a private copy of the repo that would run the public
+    repo's code against the workspace."""
+    fetch = [cell for cell in _code_cells() if "vl.project_source" in cell]
+    assert len(fetch) == 1
+    branches = re.findall(r"^(?:if|elif) vl\.project_source == \"(\w+)\":$", fetch[0], re.M)
+    assert branches == ["github", "onelake"]
+    assert re.search(r"^else:\n    raise ValueError", fetch[0], re.M)
+    default = {v["name"]: v["value"]
+               for v in json.loads(VARIABLES.read_text(encoding="utf-8"))["variables"]}
+    assert default["project_source"] == "github", "a Jumpstart install runs from the public repo"
+
+
+def test_a_deploy_switches_the_run_to_onelake():
+    """fabric-cicd activates the value set named after the environment it publishes as, and
+    deploy.py publishes as ENVIRONMENT. The three names are in three files."""
+    declared = {v["name"] for v in json.loads(VARIABLES.read_text(encoding="utf-8"))["variables"]}
+    sets = {p.stem: json.loads(p.read_text(encoding="utf-8"))
+            for p in (LIBRARY / "valueSets").glob("*.json")}
+    assert set(sets) == {deploy.ENVIRONMENT}
+    order = json.loads((LIBRARY / "settings.json").read_text(encoding="utf-8"))["valueSetsOrder"]
+    assert order == [deploy.ENVIRONMENT]
+    for name, doc in sets.items():
+        assert doc["name"] == name, "the file name must be the value set's name"
+        overrides = {o["name"]: o["value"] for o in doc["variableOverrides"]}
+        assert set(overrides) <= declared
+        assert overrides == {"project_source": "onelake"}
+
+
+def test_the_deploy_ships_the_zip_the_notebook_reads():
+    assert _constant("PROJECT_ZIP") == deploy.PROJECT_ZIP
+    assert deploy.PROJECT_ZIP.split("/")[0] == "Files"
+    # The zip's one top-level folder; the notebook takes the project folder's name from it.
+    assert deploy.ITEMS.name == install_jumpstart.INSTALL["logical_id"]
 
 
 def _bim(engine: str) -> str:
@@ -243,7 +310,7 @@ def test_bim_matches_the_documented_mart():
     assert not problems, "semantic model is stale against the mart:\n  " + "\n  ".join(problems)
 
 
-def test_fabric_run_is_not_a_dbt_plugin():
+def test_the_repo_root_holds_no_dbt_plugin():
     """dbt imports every importable module named dbt_* when a command starts, and the repo
     root is the project directory."""
     assert not [p.name for p in REPO.glob("dbt_*.py")]

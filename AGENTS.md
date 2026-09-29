@@ -31,7 +31,8 @@ This repo is used for training and must rest on supported pieces:
   and the archive log; `layout.py` for parquet footers. `requirements/ops.txt` pins it to the
   version the notebook ships (1.4.4) so a script behaves the same on a runner and in Fabric.
 - **Installing into a workspace is Microsoft Fabric Jumpstart** (`fabric-jumpstart`, on
-  `fabric-cicd`), from `fabric-medallion-dbt/`; see "Running in Fabric" below.
+  `fabric-cicd`) for the demo, **and `fabric-cicd` itself from CI** for production, both from
+  `fabric-medallion-dbt/`; see "Running in Fabric" below.
 
 ## Verify before you spend anything
 
@@ -55,18 +56,40 @@ OneLake — `ingest/onelake.py` accepts only `abfss://` paths.
 
 ## Running in Fabric
 
-The user's path is two steps: install `fabric-medallion-dbt/` with Fabric Jumpstart (the snippet in
-`README.md`), then run or schedule `run_pipeline`.
+The user's path is two steps: install `fabric-medallion-dbt/`, then run or schedule
+`run_pipeline`. There are two installs, and `README.md` has both.
 
+- **The demo install is Fabric Jumpstart, the production install is `deploy.yml`.** Jumpstart
+  clones the repo from GitHub and `run` downloads it again on every step, so the demo needs a
+  PUBLIC repo. `deploy.py` publishes the items from the CI checkout with `fabric-cicd` and
+  uploads the project to `dbt_landing/Files/project/`, so nothing is fetched from GitHub and
+  the repo can be private.
+- **`project_source` decides where `run` gets the project: `github` or `onelake`.** The
+  default is `github`. `deploy.py` publishes as the environment `production`, and
+  `fabric-cicd` activates the Variable Library value set of that name, which overrides it to
+  `onelake`. The value set's name, `settings.json`'s `valueSetsOrder` and `deploy.py`'s
+  `ENVIRONMENT` are one name in three files. There is NO fallback to GitHub: in a private
+  copy that would run the public repo's code against the workspace.
+- **An install after a deploy switches the workspace back to `github`**, and a deploy after an
+  install switches it to `onelake`: each one re-publishes `deploy_config` and sets the active
+  value set. They share a concurrency group.
+- **Do not deploy while `run_pipeline` is running.** Each step fetches the project again, so a
+  deploy mid-run builds the legs from two commits.
 - **`run_pipeline` is land -> [dwh, spark] -> parity, four activities on the ONE notebook**,
   each passing `step` and `run_id` (`@pipeline().RunId`). Each activity is its own session,
   which is what lets both adapters run.
-- **Nothing dbt-shaped lives in `run.Notebook`.** It reads the `deploy_config` Variable
-  Library into env vars, downloads this repo from GitHub at `repo_ref`, and runs
-  `fabric_run.py <step> <run_id>`. Change the scripts, not the notebook: a fix pushed to the
-  repo reaches every installed workspace on its next run, a notebook change needs a reinstall.
-- **`fabric_run.py` runs the commands `pipeline.yml` runs**, and nothing else. Do not give it
+- **The whole run is in `run.Notebook`, a cell per move**: settings, fetch the project,
+  `pip install` the step's `requirements/<name>.txt`, then land, build or parity. It is there
+  to be read: how dbt gets installed and run in a notebook should not need a second file
+  open. There is no `fabric_run.py` any more. The price is that a change to the notebook
+  reaches a workspace at the next install or deploy, not at the next run; a change to a
+  script or a model still arrives with the project.
+- **The notebook runs the commands `pipeline.yml` runs**, and nothing else. Do not give it
   logic the workflow does not have.
+- **dbt runs as a subprocess of the notebook, never imported into the kernel**, so the
+  `pip install` needs no restart. For the same reason the fingerprints go through
+  `notebookutils.fs`, not `ingest/onelake.py`: that would import the Azure SDKs into the
+  kernel right after pip changed them.
 - **Fingerprints go to `dbt_landing/Files/parity/<run_id>/`** and `parity` reads that run's
   only, for the same reason the workflow never compares `history/parity/`.
 - **`run_pipeline` and `pipeline.yml` must never run at the same time**: they land into the
@@ -77,8 +100,9 @@ The user's path is two steps: install `fabric-medallion-dbt/` with Fabric Jumpst
   file under `fabric-medallion-dbt/`. No prefix is applied by default. Before one is, `run`
   and `dbt` have to be renamed: as they stand, a prefix would rewrite `dbt build` and
   `subprocess.run`.
-- `.github/workflows/install.yml` (manual) installs into the test workspace and checks every
-  item landed; `tests_py/test_fabric_items.py` pins the items offline.
+- `.github/workflows/install.yml` and `deploy.yml` (both manual) install into the test
+  workspace and check every item landed; `tests_py/test_fabric_items.py` pins the items, the
+  notebook's steps and the deploy's names offline.
 
 ## Gating
 

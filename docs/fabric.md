@@ -63,5 +63,6 @@ still green. `check_gating.py` asserts the prefix offline.
 
 `fabric-medallion-dbt/` holds one Direct Lake semantic model per engine, `aemo_dwh` and
 `aemo_spark`, over `<engine>_mart`. They are the same `model.bim`;
-`fabric-medallion-dbt/parameter.yml` binds each to its engine's item and schema when Microsoft
-Fabric Jumpstart installs them (see the [README](../README.md)).
+`fabric-medallion-dbt/parameter.yml` binds each to its engine's item and schema when they are
+installed, by Microsoft Fabric Jumpstart or by the `deploy` workflow (see the
+[README](../README.md)).

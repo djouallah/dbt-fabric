@@ -42,6 +42,35 @@ it a schedule: it lands the AEMO files once, builds both engines in parallel, an
 their gold tables disagree. `deploy_config` holds the settings (`engines`: `all`, `dwh` or
 `spark`; the download and process limits).
 
+This is the demo install, and it needs a public repo: Jumpstart clones it from GitHub, and
+`run` downloads it again at the start of every step.
+
+## Production: deploy from CI
+
+For your own copy of the repo, private or not. The `deploy` workflow publishes the same items
+from its checkout with [`fabric-cicd`](https://microsoft.github.io/fabric-cicd) and uploads
+the dbt project to OneLake, where `run_pipeline` reads it. Nothing is fetched from GitHub,
+and there is no secret to store or rotate: the login is OpenID Connect.
+
+1. Copy this repo into your own.
+2. Create a service principal (an app registration) with a federated credential for your
+   repo and the branch you deploy from. Make it a Contributor on the workspace, and have a
+   Fabric admin allow "Service principals can use Fabric APIs".
+3. Add three repository secrets: `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, `FABRIC_WORKSPACE_ID`.
+   None of them is a password.
+4. Run the `deploy` workflow.
+5. In the workspace, run `run_pipeline` or give it a schedule.
+
+What differs from the demo install:
+
+| | demo (Jumpstart) | production (`deploy`) |
+|---|---|---|
+| the repo | public | public or private |
+| items installed by | a notebook cell, from a GitHub clone | CI, from its checkout |
+| `project_source` | `github` | `onelake` |
+| `run` gets the project from | GitHub, at `repo_ref` | `dbt_landing/Files/project/` |
+| a change reaches the workspace | at the next run | at the next deploy |
+
 ## Docs
 
 [Overview](docs/overview.md), how to [run it](docs/run.md), and the rest in
