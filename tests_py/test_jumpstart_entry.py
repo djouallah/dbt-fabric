@@ -81,9 +81,17 @@ def test_the_entry_installs_a_tag():
     assert re.fullmatch(r"v\d+\.\d+\.\d+", ref), ref
 
 
-def test_the_diagram_has_both_themes_or_neither():
-    svgs = [JUMPSTART / f"{INSTALL['logical_id']}_{v}.svg" for v in ("light", "dark")]
-    assert len({p.is_file() for p in svgs}) == 1, "the catalog needs the light AND the dark render"
+def test_the_diagram_has_both_themes_and_is_the_repos_own():
+    """The catalog needs a light AND a dark SVG for an entry with a mermaid_diagram. Both are
+    docs/medallion-fabric-dbt.svg, an Excalidraw dark-mode export: dark as it is, light
+    without its inverting filter."""
+    source = (REPO / "docs" / "medallion-fabric-dbt.svg").read_text(encoding="utf-8")
+    invert = ' filter="invert(93%) hue-rotate(180deg)"'
+    assert source.count(invert) == 1
+    svg = {v: (JUMPSTART / f"{INSTALL['logical_id']}_{v}.svg").read_text(encoding="utf-8")
+           for v in ("light", "dark")}
+    assert svg["dark"] == source, "re-copy the dark SVG from docs/"
+    assert svg["light"] == source.replace(invert, ""), "re-make the light SVG from docs/"
 
 
 def test_the_docs_page_meets_the_content_contract():

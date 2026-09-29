@@ -7,17 +7,20 @@ has been submitted yet. Nothing in this folder is installed into a workspace.
 | here | goes to, in a fork of `microsoft/fabric-jumpstart` |
 |---|---|
 | `fabric-medallion-dbt.yml` | `src/fabric_jumpstart/fabric_jumpstart/jumpstarts/community/` |
-| `fabric-medallion-dbt_light.svg`, `_dark.svg` (TODO) | `assets/images/diagrams/` |
+| `fabric-medallion-dbt_light.svg`, `_dark.svg` | `assets/images/diagrams/` |
 | `content/fabric-medallion-dbt/` | `src/fabric_jumpstart_web/content/scenarios/` |
 
 `tests_py/test_jumpstart_entry.py` pins the entry to `install_jumpstart.INSTALL`, and to the
 rules of the catalog's own schema.
 
+The two diagram SVGs are the repo's own architecture diagram,
+`docs/medallion-fabric-dbt.svg`. It is an Excalidraw dark-mode export, and the dark SVG is
+that file unchanged. The light SVG is the same file without the root `filter="invert(...)"`.
+Re-make both when the diagram changes. The entry's `mermaid_diagram` is kept too, because the
+catalog's CI asks for these two files only when an entry has one.
+
 ## Before submitting
 
-- **The diagram SVGs.** Paste the entry's `mermaid_diagram` into
-  <https://jumpstart.fabric.microsoft.com/tools/diagram-generator>. Save the light and dark
-  renders here as `fabric-medallion-dbt_light.svg` and `fabric-medallion-dbt_dark.svg`.
 - **`id`**: the next free one in `jumpstarts/` at the time. 30 was free on 2026-09-29.
 - **`date_added` and `last_updated`**: the day of the PR.
 - **`minutes_to_deploy` and `minutes_to_complete_jumpstart`**: these are estimates. Take them from a real install and a first run.
