@@ -2,6 +2,6 @@
     "$schema": "https://developer.microsoft.com/json-schemas/fabric/item/variableLibrary/definition/valueSet/1.0.0/schema.json",
     "name": "production",
     "variableOverrides": [
-        {"name": "project_source", "value": "onelake"}
+        {"name": "repo_ref", "value": ""}
     ]
 }

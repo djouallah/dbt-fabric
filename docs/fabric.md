@@ -27,8 +27,9 @@ log is the watermark, so a re-run fetches only what it has not already landed.
 | `parity` | `run_id` | compares the two fingerprints and fails the run if they differ |
 
 Each holds its own code and calls no script; open one to see what the step does. All three
-have `dbt_landing` as their default lakehouse. `run` is the only one that needs the dbt project: it downloads it
-from GitHub, or copies it from `dbt_landing/Files/project/` after a deploy from CI.
+have `dbt_landing` as their default lakehouse. `run` reads the dbt project from `dbt_landing/Files/project/`. A deploy
+from CI uploads it there; after a Jumpstart install, `ingest` downloads it from GitHub once,
+at `repo_ref`, and again only if `repo_ref` changes or the folder is deleted.
 
 ## What it creates in Fabric
 

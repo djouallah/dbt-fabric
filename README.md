@@ -50,7 +50,8 @@ Each notebook holds its own code, so opening one shows what the step does. `depl
 `spark`; the download and process limits).
 
 This is the demo install, and it needs a public repo: Jumpstart clones it from GitHub, and
-the `run` notebook downloads the dbt project from it on every run. The entry for the
+on the first run `ingest` downloads the dbt project from it, once, into
+`dbt_landing/Files/project/`. Delete that folder to download it again. The entry for the
 Jumpstart catalog, which would shorten this to `jumpstart.install("fabric-medallion-dbt")`,
 is prepared in [jumpstart/](jumpstart/README.md).
 
@@ -77,9 +78,8 @@ What differs from the demo install:
 |---|---|---|
 | the repo | public | public or private |
 | items installed by | a notebook cell, from a GitHub clone | CI, from its checkout |
-| `project_source` | `github` | `onelake` |
-| `run` gets the dbt project from | GitHub, at `repo_ref` | `dbt_landing/Files/project/` |
-| a change reaches the workspace | at the next run | at the next deploy |
+| `dbt_landing/Files/project/` is filled by | `ingest`, once, from GitHub at `repo_ref` | the deploy |
+| a change reaches the workspace | at the next install of a newer tag | at the next deploy |
 
 ## Docs
 

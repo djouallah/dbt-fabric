@@ -25,14 +25,14 @@ did not land, and each installs and stops; the run is `run_pipeline`, in the wor
 share a concurrency group, because they write the same items.
 
 - `install.yml`, the demo install: Microsoft Fabric Jumpstart, which clones the repo from
-  GitHub. The `run` notebook then downloads the project from GitHub on every run. Both need
-  the repo to be public.
+  GitHub. The `ingest` notebook then downloads the project from GitHub once, at
+  `repo_ref`, into `dbt_landing/Files/project/`. Both need the repo to be public.
 - `deploy.yml`, the production install: `deploy.py` publishes the items from the checkout
   with `fabric-cicd`, which is what Jumpstart installs with, and uploads the project to
   `dbt_landing/Files/project/`, file by file, with a `COMMIT` file naming the commit. It
   publishes as the environment `production`, which activates the `deploy_config` value set
-  of that name and so sets `project_source` to `onelake`: the `run` notebook then copies the
-  project from the lakehouse. Nothing is fetched from GitHub, so it works from a private
+  of that name and so blanks `repo_ref`: `ingest` never downloads, and the `run` notebook
+  copies the project from the lakehouse. Nothing is fetched from GitHub, so it works from a private
   repo, and the login is OIDC, with no secret.
 
 What is uploaded is the dbt project, not the repo: `dbt_project.yml`, `profiles.yml`,

@@ -26,10 +26,10 @@ rules of the catalog's own schema.
 
 ## A release is a tag, and the tag must point at itself
 
-The catalog installs at `repo_ref`, and it must be a tag. The `run` notebook downloads the
-dbt project from GitHub at `deploy_config`'s `repo_ref`, which is `main` on `main`. Tag `main`
-as it is, and an install of `v1.0.0` would build whatever is on `main` today. So the tag is a
-commit off `main` that points `repo_ref` at the tag:
+The catalog installs at `repo_ref`, and it must be a tag. On the first run `ingest`
+downloads the dbt project from GitHub at `deploy_config`'s `repo_ref`, which is `main` on
+`main`. Tag `main` as it is, and an install of `v1.0.0` would build whatever `main` holds on
+its first run. So the tag is a commit off `main` that points `repo_ref` at the tag:
 
 ```bash
 git switch --detach main

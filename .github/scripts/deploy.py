@@ -5,18 +5,19 @@ to OneLake for the `run` notebook to read.
     FABRIC_WORKSPACE_ID=<guid> python .github/scripts/deploy.py
 
 THE PRODUCTION INSTALL; install_jumpstart.py is the demo one. The demo needs the repo to be
-public twice over: Jumpstart clones it from GitHub to install, and the `run` notebook
-downloads it from GitHub on every run. Nothing here or after it fetches from GitHub, so this
-works from a private copy of the repo, and with no secret: the login is OIDC.
+public twice over: Jumpstart clones it from GitHub to install, and the `ingest` notebook
+downloads the dbt project from it once. Nothing here or after it fetches from GitHub, so
+this works from a private copy of the repo, and with no secret: the login is OIDC.
 
   * THE ITEMS are published with fabric-cicd, which is what Jumpstart installs with, from
     the checkout instead of a clone.
   * THE PROJECT goes to dbt_landing/Files/project/ as a folder, file by file, so what is
     deployed can be opened and read in the lakehouse. Only what the `run` notebook uses
     (UPLOADED, below), not the repo. Its COMMIT file names the commit.
-  * `project_source` BECOMES `onelake` because fabric-cicd activates the Variable Library
-    value set named after the environment it publishes as. Jumpstart names none, so a demo
-    install keeps the default, `github`. tests_py/test_fabric_items.py pins the names.
+  * `repo_ref` BECOMES EMPTY because fabric-cicd activates the Variable Library value set
+    named after the environment it publishes as, so `ingest` never downloads the public repo
+    into this workspace, even with the folder gone. Jumpstart names no environment, so a
+    demo install keeps the default. tests_py/test_fabric_items.py pins the names.
 
 A change reaches the workspace at the next deploy, not at the next run. Do not deploy while
 run_pipeline is running: the two engines would build from two commits.

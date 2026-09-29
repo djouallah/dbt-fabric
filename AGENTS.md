@@ -82,28 +82,34 @@ The user's path is two steps: install `fabric_items/`, then run or schedule
   only: the folder also holds every earlier run's, and a leg that failed this run must not be
   graded on a stale one.
 - **The demo install is Fabric Jumpstart, the production install is `deploy.yml`.** Jumpstart
-  clones the repo from GitHub and `run` downloads the project from it on every run, so the
+  clones the repo from GitHub and `ingest` downloads the project from it once, so the
   demo needs a PUBLIC repo. `deploy.py` publishes the items from the CI checkout with
   `fabric-cicd` and uploads the project to `dbt_landing/Files/project/`, file by file, so
   nothing is fetched from GitHub and the repo can be private.
-- **`project_source` decides where `run` gets the project: `github` or `onelake`.** The
-  default is `github`. `deploy.py` publishes as the environment `production`, and
-  `fabric-cicd` activates the Variable Library value set of that name, which overrides it to
-  `onelake`. The value set's name, `settings.json`'s `valueSetsOrder` and `deploy.py`'s
-  `ENVIRONMENT` are one name in three files. There is NO fallback to GitHub: in a private
-  copy that would run the public repo's code against the workspace.
+- **`run` ALWAYS reads the project from `dbt_landing/Files/project/`; only `ingest` fetches
+  it.** The two `run` legs start together and would race on one download. `ingest` downloads
+  it from GitHub at `repo_ref` when the folder has no `COMMIT` (new, deleted, or an
+  unfinished download) or its `REF` is not `repo_ref` (an install of a newer release). A
+  deployed folder has no `REF` and is never replaced. There is no per-run download: the
+  ref is a tag, fixed.
+- **A deploy blanks `repo_ref`, so there is NO fallback to GitHub.** `deploy.py` publishes
+  as the environment `production`, and `fabric-cicd` activates the Variable Library value set
+  of that name, which overrides `repo_ref` to `""`; `ingest` then stops rather than download
+  the public repo into a private copy's workspace. The value set's name, `settings.json`'s
+  `valueSetsOrder` and `deploy.py`'s `ENVIRONMENT` are one name in three files. On `main`,
+  `repo_ref` is `main` and the folder is NOT refreshed by a push: delete it to pick one up.
 - **The project is uploaded as a FOLDER, of the COMMIT.** Not a zip: what is deployed can be
   opened and read in the lakehouse. `git archive HEAD`, not the working tree, so a deploy from
   a laptop and one from CI leave the same files. The folder is deleted first, so a model
   removed from the repo does not survive there. Its `COMMIT` file names the commit.
 - **Only the dbt project is uploaded, not the repo**: `deploy.py`'s `UPLOADED` is
   `dbt_project.yml`, `profiles.yml`, `models/`, `macros/`, `tests/`, plus `requirements/`,
-  which the `run` notebook installs dbt from. A path the notebook starts to read must be
-  added there, or the run breaks after a deploy and only then: a run
-  from GitHub has the whole repo. `tests_py/test_fabric_items.py` pins the list.
-- **An install after a deploy switches the workspace back to `github`**, and a deploy after an
-  install switches it to `onelake`: each one re-publishes `deploy_config` and sets the active
-  value set. They share a concurrency group.
+  which the `run` notebook installs dbt from. `ingest`'s download keeps the same list. A path
+  the notebook starts to read must be added to both, or the run breaks.
+  `tests_py/test_fabric_items.py` pins the two lists equal.
+- **A deploy after an install replaces the folder, and an install after a deploy keeps it**
+  (it has no `REF`): each re-publishes `deploy_config` and sets the active value set. Delete
+  the folder to go back to the tag. They share a concurrency group.
 - **Do not deploy while `run_pipeline` is running**: the two engines would build from two
   commits.
 - **The items are in `fabric_items/`, and both installs are told so.** Jumpstart looks in
@@ -115,9 +121,9 @@ The user's path is two steps: install `fabric_items/`, then run or schedule
   `dbt`, `ingest` and `parity` have to be renamed: as they stand, a prefix would rewrite
   `dbt build` and `subprocess.run`.
 - **A release is a tag on a commit OFF `main` whose `repo_ref` is that tag.** The catalog
-  entry in `jumpstart/` installs at a tag, and `run` downloads the project at
+  entry in `jumpstart/` installs at a tag, and `ingest` downloads the project at
   `deploy_config`'s `repo_ref`: tag `main` as it is and a `v1.0.0` install builds whatever
-  `main` holds that day. `main` keeps `repo_ref: main`. Steps in `jumpstart/README.md`;
+  `main` held on its first run. `main` keeps `repo_ref: main`. Steps in `jumpstart/README.md`;
   `tests_py/test_jumpstart_entry.py` pins the entry to `install_jumpstart.INSTALL`.
 - `.github/workflows/install.yml` and `deploy.yml` (both manual) install into the test
   workspace and check every item landed; `tests_py/test_fabric_items.py` pins the items, the

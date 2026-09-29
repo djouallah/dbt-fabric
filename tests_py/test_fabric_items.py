@@ -195,21 +195,29 @@ def test_the_run_notebook_installs_the_engines_own_requirements():
         assert "pip" not in _code(name), f"{name} installs nothing"
 
 
-def test_the_run_notebook_fetches_from_github_or_onelake_and_nowhere_else():
-    """No fallback to GitHub: in a private copy of the repo that would run the public
-    repo's code against the workspace."""
-    code = _code("run")
-    branches = re.findall(r"^(?:if|elif) vl\.project_source == \"(\w+)\":$", code, re.M)
-    assert branches == ["github", "onelake"]
-    assert re.search(r"^else:\n    raise ValueError", code, re.M)
-    default = {v["name"]: v["value"]
-               for v in json.loads(VARIABLES.read_text(encoding="utf-8"))["variables"]}
-    assert default["project_source"] == "github", "a Jumpstart install runs from the public repo"
+def test_only_ingest_fetches_the_project_and_run_reads_it_from_onelake():
+    """The two engines start together and must build from ONE folder, so the project is
+    fetched once, by ingest, and never by run. A fixed tag need not be downloaded per run."""
+    assert _constant("ingest", "PROJECT") == _constant("run", "PROJECT")
+    assert "REPO_URL" in _code("ingest")
+    for name in ("run", "parity"):
+        assert "github.com" not in _code(name) and "repo_ref" not in _code(name), name
+    # REF last-but-one and COMMIT last: a folder without COMMIT is an unfinished download.
+    code = _code("ingest")
+    assert code.index('Path(PROJECT, "REF").write_text') < code.index('Path(PROJECT, "COMMIT").write_text')
 
 
-def test_a_deploy_switches_the_run_to_onelake():
+def test_ingest_downloads_what_the_deploy_uploads():
+    """Both routes leave the same files, so a path the run needs cannot be missing on one
+    route only."""
+    assert _constant("ingest", "UPLOADED") == deploy.UPLOADED
+
+
+def test_a_deploy_never_falls_back_to_github():
     """fabric-cicd activates the value set named after the environment it publishes as, and
-    deploy.py publishes as ENVIRONMENT. The three names are in three files."""
+    deploy.py publishes as ENVIRONMENT. The three names are in three files. The value set
+    blanks repo_ref: with the deployed folder gone, ingest stops rather than download the
+    public repo into a private copy's workspace."""
     declared = {v["name"] for v in json.loads(VARIABLES.read_text(encoding="utf-8"))["variables"]}
     sets = {p.stem: json.loads(p.read_text(encoding="utf-8"))
             for p in (LIBRARY / "valueSets").glob("*.json")}
@@ -220,7 +228,8 @@ def test_a_deploy_switches_the_run_to_onelake():
         assert doc["name"] == name, "the file name must be the value set's name"
         overrides = {o["name"]: o["value"] for o in doc["variableOverrides"]}
         assert set(overrides) <= declared
-        assert overrides == {"project_source": "onelake"}
+        assert overrides == {"repo_ref": ""}
+    assert re.search(r"if not vl\.repo_ref:\n\s+#[^\n]*\n\s+#[^\n]*\n\s+raise", _source("ingest"))
 
 
 def test_the_deploy_uploads_the_folder_the_run_notebook_copies():
@@ -231,8 +240,7 @@ def test_the_deploy_uploads_the_folder_the_run_notebook_copies():
 
 def test_the_deploy_uploads_what_the_run_notebook_uses():
     """The upload is the dbt project and what the notebook needs beside it, not the repo. A
-    path missing from it fails only in Fabric, and only after a deploy: a run from GitHub
-    has the whole repo."""
+    path missing from it fails only in Fabric."""
     project = yaml.safe_load((REPO / "dbt_project.yml").read_text(encoding="utf-8"))
     needed = {"dbt_project.yml", "profiles.yml"}
     for key in ("model-paths", "macro-paths", "test-paths", "seed-paths", "snapshot-paths"):
