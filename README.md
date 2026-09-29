@@ -1,4 +1,4 @@
-# fabric-medallion-dbt — the same business logic, on any dbt adapter
+# fabric-medallion-dbt
 
 One dbt project that builds the **same AEMO gold layer** on five adapters:
 
