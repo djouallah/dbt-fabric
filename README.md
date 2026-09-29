@@ -12,7 +12,7 @@ A medallion architecture on Microsoft Fabric: one dbt project that builds the **
 | `spark` | [`dbt-fabricspark`](https://github.com/microsoft/dbt-fabricspark) | Fabric Spark (Livy) | Delta tables in a Fabric Lakehouse |
 
 Both adapters are maintained by Microsoft. The eight models compute the same numbers on
-both, and every pipeline run fingerprints the gold table on each engine and compares them.
+both, and every pipeline run reads both engines' gold tables and compares them.
 
 A version of this project that also runs on community adapters, with a comparison across
 more engines, is at

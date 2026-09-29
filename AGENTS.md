@@ -59,9 +59,8 @@ The user's path is two steps: install `fabric_items/`, then run or schedule
 `run_pipeline`. There are two installs, and `README.md` has both.
 
 - **`run_pipeline` is ingest -> [dwh, spark] -> parity, on THREE notebooks.** `ingest` lands
-  the files, `run` builds one engine (parameters `engine` and `run_id`, called once per
-  engine), `parity` compares the two fingerprints (parameter `run_id`,
-  `@pipeline().RunId`). Each activity is its own session, which is what lets both adapters
+  the files, `run` builds one engine (parameter `engine`, called once per engine),
+  `parity` compares the two engines' gold tables. Each activity is its own session, which is what lets both adapters
   run. There is no step switch in any notebook; do not bring one back.
 - **Each notebook holds its own code, and is the ONLY copy of it. NO NOTEBOOK CALLS A PYTHON
   SCRIPT**; the only things `run` runs are `pip` and `dbt`. They are there to be read: how
@@ -78,9 +77,11 @@ The user's path is two steps: install `fabric_items/`, then run or schedule
   the way it does for the `notebookId` of a pipeline activity. No `parameter.yml` rule.
 - **dbt runs as a subprocess of the `run` notebook, never imported into the kernel**, so the
   `pip install` needs no restart.
-- **Fingerprints go to `dbt_landing/Files/parity/<run_id>/`** and `parity` reads that run's
-  only: the folder also holds every earlier run's, and a leg that failed this run must not be
-  graded on a stale one.
+- **`parity` reads the tables itself, and has nothing to do with dbt.** It reads both
+  engines' `<engine>_mart` tables as Delta, straight from OneLake, with the notebook's
+  preinstalled DuckDB and its own credentials: `fct_summary` day by day, the two dimensions row
+  by row. No engine reports on its own output, and nothing is scraped from a log. It runs only
+  after both legs succeed, so it never grades a failed leg.
 - **The demo install is Fabric Jumpstart, the production install is `deploy.yml`.** Jumpstart
   clones the repo from GitHub and `ingest` downloads the project from it once, so the
   demo needs a PUBLIC repo. `deploy.py` publishes the items from the CI checkout with

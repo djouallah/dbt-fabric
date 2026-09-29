@@ -168,10 +168,6 @@ def test_every_activity_runs_a_notebook_in_this_folder_with_its_parameters():
         )
         if "engine" in passed:
             assert passed["engine"]["value"] == name
-        if "run_id" in passed:
-            assert passed["run_id"]["value"] == {"value": "@pipeline().RunId", "type": "Expression"}, (
-                f"{name}: parity compares the fingerprints of ONE run, found by this id"
-            )
     assert set(_constant("run", "ENGINES")) == set(ENGINES)
     assert set(_constant("parity", "ENGINES")) == set(ENGINES)
 
@@ -183,6 +179,19 @@ def test_only_ingest_lands():
     assert "nemweb" in _code("ingest") and "csv_raw" in _code("ingest")
     for name in ("run", "parity"):
         assert "nemweb" not in _code(name) and "csv_raw" not in _code(name), name
+
+
+def test_parity_reads_the_tables_not_dbt():
+    """parity reads both engines' gold tables itself, as Delta, from OneLake. Nothing an
+    engine or dbt reports about its own output is taken on trust, and nothing is scraped
+    out of a log."""
+    code = _code("parity")
+    assert "delta_scan" in code and "abfss://" in code
+    assert "dbt " not in code and "Files/parity" not in code
+    assert "run-operation" not in _code("run")
+    assert not (REPO / "macros" / "parity_fingerprint.sql").exists()
+    # The gold schema, by the rule of generate_schema_name: <engine>_mart.
+    assert 'f"{engine}_mart"' in code
 
 
 def test_the_run_notebook_installs_the_engines_own_requirements():

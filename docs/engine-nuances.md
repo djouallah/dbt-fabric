@@ -16,7 +16,7 @@ every model, while the compute shape shows up nowhere in the models.
 | dwh | T-SQL **pads strings on comparison** (`'ERB01' = 'ERB01 '` is TRUE); Spark does not. One trailing space in a join key can split the engines with every test green |
 | spark | `to_timestamp(..., 'yyyy/MM/dd HH:mm:ss')`: Spark's `CAST(string AS TIMESTAMP)` returns `NULL` for slash dates instead of erroring, which silently nulls the whole column. T-SQL parses slashes, so only this leg is affected |
 | spark | comparing a STRING to an INT literal casts the string to INT, which **truncates**: `'0.5' != 0` is FALSE. The CSV stage is all-STRING, so every numeric predicate on it needs an explicit `CAST(... AS DOUBLE)`. A bare `SCADAVALUE != 0` once dropped 12-16% of the intraday SCADA rows with every dbt test green; only parity saw it. `tests_py/test_spark_stage_filter.py` pins the cast |
-| spark | no `DOUBLE PRECISION`, `date_format` for the HHMM `time` column — the fingerprint macro carries a dialect branch for exactly this |
+| spark | `date_format` for the HHMM `time` column |
 | both | `DOUBLE → DECIMAL` tie-breaking is HALF_UP on Spark and something else in T-SQL, which is why the `parity` notebook gives the money columns a relative tolerance (1e-7) and exact-matches everything else |
 
 ## Feature implementation — what the engine or adapter will actually do

@@ -43,13 +43,6 @@
             "engine": {
               "value": "dwh",
               "type": "string"
-            },
-            "run_id": {
-              "value": {
-                "value": "@pipeline().RunId",
-                "type": "Expression"
-              },
-              "type": "string"
             }
           }
         }
@@ -78,13 +71,6 @@
           "parameters": {
             "engine": {
               "value": "spark",
-              "type": "string"
-            },
-            "run_id": {
-              "value": {
-                "value": "@pipeline().RunId",
-                "type": "Expression"
-              },
               "type": "string"
             }
           }
@@ -116,16 +102,7 @@
         },
         "typeProperties": {
           "notebookId": "9caec688-0490-4185-be95-69698527b1bf",
-          "workspaceId": "00000000-0000-0000-0000-000000000000",
-          "parameters": {
-            "run_id": {
-              "value": {
-                "value": "@pipeline().RunId",
-                "type": "Expression"
-              },
-              "type": "string"
-            }
-          }
+          "workspaceId": "00000000-0000-0000-0000-000000000000"
         }
       }
     ]

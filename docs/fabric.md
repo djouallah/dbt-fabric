@@ -23,8 +23,8 @@ log is the watermark, so a re-run fetches only what it has not already landed.
 | notebook | parameters | what it does |
 |---|---|---|
 | `ingest` | none | lands the AEMO files in `dbt_landing` |
-| `run` | `engine`, `run_id` | fetches the dbt project, installs the adapter, connects, `dbt build`, fingerprints the gold table |
-| `parity` | `run_id` | compares the two fingerprints and fails the run if they differ |
+| `run` | `engine` | copies the dbt project, installs the adapter, connects, `dbt build` |
+| `parity` | none | reads both engines' gold tables from OneLake with DuckDB, and fails the run if they differ |
 
 Each holds its own code and calls no script; open one to see what the step does. All three
 have `dbt_landing` as their default lakehouse. `run` reads the dbt project from `dbt_landing/Files/project/`. A deploy

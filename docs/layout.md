@@ -12,8 +12,8 @@ models/aemo/_staging.yml _dimensions.yml _marts.yml
                                            ONE patch file per layer, above the engine folders,
                                            so one patch documents whichever tree is enabled
 macros/                                    the AEMO CSV layout (aemo_columns.sql, the single
-                                           source of truth), the schema rule, the parity
-                                           fingerprint, and what one engine's adapter forces:
+                                           source of truth), the schema rule, and what
+                                           one engine's adapter forces:
                                            the T-SQL OPENROWSET reader, the Spark staging
                                            tables, the Warehouse schema pre-create
 tests/aemo/<engine>/                       the same 12 assertions, per dialect
