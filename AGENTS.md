@@ -25,9 +25,9 @@ This repo is used for training and must rest on supported pieces:
   do not port them back.
 - **No `duckrun` package, anywhere** — not for tokens, not for OneLake I/O, not for deploy.
   Tokens come from `azure/login` + azure-identity (or `notebookutils` in a Fabric notebook);
-  OneLake bytes go through `onelake.py` (azure-storage-file-datalake).
+  OneLake bytes go through `ingest/onelake.py` (azure-storage-file-datalake).
 - **DuckDB as a LIBRARY is fine** — the role pandas or pyarrow would play, and it ships
-  preinstalled in Fabric's Python notebook. `download_aemo.py` uses it for the nemweb listings
+  preinstalled in Fabric's Python notebook. `ingest/download_aemo.py` uses it for the nemweb listings
   and the archive log; `layout.py` for parquet footers. `requirements/ops.txt` pins it to the
   version the notebook ships (1.4.4) so a script behaves the same on a runner and in Fabric.
 - **Deploying the Direct Lake models is being moved to Microsoft Fabric Jumpstart**

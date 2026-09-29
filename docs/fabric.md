@@ -5,14 +5,14 @@ folder, and how to point a whole run at throwaway schemas.
 
 ## Landing
 
-One `download_aemo.py`, one landing zone, **plain CSV for both engines**, plus the archive
+One `ingest/download_aemo.py`, one landing zone, **plain CSV for both engines**, plus the archive
 log `csv_raw_archive_log.parquet` that both engines' `stg_csv_archive_log` reads. If the
 engines read different bytes, comparing their output means nothing.
 
 Landing is a prerequisite, not a modelling step, so it is a plain script rather than a dbt
 python model (dbt-fabric's python models are PySpark-via-Livy only). DuckDB is used there as
 a library — listings, the archive log, normalising the DUID CSVs, all on local temp files —
-and the bytes move to OneLake through `onelake.py` (azure-identity +
+and the bytes move to OneLake through `ingest/onelake.py` (azure-identity +
 azure-storage-file-datalake). It is idempotent: the archive log is the watermark, so a re-run
 fetches only what it has not already landed.
 

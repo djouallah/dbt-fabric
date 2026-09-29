@@ -50,7 +50,7 @@ def test_the_downloader_lands_newest_first():
     """Same reason one layer up: a download_limit smaller than the backlog should land the
     recent end of the archive. The intraday candidate tables were already newest-first; the
     daily one is the nemweb listing with the GitHub-mirror backfill appended, unordered."""
-    src = (REPO / "download_aemo.py").read_text(encoding="utf-8")
+    src = (REPO / "ingest" / "download_aemo.py").read_text(encoding="utf-8")
     m = re.search(r"def new_files\(table, source_type\):(.*?)\.fetchall\(\)", src, re.S)
     assert m, "new_files() is not where this test expects it"
     assert "ORDER BY filename DESC" in m.group(1), (

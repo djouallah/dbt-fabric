@@ -17,8 +17,8 @@ macros/                                    the AEMO CSV layout (aemo_columns.sql
                                            the T-SQL OPENROWSET reader, the Spark staging
                                            tables, the Warehouse schema pre-create
 tests/aemo/<engine>/                       the same 12 assertions, per dialect
-download_aemo.py                           one downloader, one landing zone, plain CSV
-onelake.py                                 OneLake I/O for the scripts (azure-identity +
+ingest/download_aemo.py                    one downloader, one landing zone, plain CSV
+ingest/onelake.py                          OneLake I/O for the scripts (azure-identity +
                                            azure-storage-file-datalake)
 .github/scripts/check_gating.py            proves the gating, offline
 .github/scripts/provision.py               creates the Fabric items, prints the profile's env

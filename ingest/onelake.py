@@ -3,7 +3,7 @@ azure-storage-file-datalake for bytes.
 
 `Store` is one item section (`abfss://<workspace>@onelake.dfs.fabric.microsoft.com/<item>/Files`
 or `.../Tables`) or, for a dry run, a local directory -- the same operations either way.
-download_aemo.py lands through it; .github/scripts/layout.py reads Delta logs through it.
+ingest/download_aemo.py lands through it; .github/scripts/layout.py reads Delta logs through it.
 
 DuckDB is a LIBRARY in those scripts, never a dbt adapter. Where it reads OneLake directly
 (layout.py's parquet footers), `duckdb_secret` hands it the same azure-identity token.

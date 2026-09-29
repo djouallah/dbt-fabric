@@ -49,7 +49,7 @@ from urllib.parse import unquote
 
 REPO = Path(__file__).resolve().parents[2]
 SCRIPTS = Path(__file__).resolve().parent
-for p in (str(REPO), str(SCRIPTS)):
+for p in (str(REPO / "ingest"), str(SCRIPTS)):
     if p not in sys.path:
         sys.path.insert(0, p)
 

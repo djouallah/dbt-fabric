@@ -7,7 +7,7 @@ script (dbt-fabric's python models are PySpark-via-Livy only), and each engine g
 DuckDB IS A LIBRARY HERE, NOT A dbt ADAPTER — the same role pandas or pyarrow would play, and
 it ships preinstalled in Fabric's Python notebook. It lists nemweb, keeps the archive log and
 normalises the DUID CSVs, all against LOCAL temp files. Moving bytes to OneLake is
-`azure-storage-file-datalake` (onelake.py); DuckDB never touches OneLake.
+`azure-storage-file-datalake` (ingest/onelake.py); DuckDB never touches OneLake.
 
 ONE LANDING ZONE, ONE PATH, PLAIN CSV. Fabric Warehouse OPENROWSET cannot read gzip CSV at
 all (`DATA_COMPRESSION` is only valid under CSV PARSER 1.0, and 1.0 cannot parse the
@@ -25,7 +25,7 @@ Idempotent: `csv_raw_archive_log.parquet` is the watermark, so a re-run fetches 
 it has not already landed.
 
     export LANDING_PATH=abfss://<workspace>@onelake.dfs.fabric.microsoft.com/<lakehouse>/Files
-    python download_aemo.py          # or a local directory, for a dry run
+    python ingest/download_aemo.py   # or a local directory, for a dry run
 """
 
 import io

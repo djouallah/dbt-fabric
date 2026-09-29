@@ -20,7 +20,7 @@ more engines, is at
 
 ## Docs
 
-[The thesis](docs/thesis.md), how to [run it](docs/run.md), and the rest in
+[Overview](docs/overview.md), how to [run it](docs/run.md), and the rest in
 [docs/](docs/README.md). The published dbt docs (lineage, models, columns, tests) are at
 <https://djouallah.github.io/fabric-medallion-dbt/>.
 

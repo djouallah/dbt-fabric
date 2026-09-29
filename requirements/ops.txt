@@ -1,8 +1,8 @@
-# The non-dbt jobs: landing (download_aemo.py) and the layout read-back (layout.py).
+# The non-dbt jobs: landing (ingest/download_aemo.py) and the layout read-back (layout.py).
 #
 # DuckDB is a LIBRARY here -- nemweb listings, the archive log, parquet footers -- never a dbt
 # adapter. Pinned to the version Fabric's Python notebook ships, so a script behaves the same on
-# a runner and in a notebook. OneLake access is Microsoft's own SDKs (onelake.py).
+# a runner and in a notebook. OneLake access is Microsoft's own SDKs (ingest/onelake.py).
 duckdb==1.4.4
 azure-identity
 azure-storage-file-datalake

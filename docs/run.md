@@ -29,7 +29,7 @@ can be tried without a Fabric account:
 
 ```bash
 pip install -r requirements/ops.txt
-LANDING_PATH=./landing python download_aemo.py
+LANDING_PATH=./landing python ingest/download_aemo.py
 ```
 
 ## Against Fabric
@@ -44,7 +44,7 @@ export FABRIC_WORKSPACE_ID=<workspace GUID>
 pip install -r requirements/ops.txt -r requirements/dwh.txt     # or spark.txt
 
 while IFS= read -r kv; do export "$kv"; done < <(python .github/scripts/provision.py dwh)
-python download_aemo.py                                         # writes to LANDING_PATH
+python ingest/download_aemo.py                                  # writes to LANDING_PATH
 dbt build --target dwh --profiles-dir .
 ```
 
