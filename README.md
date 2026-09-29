@@ -6,11 +6,11 @@ One dbt project that builds the **same AEMO gold layer** on five adapters:
 
 | target | adapter | engine | shape | writes | officially supported |
 |---|---|---|---|---|---|
-| `dwh` | `dbt-fabric` | Fabric Warehouse | distributed | Delta tables in the Warehouse | **yes** |
-| `spark` | `dbt-fabricspark` | Fabric Spark | distributed | Delta in a Fabric Lakehouse | **yes** |
-| `duckrun` | `duckrun` | DuckDB | single node | Delta Lake on OneLake, via delta-rs | no (community) |
-| `iceberg` | `dbt-duckdb` | DuckDB | single node | Iceberg, through the OneLake Iceberg REST catalog | no (community) |
-| `ducklake` | `dbt-duckdb` | DuckDB | single node | DuckLake parquet + a Delta export, catalog in a Fabric SQL DB | no (community) |
+| `dwh` | [`dbt-fabric`](https://github.com/microsoft/dbt-fabric) | Fabric Warehouse | distributed | Delta tables in the Warehouse | **yes** |
+| `spark` | [`dbt-fabricspark`](https://github.com/microsoft/dbt-fabricspark) | Fabric Spark | distributed | Delta in a Fabric Lakehouse | **yes** |
+| `duckrun` | [`duckrun`](https://github.com/djouallah/duckrun) | DuckDB | single node | Delta Lake on OneLake, via delta-rs | no (community) |
+| `iceberg` | [`dbt-duckdb`](https://github.com/duckdb/dbt-duckdb) | DuckDB | single node | Iceberg, through the OneLake Iceberg REST catalog | no (community) |
+| `ducklake` | [`dbt-duckdb`](https://github.com/duckdb/dbt-duckdb) | DuckDB | single node | DuckLake parquet + a Delta export, catalog in a Fabric SQL DB | no (community) |
 
 ## The thesis, and what the repo actually found
 
