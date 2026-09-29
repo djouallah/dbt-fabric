@@ -110,12 +110,12 @@ def test_storage_operations_are_excluded():
 
 def test_a_leg_without_finished_gets_the_fallback_window_and_is_flagged():
     led = m.blank()
-    read(led, [run(duckrun=leg(finished=None, compute=["NB"]))],
+    read(led, [run(spark=leg(finished=None, compute=["NB"]))],
          [row("NB", 1.0, op="Notebook run", hour="2026-09-17T13:00:00"),
           row("NB", 2.0, op="Notebook run", hour="2026-09-17T15:00:00"),   # +2h fallback: in
           row("NB", 4.0, op="Notebook run", hour="2026-09-17T16:00:00")])  # out
-    e = led["runs"]["1"]["engines"]["duckrun"]
-    assert e["partial"] is True and m.total(led, "1", "duckrun") == 3.0
+    e = led["runs"]["1"]["engines"]["spark"]
+    assert e["partial"] is True and m.total(led, "1", "spark") == 3.0
 
 
 def test_a_leg_without_started_or_compute_is_skipped():
@@ -299,7 +299,7 @@ def test_a_403_is_never_retried_and_stays_fatal(monkeypatch):
 
 def test_the_summary_names_the_caveats():
     led = m.blank()
-    runs = [run("1", dwh=leg(), duckrun=leg(finished=None, compute=["NB"]))]
+    runs = [run("1", dwh=leg(), spark=leg(finished=None, compute=["NB"]))]
     folded, _ = m.fold([row("W1", 10.0)], COLS)
     rd = m.attribute(runs, folded)
     m.apply(led, rd)

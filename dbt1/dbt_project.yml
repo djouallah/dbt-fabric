@@ -3,12 +3,11 @@ version: '1.0.0'
 profile: 'aemo_electricity'
 
 model-paths: ["models"]
-# TWO macro paths. `macros/` here is what is specific to this project — the T-SQL OPENROWSET
-# reader, the Spark staging dance, the dwh schema pre-create, the iceberg adapter overrides.
-# `../macros`, at the REPO ROOT, is the shared set: the AEMO column layout
-# (aemo_columns.sql) and the DuckDB-family reader live there so they exist in exactly ONE
-# place, and tests_py/test_aemo_columns.py pins that. A macro that is genuinely engine- or
-# dialect-specific belongs here, never up there.
+# TWO macro paths. `macros/` here is what is specific to one engine — the T-SQL OPENROWSET
+# reader, the Spark staging dance, the dwh schema pre-create. `../macros`, at the REPO ROOT,
+# is the shared set: the AEMO column layout (aemo_columns.sql) lives there so it exists in
+# exactly ONE place, and tests_py/test_aemo_columns.py pins that. A macro that is genuinely
+# engine- or dialect-specific belongs here, never up there.
 macro-paths: ["macros", "../macros"]
 test-paths: ["tests"]
 clean-targets: ["target", "dbt_packages"]
@@ -16,30 +15,21 @@ clean-targets: ["target", "dbt_packages"]
 # =====================================================================================
 # HOW ONE RUN SELECTS ONE ENGINE
 #
-# ONE PROJECT, dbt-core 1.x, FIVE ENGINES: duckrun, iceberg, ducklake, dwh, spark.
+# ONE PROJECT, TWO ENGINES, both Microsoft-supported adapters: dwh (dbt-fabric) and spark
+# (dbt-fabricspark).
 #
-# It was briefly two projects: iceberg spent 2026-09-17 to 2026-09-18 in a ../dbt2 on dbt
-# OSS 2, whose catalogs.yml cannot sit in a dbt 1.x project root. That engine could not
-# build a single model against the OneLake catalog (GetTableInformation BadRequest_400,
-# "Malformed request") and came back here. See docs/engine-nuances.md before trying it again.
-#
-# models/aemo/<engine>/<layer>/<model>.sql — the SAME model file name exists in all five
+# models/aemo/<engine>/<layer>/<model>.sql — the SAME model file name exists in both
 # engine folders. That collision is legal only because exactly one engine tree is +enabled
 # per run; dbt's duplicate-resource-name check only ever sees enabled nodes.
 #
 # `dbt build --target dwh` sets target.name == 'dwh', so only models/aemo/dwh/** is
-# enabled and the other four trees parse into manifest['disabled']. There is no --select
+# enabled and the other tree parses into manifest['disabled']. There is no --select
 # anywhere in CI; selection is ENTIRELY +enabled.
 #
-# WE GATE ON target.name, NOT target.type — and here that is not a preference: `iceberg` and
-# `ducklake` are BOTH type: duckdb, so target.type cannot tell five trees apart. It is still
-# the right discriminator inside a macro that is about DIALECT rather than engine (see
-# parse_filename), and the WRONG one for anything that must separate iceberg from ducklake
-# (see macros/iceberg_adapter_overrides.sql, where a duckdb__ macro reaches both and has to
-# branch on target.name).
+# WE GATE ON target.name, NOT target.type. target.type is still the right discriminator
+# inside a macro that is about DIALECT rather than engine (see parse_filename).
 #
-# Three rules, each of which has already cost a silent failure in one of the four source
-# repos or in the template:
+# Three rules, each of which has already cost a silent failure:
 #
 #   1. NOTHING ON THE `aemo_electricity` PROJECT KEY, EVER. A generic test declared in a
 #      patch file gets the fqn of the YML FILE, not of the model it patches, so a gate on the
@@ -53,65 +43,9 @@ clean-targets: ["target", "dbt_packages"]
 # =====================================================================================
 
 on-run-start:
-  # Each hook renders to whitespace on the engines it does not apply to.
-  #
-  # target.type, NOT target.name: the OneLake transport is a DuckDB-family concern and must
-  # reach duckrun, iceberg AND ducklake. Gating it on a name list left ducklake on DuckDB's default
-  # transport, which fails the OneLake TLS handshake anywhere but inside a Fabric notebook
-  # ("Problem with the SSL CA cert (path? access rights?)"). Same condition
-  # parity_fingerprint uses. Inside Fabric the variable is unset and this renders to nothing,
-  # which is right there -- the default transport is the one that works on a notebook.
-  - "{% if target.type in ['duckdb', 'duckrun'] and env_var('AZURE_TRANSPORT_OPTION_TYPE', 'default') != 'default' %}SET GLOBAL azure_transport_option_type = '{{ env_var('AZURE_TRANSPORT_OPTION_TYPE') }}'{% endif %}"
-  # Set here and not in profiles.yml `settings:`: dbt-duckdb re-applies settings on every
-  # cursor and DuckDB refuses to switch temp_directory once anything has spilled.
-  - "{% if target.name == 'iceberg' %}SET GLOBAL temp_directory = '{{ env_var('DUCKDB_TEMP_DIR', '/tmp/duckdb_spill') }}'{% endif %}"
-  - "{% if target.name == 'duckrun' %}SET GLOBAL preserve_insertion_order = false{% endif %}"
-  - "{% if target.name == 'duckrun' %}SET GLOBAL temp_directory = '{{ env_var('DUCKDB_TEMP_DIR', '/tmp/duckdb_spill') }}'{% endif %}"
-  # DuckLake compaction knobs, applied per run rather than per table.
-  #
-  # `'retry'` in flags.WHICH, which is easy to get backwards: on dbt 1.11 `dbt retry` rebuilds
-  # the ORIGINAL command's flags before it parses or runs anything (dbt/task/retry.py --
-  # set_flags(Flags.from_dict(CMD_DICT[previous_command], ...)), and the `retry` command carries
-  # no @requires.manifest), so WHICH is ALREADY 'build' inside a retried build and these hooks
-  # fire today. The name is here as insurance for if that stops being true, because the failure
-  # would be silent and green: a retried ducklake build that skipped these writes DuckLake's
-  # default 122,880-row row groups and -- far worse -- leaves the retried tables with no
-  # refreshed _delta_log from the delta_export() in on-run-end, i.e. Direct Lake serving the
-  # PREVIOUS generation with every dbt test passing. The model-level parse guards carry it for
-  # the same reason. Do not "fix" this by removing it, and do not read it as a live bug.
-  - "{% if target.name == 'ducklake' and flags.WHICH in ['run', 'build', 'retry'] %}CALL ducklake.set_option('rewrite_delete_threshold', 0){% endif %}"
-  - "{% if target.name == 'ducklake' and flags.WHICH in ['run', 'build', 'retry'] %}CALL ducklake.set_option('target_file_size', '128MB'){% endif %}"
-  # Row groups. DuckLake's default parquet_row_group_size is 122,880 rows, and that default
-  # is the ENTIRE reason this leg reported 844 row groups on fct_summary where delta-rs
-  # reported 27 and spark 13 -- nothing about DuckDB or the Delta export forces it. 2M puts
-  # the leg in the same order as the other four (iceberg 1.3M, dwh 1.7M, delta-rs 3.8M,
-  # spark 8.1M), which is what Direct Lake wants to transcode. Verified offline on duckdb
-  # 1.5.5: the option is stored in the catalog, survives a reconnect, and produced exactly
-  # 2,000,000 rows per group on an fct_summary-shaped table -- no byte cap gets in the way,
-  # so parquet_row_group_size_bytes does not need setting too.
-  # It applies to files written AFTER it. The existing files keep their layout until they
-  # are rewritten, and run-end's rewrite/merge only touches files with deletes or files
-  # under target_file_size -- so a table already written stays at 122,880 until it is reset
-  # (DROP, the same reset the marts document).
-  - "{% if target.name == 'ducklake' and flags.WHICH in ['run', 'build', 'retry'] %}CALL ducklake.set_option('parquet_row_group_size', 2000000){% endif %}"
-  - "{% if target.name == 'ducklake' and flags.WHICH in ['run', 'build', 'retry'] %}CALL ducklake.set_option('expire_older_than', '2 day'){% endif %}"
   # Fabric Warehouse does not auto-create schemas, and CREATE SCHEMA must be alone in its
-  # batch — hence the EXEC() inside the macro.
+  # batch — hence the EXEC() inside the macro. Renders to whitespace on spark.
   - "{% if target.name == 'dwh' %}{{ create_schemas_if_not_exists(['landing', 'mart']) }}{% endif %}"
-
-on-run-end:
-  # DuckLake writes many small parquet files and needs an explicit Delta export before a
-  # Direct Lake model can read the result.
-  - "{% if target.name == 'ducklake' and flags.WHICH in ['run', 'build', 'retry'] %}CALL ducklake_rewrite_data_files('ducklake'){% endif %}"
-  - "{% if target.name == 'ducklake' and flags.WHICH in ['run', 'build', 'retry'] %}CALL ducklake_merge_adjacent_files('ducklake'){% endif %}"
-  - "{% if target.name == 'ducklake' and flags.WHICH in ['run', 'build', 'retry'] %}CALL ducklake_cleanup_old_files('ducklake', cleanup_all => true){% endif %}"
-  # delta_export() takes NO arguments (community extension delta_export 0.1.0 -- the only
-  # signature it has, and what the original ducklake repo called). It exports every table of
-  # the attached DuckLake catalog by writing a _delta_log next to that table's parquet, IN
-  # PLACE under data_path -- which is why data_path is the lakehouse's Tables section (see
-  # profiles.yml). A two-argument form was invented here once and failed every run with
-  # "No function matches the given name and argument types 'delta_export(VARCHAR, VARCHAR)'".
-  - "{% if target.name == 'ducklake' and flags.WHICH in ['run', 'build', 'retry'] %}CALL delta_export(){% endif %}"
 
 models:
   aemo_electricity:
@@ -124,20 +58,7 @@ models:
       # Only the schema per layer lives here. Materialization is set in every model file,
       # because it is one of the things the adapters force (the spark staging model is a
       # table) — a folder-level value would never be the effective one and would misdescribe
-      # two engines. The staging models set their own schema too, and the iceberg one also
-      # sets its own `database` — see that file.
-      duckrun:
-        +enabled: "{{ target.name == 'duckrun' }}"
-        dimensions: {+schema: mart}
-        marts:      {+schema: landing}
-      iceberg:
-        +enabled: "{{ target.name == 'iceberg' }}"
-        dimensions: {+schema: mart}
-        marts:      {+schema: landing}
-      ducklake:
-        +enabled: "{{ target.name == 'ducklake' }}"
-        dimensions: {+schema: mart}
-        marts:      {+schema: landing}
+      # an engine. The staging models set their own schema too.
       dwh:
         +enabled: "{{ target.name == 'dwh' }}"
         dimensions: {+schema: mart}
@@ -157,8 +78,5 @@ data_tests:
       # reach it. It therefore must NOT carry a target clause, or the generic tests would
       # run on one engine only. The singular tests under tests/aemo/<engine>/ do have an
       # engine segment, so they are gated on the keys below.
-      duckrun:  {+enabled: "{{ target.name == 'duckrun' }}"}
-      iceberg:  {+enabled: "{{ target.name == 'iceberg' }}"}
-      ducklake: {+enabled: "{{ target.name == 'ducklake' }}"}
       dwh:      {+enabled: "{{ target.name == 'dwh' }}"}
       spark:    {+enabled: "{{ target.name == 'spark' }}"}

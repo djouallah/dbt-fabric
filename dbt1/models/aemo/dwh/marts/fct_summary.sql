@@ -1,9 +1,13 @@
 -- depends_on: {{ ref('fct_scada_today') }}
 -- depends_on: {{ ref('fct_price_today') }}
 
-{#-- Determinism contract (see the duckrun version for the full story): every run recomputes,
-     with the SAME SQL as a full rebuild, exactly the dates whose stored content could be
-     stale, and reconciles that batch key by key. Incremental == full-rebuild by construction
+{#-- Determinism contract: same inputs => same summary, on every engine, regardless of that
+     engine's run history. Every run recomputes, with the SAME SQL as a full rebuild, exactly
+     the dates whose stored content could be stale, and reconciles that batch key by key. A
+     partial top-up would fossilize gaps forever: an earlier copy (a has-new-daily probe, an
+     insert of missing keys only, a "skip dates with >= 280 intervals" filter) never revisited
+     a date first written from the intraday feed, and parity measured it 1,911-3,244 rows
+     short. Incremental == full-rebuild by construction
      for every date it touches; no cutoff watermark, no run-history dependence, no
      runner-decided branch. This is the dwh fct_summary of djouallah/direct-lake-parquet-layout.
 
@@ -28,7 +32,8 @@
      The intraday branch is gated on dispatch_duids because the two branches read AEMO
      tables with DIFFERENT UNIT UNIVERSES: 26 non-scheduled units publish SCADA telemetry
      but have zero rows in fct_scada ever. Merge cannot retract a row, so that gate is the
-     only thing keeping those units out. See the duckrun version for the full story. --#}
+     only thing keeping those units out. Treat any edit to dispatch_duids as load-bearing --
+     nothing catches a mistake in it except parity. --#}
 {{ config(
     materialized='incremental',
     incremental_strategy='merge',
@@ -149,7 +154,7 @@ SELECT
   -- populated) to avoid a schema change that would force a DROP here.
   (SELECT cutoff FROM cutoff_calc) AS cutoff
 FROM daily_summary
--- Parity with the duckdb and spark copies, which both end with the same sort. It makes NO claim
+-- Parity with the spark copy, which ends with the same sort. It makes NO claim
 -- about physical layout: this SQL is a merge SOURCE on all engines, so nothing about the
 -- ordering reaches the stored table. It is here so the legs pay the same cost — deleting it
 -- from one tree is a fairness regression, not a cleanup. Lands in the outer SELECT of a Fabric

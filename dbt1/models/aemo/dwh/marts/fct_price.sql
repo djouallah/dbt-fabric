@@ -7,13 +7,12 @@
      from the archive log (new_source_files) and is passed to OPENROWSET as an EXPLICIT BULK (...)
      list — NOT a folder glob, which would re-read the whole archive every run. append (not merge):
      the file list already excludes anything in {{ this }}, so dedup is done by file selection — a
-     key-join merge would be redundant work that scans the target. The duckrun original used
-     'safeappend' (DuckDB compare-and-swap); Fabric has no such thing, but the explicit new-file
-     list keeps the append idempotent at file grain. No partition_by — Fabric Warehouse has no
+     key-join merge would be redundant work that scans the target. The explicit new-file list
+     keeps the append idempotent at file grain. No partition_by — Fabric Warehouse has no
      table partitioning; month_key is kept as a plain column. --#}
 
 {#-- Column layout comes from macros/aemo_columns.sql, the single source of truth shared
-     by all five engines. --#}
+     by both engines. --#}
 {%- set read_cols = aemo_columns('price') -%}
 {%- set num_cols = aemo_cast_columns('price') -%}
 

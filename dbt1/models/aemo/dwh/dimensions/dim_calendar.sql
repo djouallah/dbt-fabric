@@ -8,7 +8,7 @@
 -- exists, every later run selects nothing (WHERE 1=0) so it's a no-op — dbt's idiom
 -- for "create if not exists, otherwise skip".
 --
--- DuckDB's generate_series(...INTERVAL 1 DAY) has no T-SQL equivalent that survives
+-- A date series (Spark's sequence()+explode()) has no T-SQL equivalent that survives
 -- dbt-fabric's subquery wrapping (OPTION(MAXRECURSION) can't live in a derived table),
 -- so build a 0..9999 tally by cross-joining digit tables and offset from the start date.
 WITH digits(n) AS (

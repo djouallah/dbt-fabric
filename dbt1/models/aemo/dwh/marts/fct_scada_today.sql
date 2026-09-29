@@ -9,7 +9,7 @@
      list already excludes files in {{ this }}, so the append stays idempotent at file grain. --#}
 
 {#-- Column layout comes from macros/aemo_columns.sql, the single source of truth shared
-     by all five engines. --#}
+     by both engines. --#}
 {%- set read_cols = aemo_columns('scada_today') -%}
 
 {%- set new_files = new_source_files('scada_today', this if is_incremental() else none) -%}

@@ -1,38 +1,31 @@
-"""Land the AEMO source files, for every engine.
+"""Land the AEMO source files, for both engines.
 
-ONE downloader. The four source repos each carried a ~380-line copy of this as a dbt PYTHON
-MODEL (`stg_csv_archive_log.py`), which does not work for half the engines: dbt-fabric's
-python models are PySpark-via-Livy only, so the dwh repo kept a fifth copy outside
-model-paths driven by a stub `dbt` object, and the spark leg has no usable python-model
-runtime here either. Landing is not a modelling step — it is a prerequisite — so it is a
-plain script, and each engine gets a thin `stg_csv_archive_log.sql` view over the parquet
-log this writes.
+ONE downloader. Landing is not a modelling step — it is a prerequisite — so it is a plain
+script (dbt-fabric's python models are PySpark-via-Livy only), and each engine gets a thin
+`stg_csv_archive_log.sql` view over the parquet log this writes.
 
-ONE LANDING ZONE, ONE PATH, PLAIN CSV. The DuckDB-family repos used to gzip into `csv/`
-while dwh landed plain into `csv_raw/`, because Fabric Warehouse OPENROWSET cannot read
-gzip CSV at all (`DATA_COMPRESSION` is only valid under CSV PARSER 1.0, and 1.0 cannot
-parse the ragged/quoted AEMO rows; the only working combination is plain CSV + PARSER 2.0).
-Everything lands plain, in `csv_raw/`, once.
+DuckDB IS A LIBRARY HERE, NOT A dbt ADAPTER — the same role pandas or pyarrow would play, and
+it ships preinstalled in Fabric's Python notebook. It lists nemweb, keeps the archive log and
+normalises the DUID CSVs, all against LOCAL temp files. Moving bytes to OneLake is
+`azure-storage-file-datalake` (onelake.py); DuckDB never touches OneLake.
+
+ONE LANDING ZONE, ONE PATH, PLAIN CSV. Fabric Warehouse OPENROWSET cannot read gzip CSV at
+all (`DATA_COMPRESSION` is only valid under CSV PARSER 1.0, and 1.0 cannot parse the
+ragged/quoted AEMO rows; the only working combination is plain CSV + PARSER 2.0). Everything
+lands plain, in `csv_raw/`, once.
 
 THIS SCRIPT WRITES TO `LANDING_PATH`, NEVER TO `FILES_PATH`, and the difference is the
 whole point. `FILES_PATH` is per-engine — how that engine's dbt READS the landing zone,
 which for the dwh leg is a shortcut rather than the zone itself. `LANDING_PATH` is the same
-directory on all five legs. They were one variable once, and provision.py re-pointed it for
-two engines, so those legs quietly downloaded their own private copy of the CSVs: the
-parity comparison was then grading engines on different inputs, which makes it worthless.
+directory on both legs. They were one variable once, and provision.py re-pointed it for
+dwh, so that leg quietly downloaded its own private copy of the CSVs: the parity comparison
+was then grading engines on different inputs, which makes it worthless.
 
 Idempotent: `csv_raw_archive_log.parquet` is the watermark, so a re-run fetches only files
 it has not already landed.
 
-    export LANDING_PATH=./landing
-    python download_aemo.py
-    dbt build --target duckrun --profiles-dir .
-
-Every correctness fix that existed in exactly one of the four repos is merged in here:
-  * sql_retry() around the network listing queries     (was dwh only)
-  * plain-CSV landing + daily_download_limit           (was dwh only)
-  * parameterised INSERTs                              (was iceberg only)
-  * GITHUB_TOKEN secret + try/except on the backfill   (was iceberg only)
+    export LANDING_PATH=abfss://<workspace>@onelake.dfs.fabric.microsoft.com/<lakehouse>/Files
+    python download_aemo.py          # or a local directory, for a dry run
 """
 
 import io
@@ -45,10 +38,12 @@ import zipfile
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 
-import duckrun
+import duckdb
 
-# FILES_PATH is the fallback so the local recipe (`export FILES_PATH=./landing`) and a
-# laptop run still work with one variable; in Fabric, provision.py always sets both.
+from onelake import Store
+
+# FILES_PATH is the fallback so a hand run still works with one variable; in Fabric,
+# provision.py always sets both.
 LANDING_PATH = (
     os.environ.get("LANDING_PATH")
     or os.environ.get("FILES_PATH")
@@ -60,56 +55,39 @@ DOWNLOAD_LIMIT = int(os.environ.get("download_limit", "2"))
 # HTTP 403 — keep those on the smaller download_limit.
 DAILY_DOWNLOAD_LIMIT = int(os.environ.get("daily_download_limit", str(DOWNLOAD_LIMIT)))
 
-# duckrun is the transport for every engine, not just the duckrun target: it resolves OneLake
-# auth and gives a plain DuckDB connection, and it works against a local directory too.
-dr = duckrun.connect(LANDING_PATH, read_only=False)
-con = dr.con
+
+landing = Store(LANDING_PATH)
+con = duckdb.connect()
 con.sql("INSTALL httpfs; LOAD httpfs; INSTALL json; LOAD json;")
-try:
-    con.sql(
-        "SET GLOBAL azure_transport_option_type='"
-        + os.environ.get("AZURE_TRANSPORT_OPTION_TYPE", "default")
-        + "'"
-    )
-except Exception:
-    pass
 
 
 def push_new(local_folder, rel):
-    dr.copy(local_folder, rel, overwrite=False)
+    landing.push(local_folder, rel, overwrite=False)
 
 
 def push_replace(local_folder, rel):
-    """Overwrite whatever is already at `rel`. obstore delete-then-copy rather than a plain
-    overwrite so a file that vanished upstream does not linger in the landing zone."""
-    import obstore
-    from dbt.adapters.duckrun import objectstore, secret
-
-    base = f"{LANDING_PATH}/{rel}" if rel else LANDING_PATH
-    store = objectstore.build_store(base, secret.refreshed(dr.storage_options))
-    for n in os.listdir(local_folder):
-        try:
-            obstore.delete(store, n)
-        except Exception:
-            pass
-    dr.copy(local_folder, rel, overwrite=True)
+    landing.push(local_folder, rel, overwrite=True)
 
 
 def download_aemo(session, files_path, download_limit, daily_download_limit):
-    csv_log_path = files_path + "/csv_raw_archive_log.parquet"
     batch_size, max_workers = 7, 8
 
     # --- Load the existing log, or start an empty one -------------------------------
-    log_exists = session.sql(f"SELECT count(*) FROM glob('{csv_log_path}')").fetchone()[0]
-    if log_exists > 0:
-        session.sql(
-            f"""
-            CREATE OR REPLACE TEMP TABLE _csv_archive_log AS
-            SELECT source_type, source_filename, archive_path, archived_at,
-                   row_count, source_url, etag, csv_filename
-            FROM read_parquet('{csv_log_path}') WHERE csv_filename IS NOT NULL
-            """
-        )
+    # Pulled to a local file first: DuckDB only ever reads local bytes here.
+    log_bytes = landing.read("csv_raw_archive_log.parquet")
+    if log_bytes is not None:
+        with tempfile.TemporaryDirectory() as ltmp:
+            lp = os.path.join(ltmp, "log.parquet").replace("\\", "/")
+            with open(lp, "wb") as f:
+                f.write(log_bytes)
+            session.sql(
+                f"""
+                CREATE OR REPLACE TEMP TABLE _csv_archive_log AS
+                SELECT source_type, source_filename, archive_path, archived_at,
+                       row_count, source_url, etag, csv_filename
+                FROM read_parquet('{lp}') WHERE csv_filename IS NOT NULL
+                """
+            )
     else:
         session.sql(
             """
@@ -234,9 +212,8 @@ def download_aemo(session, files_path, download_limit, daily_download_limit):
         if github_token:
             # INLINED, not a bind parameter: DuckDB's CREATE SECRET does not accept
             # prepared-statement parameters and dies with "Unrecognized expression type
-            # PARAMETER". It only bites when this backfill branch runs, so an earlier leg
-            # that had enough new nemweb files sails past it -- which is exactly how it
-            # reached CI green on four engines and killed the fifth.
+            # PARAMETER". It only bites when this backfill branch runs, which is how it once
+            # reached CI green on some legs and killed another.
             session.execute(
                 "CREATE OR REPLACE SECRET github_api (TYPE HTTP, BEARER_TOKEN '"
                 + github_token.replace("'", "''")
@@ -342,11 +319,7 @@ def download_aemo(session, files_path, download_limit, daily_download_limit):
 if __name__ == "__main__":
     print(f"Landing to: {LANDING_PATH}")
     summary, landed = download_aemo(con, LANDING_PATH, DOWNLOAD_LIMIT, DAILY_DOWNLOAD_LIMIT)
-    summary.show()
+    for source_type, files in summary.fetchall():
+        print(f"  {source_type:<16}{files:>6} files")
     print("Landed this run: " + ", ".join(f"{k}={v}" for k, v in landed.items()))
-    # The engine trees live in two dbt projects, so the build is run from inside one of
-    # them: dbt1/ is dbt-core 1.x (duckrun, ducklake, dwh, spark) and dbt2/ is dbt OSS 2
-    # (iceberg). See dbt2/dbt_project.yml for why they cannot share a root.
-    print("Done. Now run one of:")
-    print("  cd dbt1 && dbt build --target <duckrun|ducklake|dwh|spark> --profiles-dir .")
-    print("  cd dbt2 && dbt build --target iceberg --profiles-dir .")
+    print("Done. Now run:  cd dbt1 && dbt build --target <dwh|spark> --profiles-dir .")

@@ -1,6 +1,6 @@
 {#-- Builds an OPENROWSET(BULK ...) over OneLake Files, typing every column as VARCHAR by
-     ordinal position so the model can TRY_CAST individually (the T-SQL stand-in for DuckDB's
-     read_csv(all_varchar=1, ignore_errors=1)).
+     ordinal position so the model can TRY_CAST individually (read everything as text,
+     tolerate the odd malformed field).
 
      `columns` is the ordered list of source column names (position 1..N) for ONE AEMO record
      type. The landed files are the raw AEMO reports (one file holds many record types of

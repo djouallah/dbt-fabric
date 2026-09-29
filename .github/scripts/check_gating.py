@@ -6,28 +6,23 @@ NOTHING and exits 0. If a target name stops matching a folder name, every +enabl
 false, `dbt build` reports "Nothing to do", and the job goes green having done nothing.
 Nothing else in the repo catches that.
 
-ONE PROJECT, dbt1/, FIVE ENGINES: duckrun, iceberg, ducklake, dwh, spark. It was briefly two
--- iceberg spent a day in a dbt2/ on dbt OSS 2, whose catalogs.yml cannot sit in a dbt 1.x
-project root -- and ENGINES below is what is left of that: the engine -> project mapping,
-kept because tests_py/_layout.py's PROJECT_OF holds the same dict and the two must agree.
-run_dbt.py holds a THIRD copy, but of the DuckDB SUBSET only (duckrun, iceberg, ducklake):
-dwh and spark never go through it, and tests_py/test_local_runner.py asserts that subset and
-pipeline.yml's dwh/spark build step partition these five between them -- an engine in neither
-reaches no build step at all, which is silent and green.
+ONE PROJECT, dbt1/, TWO ENGINES: dwh (dbt-fabric) and spark (dbt-fabricspark). ENGINES
+below is the engine -> project mapping, and tests_py/_layout.py's PROJECT_OF holds the same
+dict; the two must agree.
 
 Runs `dbt parse` once per engine with dummy env vars and asserts, for each:
   * the ENABLED model set is exactly the canonical eight
   * every OTHER engine tree is in manifest['disabled'] -- not merely ABSENT, because a tree
     that failed to parse at all would also look empty
   * every model fqn is [aemo_electricity, aemo, <engine>, <layer>, <name>]
-  * the schema is <engine>_landing / <engine>_mart -- the engine prefix is what keeps five
-    engines from overwriting each other inside one shared lakehouse
+  * the schema is <engine>_landing / <engine>_mart -- the engine prefix is what keeps the
+    engines from overwriting each other
   * the enabled singular-test count matches, and no test belongs to another engine
   * the generic tests (declared in models/aemo/_*.yml) run on EVERY engine -- this is the
     one that regressed elsewhere: a gate on the project key silently disabled them,
     because a generic test takes the fqn of the YML FILE, not of the model it patches
 
-ONE ENGINE PER INVOCATION, and CI runs it as a five-way matrix. The adapters still cannot
+ONE ENGINE PER INVOCATION, and CI runs it as a two-way matrix. The adapters still cannot
 share an environment: dbt-fabric and dbt-fabricspark shadow each other under the
 dbt.adapters namespace ("has no attribute 'Plugin'"). Running per engine is also more
 faithful: each one is validated against exactly the dependencies it will build with.
@@ -35,9 +30,7 @@ faithful: each one is validated against exactly the dependencies it will build w
 Usage:  python .github/scripts/check_gating.py <engine>
         python .github/scripts/check_gating.py            # every engine this shell can reach
 
-The no-argument form checks every engine whose adapter is importable. One dbt major covers
-all five now, so a single environment with dbt-duckdb reaches iceberg AND ducklake -- where
-before iceberg needed a second venv and a DBT2_BIN pointing at it.
+The no-argument form checks every engine whose adapter is importable.
 """
 from __future__ import annotations
 
@@ -55,9 +48,6 @@ DATASET = "aemo"
 # engine -> the dbt project directory it lives in. The KEY is the dbt target name, the
 # models/aemo/<engine>/ folder name and the schema prefix, all at once.
 ENGINES = {
-    "duckrun": "dbt1",
-    "iceberg": "dbt1",
-    "ducklake": "dbt1",
     "dwh": "dbt1",
     "spark": "dbt1",
 }
@@ -81,11 +71,6 @@ GENERIC = 30
 # Enough to satisfy every profile's env_var() calls; none of it is contacted.
 DUMMY_ENV = {
     "FILES_PATH": "/tmp/landing",
-    "ONELAKE_TABLES_PATH": "/tmp/warehouse",
-    "WAREHOUSE_PATH": "ws/item",
-    "ONELAKE_ENDPOINT": "https://onelake.table.fabric.microsoft.com/iceberg",
-    "ONELAKE_TOKEN": "dummy",
-    "DUCKLAKE_CATALOG_DSN": "Server=localhost;Database=dummy",
     "FABRIC_DWH_SERVER": "dummy.datawarehouse.fabric.microsoft.com",
     "FABRIC_DWH_NAME": "dummy",
     "FABRIC_WORKSPACE_ID": "00000000-0000-0000-0000-000000000000",
@@ -133,12 +118,10 @@ def check(target: str, manifest: dict) -> list[str]:
         if len(fqn) != 5 or fqn[0] != PROJECT or fqn[1] != DATASET or fqn[2] != target:
             errs.append(f"{uid}: fqn {fqn} is not [{PROJECT}, {DATASET}, {target}, <layer>, <name>]")
 
-        # THE SCHEMA PREFIX IS LOAD-BEARING. All five engines write into one shared Fabric
-        # lakehouse, so the engine name in the schema is the only thing keeping them apart.
-        # Two engines resolving to the same schema would overwrite each other's gold layer
-        # inside one item -- with every test still green, because each run would see a
-        # perfectly consistent table. Nothing downstream catches that; this does, offline.
-        # It is also why moving this engine between dbt majors needed no data migration.
+        # THE SCHEMA PREFIX IS LOAD-BEARING: it is the only thing keeping the engines' gold
+        # layers apart. Two engines resolving to the same schema would overwrite each other
+        # -- with every test still green, because each run would see a perfectly consistent
+        # table. Nothing downstream catches that; this does, offline.
         schema = node.get("schema") or node.get("config", {}).get("schema") or ""
         if schema not in (f"{target}_landing", f"{target}_mart"):
             errs.append(
@@ -147,7 +130,6 @@ def check(target: str, manifest: dict) -> list[str]:
             )
 
     # Sibling trees in the SAME project must be present-and-disabled, not simply missing.
-    # Four siblings per engine, now that all five trees share one project.
     disabled_engines = {
         n["fqn"][2]
         for entries in disabled.values()
@@ -183,11 +165,7 @@ def dbt_installed(target: str) -> bool:
     """Is this engine's adapter importable in this environment?"""
     import importlib.util
 
-    # iceberg and ducklake share dbt-duckdb -- both are type: duckdb, which is also why
-    # dbt1/macros/iceberg_adapter_overrides.sql has to branch on target.name.
-    mod = {"duckrun": "dbt.adapters.duckrun", "iceberg": "dbt.adapters.duckdb",
-           "ducklake": "dbt.adapters.duckdb",
-           "dwh": "dbt.adapters.fabric", "spark": "dbt.adapters.fabricspark"}[target]
+    mod = {"dwh": "dbt.adapters.fabric", "spark": "dbt.adapters.fabricspark"}[target]
     try:
         return importlib.util.find_spec(mod) is not None
     except (ImportError, ValueError):

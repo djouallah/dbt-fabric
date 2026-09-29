@@ -2,12 +2,12 @@ name: pipeline
 
 # Display only. The run page's title, instead of "pipeline #NN" -- what this run actually is,
 # legible in a screenshot without reading the inputs.
-run-name: pipeline — ${{ inputs.engines == 'all' && 'all five engines' || inputs.engines }}, one gold layer
+run-name: pipeline — ${{ inputs.engines == 'all' && 'both engines' || inputs.engines }}, one gold layer
 
 # Builds the same models on every engine, proves they agree, and writes down what the run
 # touched and what it wrote (history/runs/); the Capacity units workflow then adds what it cost.
 #
-# Manual only. Deploying Fabric items and spending capacity is a deliberate act, and the
+# Manual only. Provisioning Fabric items and spending capacity is a deliberate act, and the
 # record job commits to history/ (the run record and the parity fingerprints), so a push
 # trigger would make the commit start the next run. A push made with GITHUB_TOKEN triggers
 # nothing, which is what makes committing from here safe today; NEVER add a push: trigger
@@ -20,7 +20,7 @@ on:
         description: Which engines to build
         type: choice
         default: all
-        options: [all, duckrun, iceberg, ducklake, dwh, spark]
+        options: [all, dwh, spark]
       dbt_schema:
         description: DBT_SCHEMA — leave as 'mart' for production (schemas are <engine>_landing / <engine>_mart), or set e.g. 'test' to land the whole run in test_<engine>_landing / test_<engine>_mart instead
         type: string
@@ -42,20 +42,6 @@ on:
         description: Files each fact model folds per run, NEWEST first (every engine honours it; a backlog converges over runs and shows as test WARNINGS, not failures). The throttle for spark's first build.
         type: string
         default: "1000"
-      fabric_cores:
-        description: vCores for the in-Fabric notebook legs (duckrun, ducklake, iceberg). 8 is the steady-state size; a from-scratch rebuild of the whole daily archive OOM-kills the notebook at 8 and needs 16.
-        type: choice
-        default: "8"
-        options: ["4", "8", "16", "32"]
-      local_runner:
-        description: local runner
-        type: boolean
-        default: false
-      deploy:
-        description: Deploy the in-Fabric demo after the build? (the items are always provisioned) none = skip; no_model = everything except the semantic models; full = everything
-        type: choice
-        default: none
-        options: [none, no_model, full]
 
 permissions:
   id-token: write
@@ -63,7 +49,7 @@ permissions:
 
 concurrency:
   # Never two of these against one workspace. NOT cancel-in-progress: cancelling a GitHub
-  # job does not stop Fabric — the notebook or Livy session keeps running, and billing.
+  # job does not stop Fabric — a Warehouse query or Livy session keeps running, and billing.
   group: pipeline-${{ github.ref_name }}
   cancel-in-progress: false
 
@@ -85,18 +71,11 @@ jobs:
         #
         # Each entry is {engine, label}. `engine` is the real target name and is what every
         # file in the repo keys on — do NOT rename those. `label` is cosmetic: it is the only
-        # thing the Actions UI shows, and it names the STACK rather than the adapter package,
-        # because "duckrun" and "iceberg" say nothing about what is underneath them. Three
-        # DuckDB legs and two Fabric-native ones, in that shape so the graph groups them; the
-        # same five labels are in ci.yml's gating matrix and in layout.py's LABEL, and the
-        # three are meant to match. Emoji render fine in a job name, and UTF-8 passes through
-        # the shell and jq below untouched. 🏢/⚡ rather than 🏛/🗲: those two have no default
-        # emoji presentation and can come out as monochrome text glyphs.
+        # thing the Actions UI shows. The same labels are in ci.yml's gating matrix and in
+        # layout.py's LABEL, and the three are meant to match. 🏢/⚡ rather than 🏛/🗲: those
+        # two have no default emoji presentation and can come out as monochrome text glyphs.
         run: |
-          ALL='[{"engine":"duckrun","label":"🦆 duckdb · delta-rs"},
-                {"engine":"iceberg","label":"🧊 duckdb · iceberg"},
-                {"engine":"ducklake","label":"🌊 duckdb · ducklake"},
-                {"engine":"dwh","label":"🏢 fabric · warehouse"},
+          ALL='[{"engine":"dwh","label":"🏢 fabric · warehouse"},
                 {"engine":"spark","label":"⚡ fabric · spark"}]'
           if [ "${{ inputs.engines }}" = "all" ]; then
             echo "engines=$(echo "$ALL" | jq -c .)" >> "$GITHUB_OUTPUT"
@@ -104,33 +83,19 @@ jobs:
             echo "engines=$(echo "$ALL" | jq -c --arg e '${{ inputs.engines }}' '[.[]|select(.engine==$e)]')" >> "$GITHUB_OUTPUT"
           fi
 
-  # LAND ONCE, HERE, so the five build legs can run at the same time.
+  # LAND ONCE, HERE, so the build legs can run at the same time.
   #
-  # download_aemo.py rewrites csv_raw_archive_log.parquet with a delete-then-copy; five legs
-  # landing concurrently would race on that single file and would also each re-fetch the same
-  # nemweb archives. That race — not the warehouse — is what used to force max-parallel: 1.
+  # download_aemo.py rewrites csv_raw_archive_log.parquet in place; legs landing concurrently
+  # would race on that single file and would also each re-fetch the same nemweb archives.
   #
   # It also removes a second race: this job provisions the folder, dbt_landing and the shared
-  # dbt lakehouse up front, so the parallel legs all find them already there instead of five
+  # dbt lakehouse up front, so the parallel legs all find them already there instead of
   # create-if-missing calls colliding on the same item name.
-  #
-  # No azure/login: duckrun mints its own tokens from the GitHub OIDC assertion.
   land:
     name: land AEMO (once)
     needs: plan
     runs-on: ubuntu-latest
     timeout-minutes: 60
-    # What the compact job needs from here. $GITHUB_ENV does not cross jobs; a job output does,
-    # and it saves that job re-running provision.py (three Fabric REST calls and a duckrun
-    # install) to look up a GUID this job already resolved. It has to come from THIS job and not
-    # from `build`: `build` is a matrix, and matrix entries overwrite one another's outputs.
-    # provision.py emits DATA_LAKEHOUSE_ID for every engine — the `dbt` lakehouse is shared by
-    # all five — so the value here is the same one every leg resolves.
-    #
-    # The lakehouse GUID ALONE: GitHub drops any output that contains a secret ("Skip output ...
-    # since it may contain secret"), and the full warehouse path starts with FABRIC_WORKSPACE_ID.
-    outputs:
-      data_lakehouse_id: ${{ steps.lakehouse.outputs.data_lakehouse_id }}
     env:
       download_limit: ${{ inputs.download_limit }}
       daily_download_limit: ${{ inputs.daily_download_limit }}
@@ -141,15 +106,6 @@ jobs:
       RUNIN_SPARK_RESOURCE_PROFILE: ${{ inputs.spark_resource_profile }}
       RUNIN_DOWNLOAD_LIMIT: ${{ inputs.download_limit }}
       RUNIN_DAILY_DOWNLOAD_LIMIT: ${{ inputs.daily_download_limit }}
-      # Load-bearing for reading the record afterwards, not decoration, and it is three-way.
-      # duckrun and iceberg have no compute item but the notebook, so a local leg writes no GUID,
-      # measure_cu.py skips it and the leg is ABSENT from cu.json rather than zero. ducklake is
-      # the exception: provision.py records its catalog SQL DB as a compute item either way, so a
-      # local ducklake leg is PRESENT with `Sql Usage` alone and no notebook. This is the only
-      # thing that says why.
-      RUNIN_LOCAL_RUNNER: ${{ inputs.local_runner }}
-      AZURE_TRANSPORT_OPTION_TYPE: curl
-      CURL_CA_INFO: /etc/ssl/certs/ca-certificates.crt
       AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
       AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
       FABRIC_WORKSPACE_ID: ${{ secrets.FABRIC_WORKSPACE_ID }}
@@ -162,7 +118,14 @@ jobs:
           python-version: "3.12"
           cache: pip
           cache-dependency-path: requirements/*.txt
-      - run: pip install -r requirements/duckrun.txt
+      # DuckDB here is a library (download_aemo.py's listing and log), not a dbt adapter;
+      # OneLake I/O is azure-identity + azure-storage-file-datalake (onelake.py).
+      - run: pip install -r requirements/ops.txt
+      - uses: azure/login@v3
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          allow-no-subscriptions: true
       # The run record starts here -- run id, sha, inputs -- and provision.py adds the shared
       # items' GUIDs to the same fragment. record.py; the record job merges every job's.
       # A step, not job env: the `runner` context is not available at job level.
@@ -171,10 +134,7 @@ jobs:
           echo "RUN_RECORD=$RUNNER_TEMP/record/record-00-run.json" >> "$GITHUB_ENV"
           RUN_RECORD="$RUNNER_TEMP/record/record-00-run.json" python .github/scripts/record.py init
       - name: Provision the shared items
-        run: python .github/scripts/provision.py duckrun >> "$GITHUB_ENV"
-      - name: Expose the shared lakehouse to the compact job
-        id: lakehouse
-        run: echo "data_lakehouse_id=$DATA_LAKEHOUSE_ID" >> "$GITHUB_OUTPUT"
+        run: python .github/scripts/provision.py landing >> "$GITHUB_ENV"
       - name: Land AEMO files
         run: python download_aemo.py
       - uses: actions/upload-artifact@v6
@@ -187,24 +147,8 @@ jobs:
   # ONE LEG PER ENGINE: build it, test it, fingerprint its gold table. Landing already happened
   # ONCE, above, which is the only reason these can run at the same time.
   #
-  # WHERE dbt RUNS depends on the engine:
-  #
-  #   duckrun, ducklake, iceberg   ON FABRIC COMPUTE (FABRIC_CORES vCores), through duckrun's
-  #                                run_python -- .github/scripts/remote_dbt.py. DuckDB folds the
-  #                                AEMO archive in memory, and the 7 GB hosted runner was shut
-  #                                down mid-fct_scada twice in one day ("The runner has received
-  #                                a shutdown signal"). The original delta repo never ran dbt on
-  #                                the runner either ("the runner pulls every byte across the
-  #                                internet twice"). Here the runner only provisions, launches
-  #                                and collects the log. Cancelling the GitHub job does NOT stop
-  #                                the notebook -- it runs, and bills, to completion.
-  #                                UNLESS `local_runner` is on: all three then build HERE instead,
-  #                                through the same .github/scripts/run_dbt.py the notebook runs.
-  #                                A verification mode -- it is the only way to exercise these
-  #                                profiles' OWN credentials, since a notebook's identity already
-  #                                authorises OneLake -- so pair it with a small process_limit.
-  #   dwh, spark                   on the runner, always. dbt is only a client there; the compute
-  #                                is the Warehouse / the Livy session.
+  # dbt runs on the runner for both engines, and it is only a CLIENT there: the compute is the
+  # Warehouse (dwh) or a Livy session (spark).
   #
   # Deliberately NO `--select` anywhere: model selection is entirely +enabled in
   # dbt_project.yml, keyed on the target name.
@@ -213,8 +157,8 @@ jobs:
     # Cosmetic only — `matrix.engine` below is still the real target name.
     name: build (${{ matrix.label }})
     strategy:
-      # All five at once. They share one lakehouse but write separate schemas, and the
-      # landing zone is already written by the `land` job above, so nothing is contended.
+      # Both at once. They write separate schemas, and the landing zone is already written by
+      # the `land` job above, so nothing is contended.
       fail-fast: false
       matrix:
         include: ${{ fromJSON(needs.plan.outputs.engines) }}
@@ -227,38 +171,15 @@ jobs:
       contents: read
     env:
       ENGINE: ${{ matrix.engine }}
-      # The legs whose dbt runs inside Fabric. Exact match on the list, not a substring.
-      #
-      # `local_runner` takes ALL THREE off Fabric and onto this runner -- see that input's
-      # description. ducklake used to be carved out of it whatever the toggle said, because only
-      # the in-Fabric script carried the 40613 loop that waits out its auto-paused catalog SQL DB
-      # while the runner ran a bare `dbt build || dbt retry` with nothing of the sort. Both
-      # places run the same .github/scripts/run_dbt.py now, so there is nothing left to pin, and
-      # the two tokens the notebook used to inject are minted below.
-      REMOTE: ${{ contains(fromJSON('["duckrun", "ducklake", "iceberg"]'), matrix.engine) && !inputs.local_runner }}
-      # A SIZE. `local_runner` is a PLACE, which is why it is a boolean input of its own and not
-      # a `local` option here: remote_dbt.py reads this as int(), so folding the place into the
-      # size would put a non-numeric value in front of that int() on every run with the toggle
-      # OFF -- a ValueError before anything starts, in the mode nobody was testing.
-      FABRIC_CORES: ${{ inputs.fabric_cores }}
       DBT_SCHEMA: ${{ inputs.dbt_schema }}
       process_limit: ${{ inputs.process_limit }}
       SPARK_RESOURCE_PROFILE: ${{ inputs.spark_resource_profile }}
-      # For anything DuckDB that still runs ON THE RUNNER (a local build of a DuckDB target):
-      # off a Fabric notebook the azure extension needs the curl transport and the system CA
-      # bundle. remote_dbt.py deliberately does not forward these into Fabric.
-      AZURE_TRANSPORT_OPTION_TYPE: curl
-      CURL_CA_INFO: /etc/ssl/certs/ca-certificates.crt
-      DUCKDB_TEMP_DIR: /tmp/duckdb_spill
       # dbt-fabricspark 1.13.0 runs OPTIMIZE after every Delta build, which rewrites the
       # layout the run just produced.
       DBT_FABRICSPARK_SKIP_OPTIMIZE: "true"
       AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
       AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
       FABRIC_WORKSPACE_ID: ${{ secrets.FABRIC_WORKSPACE_ID }}
-      # An authenticated GitHub API call gets 5000 req/h against 60 anonymous, and runners
-      # share IPs — without this the archive backfill listing hits the anonymous quota.
-      GITHUB_TOKEN: ${{ github.token }}
 
     steps:
       - uses: actions/checkout@v5
@@ -271,21 +192,13 @@ jobs:
           cache-dependency-path: requirements/*.txt
 
       - name: Install ${{ matrix.engine }} dependencies
-        # ONE list per engine, and the same one the notebook and the gating job install --
-        # every leg is dbt-core 1.x now, so nothing needs a runner-only variant. iceberg had
-        # a requirements/iceberg_runner.txt while it was dbt OSS 2, because dbt-oss and
-        # duckrun cannot share an environment (duckrun pins dbt-core<2 and lays a 1.x `dbt`
-        # script over v2's); dbt-duckdb and duckrun share one happily.
-        # The compact job below still installs its own `--pre duckdb` and nothing else.
+        # ONE list per engine, and the same one the gating job installs.
         run: pip install -r "requirements/${ENGINE}.txt"
 
       # ---- auth -------------------------------------------------------------------
-      # duckrun — and ONLY duckrun — mints every token it needs (OneLake storage, Fabric
-      # control plane) by exchanging a fresh GitHub OIDC assertion, so its leg needs no login
-      # step. Every other engine gets an Azure session: provision.py falls back to `az` for
-      # any audience duckrun cannot mint, and the dwh leg captures its Warehouse token below.
+      # provision.py and the adapters' CLI auth both use this session; the dwh leg also
+      # captures its Warehouse token below.
       - name: Azure login
-        if: matrix.engine != 'duckrun'
         uses: azure/login@v3
         with:
           client-id: ${{ secrets.AZURE_CLIENT_ID }}
@@ -314,45 +227,10 @@ jobs:
           echo "::add-mask::$TOKEN"
           echo "FABRIC_ACCESS_TOKEN=$TOKEN" >> "$GITHUB_ENV"
 
-      - name: Mint OneLake token
-        # For a LOCAL leg whose profile carries an `azure` secret, and only because the notebook
-        # is what normally provides it: remote_dbt.py's setup hook mints it in the kernel from
-        # notebookutils, so nothing token-shaped travels. On the runner nothing does, and
-        # env_var('ONELAKE_TOKEN') has NO default -- dbt dies at profile render without this.
-        # On iceberg the catalog bearer is the leg's ONLY credential for Tables/ (storage is
-        # vended per table) and this line authorises the landing zone, which is the whole thing
-        # under test. ducklake needs the same secret for its parquet and its Delta export.
-        # Same incantation as the compact job. duckrun needs nothing: it mints from the OIDC
-        # assertion and gets no azure/login.
-        if: env.REMOTE != 'true' && (matrix.engine == 'iceberg' || matrix.engine == 'ducklake')
-        run: |
-          TOKEN=$(az account get-access-token --resource https://storage.azure.com/ --query accessToken -o tsv)
-          echo "::add-mask::$TOKEN"
-          echo "ONELAKE_TOKEN=$TOKEN" >> "$GITHUB_ENV"
-
-      - name: Mint the DuckLake catalog token
-        # ducklake's catalog is a Fabric SQL DB, so a local leg needs a database.windows.net
-        # bearer as well -- the same audience the dwh leg captures above, handed to the catalog
-        # connection by the profile's meta_access_token. In Fabric remote_dbt.py's setup hook
-        # mints it from notebookutils instead.
-        # HERE AND NOT IN provision.py: that script's stdout is redirected straight into
-        # $GITHUB_ENV, so a token emitted there would never pass through ::add-mask:: and would
-        # sit unmasked in the job's environment. That is why provision.py emits this only when
-        # GITHUB_ACTIONS is unset. Minted AFTER provisioning, like the dwh one: creating the SQL
-        # DB can outlive a token. And unlike ONELAKE_TOKEN this one HAS a '' default in the
-        # profile, so forgetting it does not fail at render -- the leg dies later at the DuckLake
-        # ATTACH, on a login error that reads like a catalog fault.
-        if: env.REMOTE != 'true' && matrix.engine == 'ducklake'
-        run: |
-          TOKEN=$(az account get-access-token --resource https://database.windows.net/ --query accessToken -o tsv)
-          echo "::add-mask::$TOKEN"
-          echo "DBT_ENV_SECRET_SQL_TOKEN=$TOKEN" >> "$GITHUB_ENV"
-
       # NO LANDING STEP HERE, on purpose. download_aemo.py rewrites
-      # csv_raw_archive_log.parquet with a delete-then-copy, so five legs landing at once would
-      # race on that one file -- which is the only reason the legs used to be forced through
-      # max-parallel: 1. The shared `land` job above is the one writer, and one landing zone for
-      # every engine is also what makes the parity comparison below mean anything.
+      # csv_raw_archive_log.parquet in place, so legs landing at once would race on that one
+      # file. The shared `land` job above is the one writer, and one landing zone for both
+      # engines is also what makes the parity comparison below mean anything.
 
       # ---- the leg's window --------------------------------------------------------
       # `started` / `finished` bracket everything that spends Fabric compute -- build, tests
@@ -363,39 +241,7 @@ jobs:
         run: python .github/scripts/record.py leg-start "$ENGINE"
 
       # ---- build -------------------------------------------------------------------
-      - name: dbt build on Fabric compute
-        if: env.REMOTE == 'true'
-        # run_dbt.py inside one throwaway Fabric Python notebook -- build, the resume loop,
-        # retry, then the fingerprint, all in one session; the fingerprint is lifted out of the
-        # streamed log into history/parity/<engine>.json.
-        run: python .github/scripts/remote_dbt.py "$ENGINE"
-
-      - name: dbt build on this runner
-        # THE SAME SCRIPT the notebook runs, which is what makes a local leg and a Fabric leg one
-        # sequence on different compute rather than two implementations that agree by inspection:
-        # build, the 40613 loop that waits out ducklake's auto-paused catalog, then `dbt retry`
-        # ONLY if the build got far enough to write run_results.json. It chdir's into dbt1/
-        # itself, hence no working-directory here.
-        # --no-fingerprint: on this path the fingerprint is the step below, the one every local
-        # leg shares; in the notebook it has to be in the same process because its JSON is read
-        # back out of the streamed log.
-        # THE COMPLEMENT of the two client engines, deliberately, rather than a second copy of
-        # REMOTE's list: an engine added to that list above reaches this step automatically, and
-        # an engine run_dbt.py does not know dies on its usage line instead of quietly building
-        # nothing while the fingerprint step publishes the previous run's numbers.
-        if: env.REMOTE != 'true' && matrix.engine != 'dwh' && matrix.engine != 'spark'
-        env:
-          # A long build whose log only appears at the end is not a verification mode.
-          PYTHONUNBUFFERED: "1"
-        run: python .github/scripts/run_dbt.py "$ENGINE" --no-fingerprint
-
       - name: dbt build
-        # dwh and spark. dbt is only a CLIENT here -- the compute is the Warehouse / the Livy
-        # session -- so they have no in-Fabric path and no divergence to close; they stay a plain
-        # `dbt` subprocess, which is also what keeps check_gating.py's DBT_BIN escape hatch
-        # working off CI. Moving them onto run_dbt.py is a change with its own question behind it
-        # and nothing offline can judge it.
-        if: matrix.engine == 'dwh' || matrix.engine == 'spark'
         working-directory: dbt1
         # `dbt retry` needs --target too, or it renders the profile's default target.
         run: |
@@ -404,11 +250,9 @@ jobs:
 
       # ---- fingerprint -------------------------------------------------------------
       - name: Fingerprint gold layer
-        if: env.REMOTE != 'true'
         working-directory: dbt1
-        # EVERY local leg, all five -- the DuckDB ones pass --no-fingerprint above precisely so
-        # this stays the only one. parity.py is addressed through $GITHUB_WORKSPACE: this step's
-        # cwd is the project, not the repo root, and the artifact path below is repo-relative.
+        # parity.py is addressed through $GITHUB_WORKSPACE: this step's cwd is the project, not
+        # the repo root, and the artifact path below is repo-relative.
         run: |
           dbt run-operation parity_fingerprint --target "$ENGINE" --profiles-dir . \
             | python "$GITHUB_WORKSPACE/.github/scripts/parity.py" capture "$GITHUB_WORKSPACE/history/parity"
@@ -421,8 +265,7 @@ jobs:
           if-no-files-found: warn
 
       # AFTER the fingerprint, not after the build: on spark the run-operation opens a new
-      # Livy session and on dwh it is a full Warehouse Query, both billed. The notebook legs
-      # run it inside the notebook, i.e. inside their window either way. `job.status` is
+      # Livy session and on dwh it is a full Warehouse Query, both billed. `job.status` is
       # already `failure` once any earlier step failed, so no step ids are needed.
       - name: Record leg end
         if: always()
@@ -438,90 +281,21 @@ jobs:
           path: ${{ runner.temp }}/record/
           if-no-files-found: ignore
 
-  # Iceberg accumulates small files and has no snapshot expiry, so compaction is a job of its
-  # own. `needs` is for ORDERING only — never overlap a rewrite with a load, and never let the
-  # `layout` job below measure a table mid-rewrite — and it must NOT gate on the build
-  # succeeding: fragmentation is just as real after a failed build.
-  #
-  # It waits for ALL the legs, not just iceberg's, because a job cannot depend on one matrix
-  # entry. That is the one thing lost by inlining the leg here rather than in a reusable
-  # workflow of its own, and it costs wall-clock only.
-  compact:
-    name: compact iceberg
-    if: ${{ (inputs.engines == 'all' || inputs.engines == 'iceberg') && !cancelled() }}
-    needs: [land, build]
-    runs-on: ubuntu-latest
-    timeout-minutes: 90
-    continue-on-error: true
-    permissions:
-      id-token: write
-      contents: read
-    env:
-      COMPACT_BUDGET_MINUTES: "70"
-      COMPACT_MIN_INPUT_FILES: "5"
-      PYTHONUNBUFFERED: "1"
-      # Separate job, so $GITHUB_ENV from the legs does not reach it. Without this the script
-      # would resolve iceberg_landing/iceberg_mart while the run built into
-      # test_iceberg_landing/test_iceberg_mart, and report a tidy catalog having compacted
-      # nothing.
-      DBT_SCHEMA: ${{ inputs.dbt_schema }}
-      # Which lakehouse, from the `land` job's provisioning (its job output); the script
-      # composes the catalog's warehouse path as <workspace>/<lakehouse>.
-      FABRIC_WORKSPACE_ID: ${{ secrets.FABRIC_WORKSPACE_ID }}
-      DATA_LAKEHOUSE_ID: ${{ needs.land.outputs.data_lakehouse_id }}
-      AZURE_TRANSPORT_OPTION_TYPE: curl
-      CURL_CA_INFO: /etc/ssl/certs/ca-certificates.crt
-    steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-python@v6
-        with:
-          python-version: "3.12"
-      # Just the engine. iceberg_rewrite_data_files() exists on the pre-release line only,
-      # and this job never invokes dbt, duckrun or the Fabric API -- it is a metadata rewrite
-      # against the catalog on the token below.
-      - run: pip install --pre duckdb
-      # For the token only. The OneLake token is the REST catalog's bearer; storage
-      # credentials are vended by the catalog per table (compact_iceberg.py).
-      - uses: azure/login@v3
-        with:
-          client-id: ${{ secrets.AZURE_CLIENT_ID }}
-          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
-          allow-no-subscriptions: true
-      - name: Mint OneLake token
-        run: |
-          TOKEN=$(az account get-access-token --resource https://storage.azure.com/ --query accessToken -o tsv)
-          echo "::add-mask::$TOKEN"
-          echo "ONELAKE_TOKEN=$TOKEN" >> "$GITHUB_ENV"
-      - name: Compact
-        # A run that died before `land` provisioned has no catalog location to hand over; there
-        # is nothing to compact then either. Say so instead of failing on a missing env var.
-        run: |
-          if [ -z "$DATA_LAKEHOUSE_ID" ]; then
-            echo "::warning::the land job did not resolve the lakehouse (failed before provisioning); nothing compacted"
-            exit 0
-          fi
-          python .github/scripts/compact_iceberg.py
-
-  # WHAT EACH ENGINE WROTE. layout.py reads every engine's tables back through Delta with
-  # duckrun.get_stats() -- rows, files, row groups, size, compression -- plus fct_summary's
-  # per-column encodings, row-group ordering and run lengths, and puts the engines side by
-  # side in the step summary and in the run record under `layout`. It only READS.
+  # WHAT EACH ENGINE WROTE. layout.py reads each engine's tables back through their Delta logs
+  # -- rows, files, row groups, size, compression -- plus fct_summary's per-column encodings,
+  # row-group ordering and run lengths, and puts the engines side by side in the step summary
+  # and in the run record under `layout`. It only READS.
   #
   # Best-effort by construction (continue-on-error here, try/except per engine inside): a
   # table that cannot be read is "not measured", never a red run, and the record job below
-  # still runs and still commits. No azure/login: duckrun mints the OneLake and Fabric tokens
-  # from the OIDC assertion, as in `land`. The curl transport is for DuckDB reading parquet
-  # off Fabric, as in build.yml.
+  # still runs and still commits. The curl transport is for DuckDB reading parquet footers off
+  # OneLake from a runner.
   layout:
     name: layout read back
-    # `compact` too, and explicitly: it rewrites exactly the files this job measures. When the
-    # run built no iceberg leg that job is SKIPPED, and `if: !cancelled()` below is what keeps
-    # this one running anyway -- a skipped `needs` otherwise skips the jobs behind it.
-    needs: [plan, build, compact]
+    needs: [plan, build]
     if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
-    # Footers over OneLake for five engines' worth of tables; the source repo's four items
-    # took ~10 minutes, and a too-short cap turns slowness into a red run.
+    # Footers over OneLake; a too-short cap turns slowness into a red run.
     timeout-minutes: 60
     continue-on-error: true
     env:
@@ -529,8 +303,6 @@ jobs:
       AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
       FABRIC_WORKSPACE_ID: ${{ secrets.FABRIC_WORKSPACE_ID }}
       DBT_SCHEMA: ${{ inputs.dbt_schema }}
-      # Recorded under layout.config, not used here: what build.yml ran the notebook legs at.
-      FABRIC_CORES: ${{ inputs.fabric_cores }}
       SPARK_RESOURCE_PROFILE: ${{ inputs.spark_resource_profile }}
       # Only the engines this run built: reading an engine nobody rebuilt would record an
       # older generation's layout under this run's id.
@@ -544,8 +316,13 @@ jobs:
         with:
           python-version: "3.12"
           cache: pip
-          cache-dependency-path: requirements/duckrun.txt
-      - run: pip install -r requirements/duckrun.txt
+          cache-dependency-path: requirements/ops.txt
+      - run: pip install -r requirements/ops.txt
+      - uses: azure/login@v3
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          allow-no-subscriptions: true
       - name: Read the layout back
         run: |
           echo "RUN_RECORD=$RUNNER_TEMP/record/record-30-layout.json" >> "$GITHUB_ENV"
@@ -655,34 +432,3 @@ jobs:
         run: |
           echo "PARITY FAILED -- see the Compare engines step. The run record was committed; the fingerprints were not." >&2
           exit 1
-
-  # THE IN-FABRIC DEMO, deployed AFTER the build so the Direct Lake models find their tables
-  # (a model reframes on deploy). Off by default: orchestration is GitHub Actions; the notebook
-  # and pipeline are a demo of in-Fabric scheduling, and redeploying them every run is churn.
-  # No azure/login: duckrun mints the storage, Fabric and Power BI tokens from the OIDC
-  # assertion, exactly as on the duckrun leg.
-  deploy:
-    name: deploy demo (optional)
-    needs: [plan, build]
-    if: ${{ inputs.deploy != 'none' }}
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    env:
-      AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
-      AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
-      FABRIC_WORKSPACE_ID: ${{ secrets.FABRIC_WORKSPACE_ID }}
-      DBT_SCHEMA: ${{ inputs.dbt_schema }}
-      # The engines this run built: one semantic model each, aemo_<engine>.
-      DEPLOY_ENGINES: ${{ join(fromJSON(needs.plan.outputs.engines).*.engine, ',') }}
-      DEPLOY_SEMANTIC_MODEL: ${{ inputs.deploy == 'full' }}
-    steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-python@v6
-        with:
-          python-version: "3.12"
-          cache: pip
-          cache-dependency-path: requirements/duckrun.txt
-      # duckrun is the whole backend; provision.py's `requests` comes with it.
-      - run: pip install -r requirements/duckrun.txt
-      - name: Deploy (${{ inputs.deploy }})
-        run: python deploy.py

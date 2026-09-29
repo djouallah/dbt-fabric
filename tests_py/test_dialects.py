@@ -19,9 +19,6 @@ import sqlglot
 from _layout import REPO, singular_tests_dir
 
 DIALECT = {
-    "duckrun": "duckdb",
-    "iceberg": "duckdb",
-    "ducklake": "duckdb",
     "dwh": "tsql",
     "spark": "spark",
 }

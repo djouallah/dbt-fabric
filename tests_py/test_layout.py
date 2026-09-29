@@ -1,4 +1,4 @@
-"""Offline tests for layout.py's pure aggregations. No duckrun, no OneLake, no credentials.
+"""Offline tests for layout.py's pure aggregations. No OneLake, no credentials.
 
 The functions here turn DuckDB's raw `parquet_metadata()` rows and Delta commit JSON into the
 numbers the run record carries. Each one fails as a plausible number rather than an error --
@@ -30,8 +30,8 @@ def row(file="f1.parquet", rg=0, rows=100, col="date", typ="INT32", enc="PLAIN,R
 
 def test_layout_imports_offline():
     """The heavy imports are lazy on purpose: this module must load in ci.yml's unit job, where
-    duckrun is not installed and FABRIC_WORKSPACE_ID (which provision.py reads at import) is unset."""
-    assert "duckrun" not in sys.modules or True
+    the azure SDKs are not installed and FABRIC_WORKSPACE_ID (which provision.py reads at import)
+    is unset."""
     assert layout.MART == "fct_summary"
 
 
@@ -107,11 +107,11 @@ def test_vorder_tags_last_add_wins_and_matches_on_basename():
 
 
 def test_parity_table_flags_disagreement_and_absence():
-    per = {"duckrun": {"fct_summary": {"total_rows": 10, "size_mb": 1.0}},
-           "dwh": {"fct_summary": {"total_rows": 11, "size_mb": 2.0}},
-           "spark": {}}
+    per = {"dwh": {"fct_summary": {"total_rows": 10, "size_mb": 1.0}},
+           "spark": {"fct_summary": {"total_rows": 11, "size_mb": 2.0}},
+           "other": {}}
     out: list[str] = []
-    layout.parity_table(per, ["duckrun", "dwh", "spark"], out)
+    layout.parity_table(per, ["dwh", "spark", "other"], out)
     line = next(l for l in out if l.startswith("| `fct_summary`"))
     assert "⚠️" in line and "| 10 | 11 | — |" in line
     assert any(l.startswith("| **total rows** ⚠️") for l in out)
@@ -121,27 +121,30 @@ def test_headline_table_flags_the_row_count_outlier():
     """The run page's first table. The ⚠️ must land on the engine that DISAGREES, not on every
     engine, and an engine that was not measured must read `—` rather than 0 -- "nothing there"
     and "not measured" are different claims, and a 0 in the headline row reads as a broken
-    build rather than an unread table."""
-    per = {"duckrun": {"fct_summary": {"total_rows": 10, "size_mb": 1.0, "num_files": 2,
-                                       "compression": "ZSTD", "vorder": False},
-                       "fct_scada": {"total_rows": 30, "size_mb": 3.0}},
+    build rather than an unread table.
+
+    Four engines, two of them hypothetical: the majority rule needs at least three measured,
+    and an unlabelled engine falls back to its own name."""
+    per = {"a": {"fct_summary": {"total_rows": 10, "size_mb": 1.0, "num_files": 2,
+                                 "compression": "ZSTD", "vorder": False},
+                 "fct_scada": {"total_rows": 30, "size_mb": 3.0}},
            "dwh": {"fct_summary": {"total_rows": 10, "size_mb": 2.0},
                    "fct_scada": {"total_rows": 30, "size_mb": 4.0}},
            "spark": {"fct_summary": {"total_rows": 9, "size_mb": 1.0}},
-           "iceberg": {}}
+           "b": {}}
     out: list[str] = []
-    layout.headline_table(per, ["duckrun", "dwh", "spark", "iceberg"], {}, out)  # no encodings
+    layout.headline_table(per, ["a", "dwh", "spark", "b"], {}, out)  # no encodings
 
-    rows = {e: next(l for l in out if l.startswith(f"| {layout.LABEL[e]} |"))
-            for e in ("duckrun", "dwh", "spark", "iceberg")}
+    rows = {e: next(l for l in out if l.startswith(f"| {layout.LABEL.get(e, e)} |"))
+            for e in ("a", "dwh", "spark", "b")}
     assert "⚠️" in rows["spark"], "the engine 9 rows short is not flagged"
-    assert "⚠️" not in rows["duckrun"] and "⚠️" not in rows["dwh"], "the agreeing majority is flagged"
+    assert "⚠️" not in rows["a"] and "⚠️" not in rows["dwh"], "the agreeing majority is flagged"
     # 10 = fct_summary's own rows. NOTHING here is summed over the other tables: a total
     # that mixes them is not the parity claim, and stg_csv_archive_log being a view on some
     # engines made the sum differ where the data did not.
-    assert "| 10 |" in rows["duckrun"] and "| 40 |" not in rows["duckrun"]
-    assert "⚠️" not in rows["iceberg"] and "| — | — | — |" in rows["iceberg"]
-    assert out[0].startswith("## 🏁 Four engines")
+    assert "| 10 |" in rows["a"] and "| 40 |" not in rows["a"]
+    assert "⚠️" not in rows["b"] and "| — | — | — |" in rows["b"]
+    assert out[0].startswith("## 🏁 4 engines")  # past NUMBER, the digit
 
 
 def test_headline_encoding_counts_only_fully_dictionary_encoded_columns():
@@ -159,18 +162,18 @@ def test_headline_encoding_counts_only_fully_dictionary_encoded_columns():
 
 def test_headline_carries_no_vorder_column():
     """V-Order cannot be one cell without lying: only the Fabric Spark writer stamps a tag, the
-    Warehouse V-Orders by default and stamps nothing, and the DuckDB writers do neither -- one
-    blank cell would mean three different things. It lives in ordering_table, per file."""
+    Warehouse V-Orders by default and stamps nothing -- one blank cell would mean two different
+    things. It lives in ordering_table, per file."""
     out: list[str] = []
     layout.headline_table({"dwh": {"fct_summary": {"total_rows": 1}}}, ["dwh"], {}, out)
     assert not any("V-Order" in l or "vorder" in l.lower() for l in out)
 
 
 def test_build_doc_omits_unmeasured_sections():
-    doc = layout.build_doc({"duckrun": {"fct_summary": {"total_rows": 1}}}, ["duckrun", "dwh"],
-                           {"duckrun": ("Lakehouse", "dbt", "G1")}, {"duckrun": "duckrun"},
+    doc = layout.build_doc({"dwh": {"fct_summary": {"total_rows": 1}}}, ["dwh"],
+                           {"dwh": ("Warehouse", "dbt_dwh", "G1")}, {"dwh": "dwh"},
                            {}, {})
-    assert list(doc["stats"]) == ["duckrun"]
+    assert list(doc["stats"]) == ["dwh"]
     assert "encodings" not in doc and "ordering" not in doc
-    assert doc["engines"]["duckrun"]["guid"] == "G1" and "dwh" not in doc["engines"]
+    assert doc["engines"]["dwh"]["guid"] == "G1"
     assert "spark" not in doc["config"]

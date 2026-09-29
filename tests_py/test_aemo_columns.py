@@ -31,7 +31,7 @@ EXPECTED = {
     "scada_today": (8, None),  # no cast loop: SCADAVALUE is read typed
 }
 
-ENGINES = ["duckrun", "iceberg", "ducklake", "dwh", "spark"]
+ENGINES = ["dwh", "spark"]
 
 
 def spec_block(record: str) -> str:

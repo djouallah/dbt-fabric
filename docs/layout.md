@@ -5,72 +5,77 @@ models are. The gating is the part worth reading twice: its default failure mode
 builds NOTHING and exits 0.
 
 ```
-dbt1/                                      the dbt project: all five engines, dbt-core 1.x
+dbt1/                                      the dbt project: both engines, dbt-core 1.x
 dbt1/models/aemo/<engine>/<layer>/<model>.sql
-                                           the same 8 model names in all five trees
+                                           the same 8 model names in both trees (dwh, spark)
 dbt1/models/aemo/_staging.yml _dimensions.yml _marts.yml
                                            ONE patch file per layer, above the engine folders,
                                            so one patch documents whichever tree is enabled
-macros/aemo_columns.sql                    the AEMO CSV layout — single source of truth, at the
-                                           REPO ROOT: dbt1 reads it through ../macros
+macros/                                    shared across engines, at the REPO ROOT (dbt1 reads
+                                           it through ../macros): the AEMO CSV layout
+                                           (aemo_columns.sql, the single source of truth), the
+                                           schema rule, the parity fingerprint
 dbt1/macros/                               what one engine's adapter forces: the T-SQL
-                                           OPENROWSET reader, the Spark staging dance, the
-                                           iceberg adapter overrides
+                                           OPENROWSET reader, the Spark staging tables, the
+                                           Warehouse schema pre-create
 dbt1/tests/aemo/<engine>/                  the same 12 assertions, per dialect
 download_aemo.py                           one downloader, one landing zone, plain CSV
+onelake.py                                 OneLake I/O for the scripts (azure-identity +
+                                           azure-storage-file-datalake)
 .github/scripts/check_gating.py            proves the gating, offline
+.github/scripts/provision.py               creates the Fabric items, prints the profile's env
 .github/scripts/parity.py                  proves the engines agree
-.github/scripts/check_catalog_stats.py     proves the published page is not empty
-.github/scripts/remote_dbt.py              runs a DuckDB leg inside Fabric (8 vCores)
 .github/scripts/record.py                  the run record: items by GUID, each leg's window
 .github/scripts/layout.py                  what each engine wrote: files, row groups, encodings, order
 .github/scripts/measure_cu.py              what each engine cost: capacity units per run and engine
 history/                                   parity/ fingerprints, runs/ records, cu.json ledger
-docs/                                      run.md, layout.md (this), engine-nuances.md,
-                                           fabric.md, ci.md, candidate-engines.md
-deploy.py                                  the in-Fabric demo: repo copy, notebook + pipeline, semantic model
-fabric_items/                              the scheduled notebook, its variable library, the pipeline
-semantic_model/                            one Direct Lake model, deployed once per engine
+semantic_model/                            one Direct Lake semantic model over <engine>_mart;
+                                           deployment is coming next (Fabric Jumpstart)
+docs/                                      this, and the rest of docs/README.md
 ```
 
-Five copies of each model is the design, not an accident. They are gated so exactly one is
+Two copies of each model is the design, not an accident. They are gated so exactly one is
 live, and the duplication is what lets each engine say what its adapter forces in plain SQL,
 without a thicket of `{% if target.type %}` conditionals. The shared *data* — the AEMO
-column layout — lives once, in `macros/aemo_columns.sql`.
-
-**Why the project is called `dbt1`.** For one day it had a sibling. `catalogs.yml` is how dbt
-OSS 2 declares an Iceberg REST catalog, and dbt reads it from the directory holding
-`dbt_project.yml` — put one next to a dbt 1.x project and every engine in it dies. So the
-`iceberg` leg moved to its own `dbt2/` on 2026-09-17, failed to build a single model against
-the OneLake catalog, and came back the next day. [Engine
-nuances](engine-nuances.md) has what that cost and what it bought.
+column layout — lives once, in `macros/aemo_columns.sql`. `dbt1` is a historical name; it is
+the only dbt project in the repo.
 
 ### How one run selects one engine
 
 `dbt build --target dwh` in `dbt1/` sets `target.name == 'dwh'`, so only
-`models/aemo/dwh/**` is `+enabled` and its four sibling trees parse into
-`manifest['disabled']`. The model file names are *identical* across all five trees — legal
-only because exactly one tree is enabled per run. There is no `--select` anywhere.
+`models/aemo/dwh/**` is `+enabled` and the spark tree parses into `manifest['disabled']`.
+The model file names are *identical* across both trees — legal only because exactly one tree
+is enabled per run. There is no `--select` anywhere.
 
-Gating is on **`target.name`, not `target.type`**, and that is forced rather than chosen:
-`iceberg` and `ducklake` are both `type: duckdb`, so the type cannot tell five trees apart.
-`target.name` is the folder name, which is what selection actually means.
+Gating is on **`target.name`**, which is the folder name — what selection actually means.
+`target.type` stays the right discriminator inside a macro that is about *dialect* rather
+than engine (`parse_filename`).
 
 **The default failure mode of this design is a green run that built nothing.** A target name
 that matches no folder disables everything, and `dbt build` then reports "Nothing to do" and
 exits 0. That is what `check_gating.py` is for, and why CI runs it before anything spends.
 
+Two more rules, each of which has already cost a silent failure (`dbt1/dbt_project.yml`
+carries them at their site):
+
+- **Nothing on the `aemo_electricity` project key.** A generic test declared in a patch file
+  takes the fqn of the YML *file*, so a gate there disables every generic test, green.
+- **`+enabled` is a scalar**: a deeper folder key clobbers a shallower one rather than
+  combining with it. Under `data_tests:` the `aemo` key therefore carries no target clause
+  (generic tests have no engine segment), while the engine keys below it do.
+
 ## The gold layer
 
-Eight models, identical on all five engines:
+Eight models, identical on both engines:
 
 `stg_csv_archive_log` · `dim_calendar` · `dim_duid` · `fct_price` · `fct_price_today` ·
 `fct_scada` · `fct_scada_today` · `fct_summary`
 
 `fct_summary` is the Power BI-facing table and the one parity compares: one row per
-`(date, time, DUID)` joining generation to the matching regional price. `fct_price` is
-AEMO's DREGION record (all 130 columns) and `fct_scada` the DUNIT record (all 53); the
-summary exposes five of those columns, the wide facts are the analytical surface.
+`(date, time, DUID)` joining generation to the matching regional price. `time` is HHMM, not
+minutes past midnight, and the latest day is almost always partial. `fct_price` is AEMO's
+DREGION record (all 130 columns) and `fct_scada` the DUNIT record (all 53); the summary
+exposes five of those columns, the wide facts are the analytical surface.
 
 Models that existed on only one engine are deliberately **not** carried over — that is
-exactly what this repo exists to stop. They remain in the original repos' history.
+exactly what this repo exists to stop.

@@ -32,10 +32,10 @@ def _doc(p):
 
 
 def test_unset_run_record_is_a_no_op():
-    """provision.py and remote_dbt.py must stay runnable by hand -- recording is opt-in."""
+    """provision.py must stay runnable by hand -- recording is opt-in."""
     assert record.merge({"items": {"A": {}}}) is None
     assert record.item("A", "data", "Lakehouse", "dbt") is None
-    assert record.leg("duckrun", started="T0") is None
+    assert record.leg("spark", started="T0") is None
 
 
 def test_item_writes_under_the_upper_cased_guid(tmp_path, monkeypatch):
@@ -81,9 +81,9 @@ def test_leg_end_merges_onto_leg_start_rather_than_replacing_it(tmp_path, monkey
 def test_the_cli_writes_the_leg_window(tmp_path, monkeypatch):
     p = tmp_path / "frag.json"
     monkeypatch.setenv("RUN_RECORD", str(p))
-    assert record.main(["leg-start", "duckrun"]) == 0
-    assert record.main(["leg-end", "duckrun", "failure"]) == 0
-    lg = _doc(p)["legs"]["duckrun"]
+    assert record.main(["leg-start", "spark"]) == 0
+    assert record.main(["leg-end", "spark", "failure"]) == 0
+    lg = _doc(p)["legs"]["spark"]
     assert lg["outcome"] == "failure"
     assert lg["started"].endswith("Z") and lg["finished"].endswith("Z")
     assert lg["started"] <= lg["finished"]
@@ -158,12 +158,12 @@ def test_init_reads_the_dispatch_inputs_and_skips_blanks(tmp_path, monkeypatch):
 
 
 def test_compute_items_accumulate_within_a_leg(tmp_path, monkeypatch):
-    """ducklake's compute is TWO items written by two scripts in one job -- the catalog SQL DB
-    from provision.py, the notebook from remote_dbt.py -- and the merge replaces lists, so
-    `leg()` has to union them itself. Upper-cased, de-duplicated, order kept."""
+    """A leg whose compute is written by more than one step must keep every item -- the merge
+    replaces lists, so `leg()` has to union them itself. Upper-cased, de-duplicated, order
+    kept."""
     p = tmp_path / "frag.json"
     monkeypatch.setenv("RUN_RECORD", str(p))
-    record.leg("ducklake", compute=["db1"])
-    record.leg("ducklake", started="T0")
-    record.leg("ducklake", compute=["nb1", "DB1"])
-    assert _doc(p)["legs"]["ducklake"] == {"compute": ["DB1", "NB1"], "started": "T0"}
+    record.leg("dwh", compute=["db1"])
+    record.leg("dwh", started="T0")
+    record.leg("dwh", compute=["nb1", "DB1"])
+    assert _doc(p)["legs"]["dwh"] == {"compute": ["DB1", "NB1"], "started": "T0"}

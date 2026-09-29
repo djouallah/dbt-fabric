@@ -7,11 +7,11 @@
      resolved from the archive log (new_source_files) and passed to OPENROWSET as an EXPLICIT
      BULK (...) list — NOT a folder glob, which would re-read the whole archive every run. append
      stays idempotent at file grain: the file list already excludes anything in {{ this }} (see
-     fct_price for the full rationale on why this replaces duckrun's safeappend). No partition_by
+     fct_price for the full rationale). No partition_by
      in Fabric; month_key kept as a plain column. --#}
 
 {#-- Column layout comes from macros/aemo_columns.sql, the single source of truth shared
-     by all five engines. --#}
+     by both engines. --#}
 {%- set read_cols = aemo_columns('scada') -%}
 {%- set num_cols = aemo_cast_columns('scada') -%}
 

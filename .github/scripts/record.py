@@ -10,17 +10,16 @@ as text. Ported from djouallah/direct-lake-parquet-layout's record.py.
 **The point of this file is the Fabric item GUID plus the leg's time window.** The CU ledger
 (measure_cu.py) attributes capacity units to a run and an engine by asking the Capacity Metrics
 model for the compute items each leg used, inside the hours that leg ran. Nothing else in the
-repo writes those two facts down: provision.py resolves every GUID and logs it to stderr,
-remote_dbt.py prints the notebook's, and the leg's start/finish exist only in the Actions UI.
+repo writes those two facts down: provision.py resolves every GUID and logs it to stderr, and
+the leg's start/finish exist only in the Actions UI.
 
-Unlike the source repo, NOTHING IS TORN DOWN HERE. The five engines share one lakehouse and the
-warehouse outlives every run, so a GUID does not belong to one run -- which is why every leg
+Unlike the source repo, NOTHING IS TORN DOWN HERE. The lakehouse and the warehouse outlive every
+run, so a GUID does not belong to one run -- which is why every leg
 records `started` / `finished` beside its `compute` GUIDs, and why the ledger is keyed per run
 and engine rather than per item. See history/README.md.
 
 Env in: `RUN_RECORD`, the fragment this job writes. **Unset is a silent no-op**, deliberately:
-provision.py and remote_dbt.py must stay runnable by hand (and inside the demo notebook) without
-a record path. The cost of that choice is that a job which forgets its RUN_RECORD env fails
+provision.py must stay runnable by hand (and inside the demo notebook) without a record path. The cost of that choice is that a job which forgets its RUN_RECORD env fails
 silently, producing a record missing those items -- so every fragment upload is
 `if-no-files-found: ignore` and `finish` logs the item table it assembled.
 
@@ -100,10 +99,8 @@ def leg(engine: str, **fields) -> str | None:
     the steps that write them.
 
     `compute` ACCUMULATES -- the one list in the record that does. The merge replaces lists,
-    and ducklake's compute is TWO items written by two scripts in one job: provision.py names
-    the catalog SQL DB (it bills `Sql Usage` against its own item, and nothing but the
-    ducklake leg queries it) and remote_dbt.py names the notebook. Without the union the
-    second writer would silently drop the first. Upper-cased, de-duplicated, order kept.
+    so a leg whose compute is written by more than one step would otherwise keep only the
+    last writer's items. Upper-cased, de-duplicated, order kept.
     """
     if not engine:
         return None

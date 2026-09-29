@@ -23,7 +23,7 @@ models:
         description: YYYYMM partition key derived from SETTLEMENTDATE
       - name: file
         # 'file' is a reserved word in T-SQL. quote: true makes dbt bracket it in the
-        # generated tests, which is harmless on the other four engines — the one place a
+        # generated tests, which is harmless on spark — the one place a
         # shared patch file bends to a dialect.
         quote: true
         description: Source CSV filename the row came from; part of the merge key

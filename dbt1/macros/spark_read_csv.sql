@@ -1,4 +1,4 @@
-{#-- Spark-side helpers: how the four spark fact models read the landed CSVs.
+{#-- Spark-side helpers: how the spark fact models read the landed CSVs.
 
      ONE read shape, for the first build and for every incremental run:
 
@@ -106,9 +106,8 @@
      (TypeCoercion.findCommonTypeForBinaryComparison + UTF8String.toInt). So `'0.5' != 0` and
      `'-0.3' != 0` are both FALSE, and a bare `SCADAVALUE != 0` silently dropped every intraday
      SCADA row with 0 < |value| < 1 -- 12-16% of the non-zero rows (solar and battery aux load,
-     wind at low speed). The DuckDB reader types the column as double and dwh TRY_CASTs to
-     FLOAT, so only this leg lost them: fct_scada_today was 27,757 rows against 31,803 on the
-     other four, and fct_summary's intraday tail ran 200-1,500 rows short on every run. --#}
+     wind at low speed). dwh TRY_CASTs to FLOAT, so only this leg lost them:
+     fct_scada_today was 27,757 rows against 31,803 on dwh, and fct_summary's intraday tail ran 200-1,500 rows short on every run. --#}
 {% macro spark_record_filter(record, prefix='') %}
   {%- set spec = aemo_spec(record) -%}
   {%- set parts = [] -%}

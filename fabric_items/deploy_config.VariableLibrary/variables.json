@@ -1,9 +1,0 @@
-{
-    "$schema": "https://developer.microsoft.com/json-schemas/fabric/item/variableLibrary/definition/variables/1.0.0/schema.json",
-    "variables": [
-        {"name": "dbt_target", "type": "String", "value": "iceberg"},
-        {"name": "process_limit", "type": "String", "value": "2"},
-        {"name": "download_limit", "type": "String", "value": "1"},
-        {"name": "daily_download_limit", "type": "String", "value": "1"}
-    ]
-}

@@ -74,7 +74,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     permissions:
-      id-token: write     # OIDC -> the Power BI token, minted by duckrun
+      id-token: write     # OIDC -> azure/login -> the Power BI token
       contents: write     # commits history/cu.json
     env:
       # Every one of these is a real GUID and therefore a SECRET: no tracked file holds one, an
@@ -105,10 +105,14 @@ jobs:
         with:
           python-version: "3.12"
           cache: pip
-          cache-dependency-path: requirements/duckrun.txt
-      # duckrun mints the Power BI token from the OIDC assertion (the same audience deploy.py
-      # uses to refresh a semantic model) and brings `requests`. No azure/login.
-      - run: pip install -r requirements/duckrun.txt
+          cache-dependency-path: requirements/ops.txt
+      - run: pip install -r requirements/ops.txt
+      # measure_cu.py mints the Power BI token from this session through azure-identity.
+      - uses: azure/login@v3
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          allow-no-subscriptions: true
 
       # About two DAX queries: `discover_columns()` plus one read per capacity, and
       # CU_CAPACITY_ID is pinned to one. The floor covers the whole 14-day retention window every

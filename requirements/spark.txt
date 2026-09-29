@@ -14,4 +14,5 @@ dbt-fabricspark==1.13.4
 # ModuleNotFoundError: No module named 'dbt.adapters.spark'. It only appears to work on a
 # machine where something else already pulled dbt-spark in.
 dbt-spark
-duckrun
+# provision.py talks to the Fabric REST API; stated rather than left to arrive transitively.
+requests

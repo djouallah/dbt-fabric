@@ -1,10 +1,10 @@
 -- depends_on: {{ ref('fct_scada_today') }}
 -- depends_on: {{ ref('fct_price_today') }}
 
--- Power BI-facing summary at (date, time, DUID). Same logic as the DuckDB/DWH versions,
--- in Spark SQL: strftime -> date_format, TIMESTAMPTZ -> TIMESTAMP.
+-- Power BI-facing summary at (date, time, DUID). Same logic as the dwh version, in
+-- Spark SQL.
 --
--- Determinism contract (see the duckdb version for the full story): the defect was in what
+-- Determinism contract (see the dwh version for the full story): the defect was in what
 -- the SOURCE emitted — only wholly-missing dates, so an incomplete date could never be
 -- repaired. Now every run emits the COMPLETE recomputation for exactly the dates whose
 -- stored content could still be stale, and the merge reconciles that batch key by key.
@@ -13,7 +13,7 @@
 -- The intraday branch is gated on dispatch_duids because the two branches read AEMO tables
 -- with DIFFERENT UNIT UNIVERSES: 26 non-scheduled units publish SCADA telemetry but have
 -- zero rows in fct_scada ever, so rows written for them became permanent orphans once the
--- date settled and merge could not delete them. See the duckdb version for the full story.
+-- date settled and merge could not delete them. See the dwh version for the full story.
 {{ config(
     materialized='incremental',
     incremental_strategy='merge',

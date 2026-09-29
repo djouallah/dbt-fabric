@@ -10,10 +10,9 @@ __pycache__/
 .pytest_cache/
 *.db
 
-# Local landing zone for `python download_aemo.py` with FILES_PATH=./landing
+# Local dry-run landing zone for download_aemo.py with LANDING_PATH=./landing
 landing/
 warehouse/
-.duckrun_spill/
 
 # Windows / tooling artefacts
 nul

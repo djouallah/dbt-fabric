@@ -13,17 +13,19 @@ adapted to one thing that repo does not have: **persistent, shared Fabric items*
 `runs/` and `cu.json` are joined on the run id: a run's legs name their compute items and the
 hours they ran, and the ledger holds what those items cost in those hours.
 
+Records up to 2026-09-20 predate the split and include engines that now live in
+[fabric-medallion-dbt-community](https://github.com/djouallah/fabric-medallion-dbt-community).
+
 ## The run record
 
 ```json
 {"schema": 1,
  "run":    {"id": "35182005083", "sha": "...", "started": "...Z", "finished": "...Z", "url": "..."},
  "inputs": {"engines": "all", "dbt_schema": "mart", "process_limit": "1000", "...": "..."},
- "items":  {"<GUID>": {"role": "data", "kind": "Lakehouse", "name": "dbt"},
-            "<GUID>": {"role": "warehouse", "kind": "Warehouse", "name": "dbt_dwh", "engine": "dwh"},
-            "<GUID>": {"role": "compute", "kind": "Notebook", "name": "dbt-duckrun-35182005083", "engine": "duckrun"}},
- "legs":   {"duckrun": {"started": "...Z", "finished": "...Z", "outcome": "success", "compute": ["<notebook GUID>"]},
-            "dwh":     {"started": "...Z", "finished": "...Z", "outcome": "success", "compute": ["<warehouse GUID>"]},
+ "items":  {"<GUID>": {"role": "landing", "kind": "Lakehouse", "name": "dbt_landing"},
+            "<GUID>": {"role": "data", "kind": "Lakehouse", "name": "dbt"},
+            "<GUID>": {"role": "warehouse", "kind": "Warehouse", "name": "dbt_dwh", "engine": "dwh"}},
+ "legs":   {"dwh":     {"started": "...Z", "finished": "...Z", "outcome": "success", "compute": ["<warehouse GUID>"]},
             "spark":   {"started": "...Z", "finished": "...Z", "outcome": "success", "compute": ["<dbt lakehouse GUID>"]}},
  "layout": {"stats":     {"<engine>": {"<table>": {"total_rows": 1, "num_files": 1, "num_row_groups": 1, "avg_row_group": 1, "size_mb": 1, "vorder": false, "compression": "SNAPPY"}}},
             "encodings": {"<engine>": {"<column>": {"encodings": ["PLAIN", "RLE_DICTIONARY"], "type": "INT32", "dict_pages": 1, "chunks": 1, "mb": 1}}},
@@ -32,27 +34,22 @@ hours they ran, and the ledger holds what those items cost in those hours.
 ```
 
 - `role` is a closed vocabulary: `landing` · `data` (the shared `dbt` lakehouse) · `warehouse`
-  · `catalog` (ducklake's SQL DB) · `folder` · `compute` (a throwaway notebook).
+  · `folder`. `catalog` and `compute` appear only in records from before the split.
 - **`legs.<engine>.compute` are the items whose compute operations belong to that leg**, and
   `started` / `finished` bracket build + tests + fingerprint. Measured against the live model
   on 2026-09-17 (workspace `sqlengines`, capacity `CAT_Premium_Europe`):
 
   | engine | `compute` | operation, as the metrics app names it |
   |---|---|---|
-  | duckrun, iceberg | the throwaway notebook `dbt-<engine>-<run id>` | `Jupyter Notebook Scheduled Run` |
-  | ducklake | that notebook **and** `dbt_ducklake_meta` (the catalog SQL DB — `Sql Usage`, 19.5k CU in three days, nothing else queries it) | `Jupyter Notebook Scheduled Run`, `Sql Usage` |
   | dwh | `dbt_dwh` (Warehouse) | `Warehouse Query` |
   | spark | `dbt` (the shared Lakehouse — a Livy session bills against the lakehouse it was opened on, and only the spark leg opens one there) | `High Concurrency Session Livy Run` |
 
-  Deliberately **not** attributed to any leg: the demo notebook `run` and its pipeline
-  (`Jupyter Notebook Pipeline Run`, `ActivityRun`), the deployed semantic models (`Query`,
-  refreshes), and every `OneLake …` storage operation.
+  Deliberately **not** attributed to any leg: semantic-model queries and refreshes, and every
+  `OneLake …` storage operation.
 - Every job writes a *fragment* (`record.py`, `RUN_RECORD` env) and the `record` job merges
   them by basename order. `items` and `legs` are dicts because the merge unions dicts and
   replaces lists.
 - `layout` is best-effort per engine: an engine that could not be read is absent, never `{}`.
-  Whether `iceberg` appears tells you whether OneLake virtualised the REST catalog's tables as
-  Delta for that run.
 - `parity` holds the fingerprints downloaded from *this* run's legs — never `history/parity/`,
   which after the first commit also holds the previous run's.
 
@@ -62,28 +59,16 @@ hours they ran, and the ledger holds what those items cost in those hours.
 {"schema": 1, "updated": "...Z",
  "reads": [{"at": "...Z", "since": "<model clock>", "runs": 3, "changed": 12, "timed": 15, "pending": 0}],
  "runs": {"35182005083": {"started": "...Z", "engines": {
-     "duckrun": {"cu": {"Notebook run": 4120.5}, "seconds": {"Notebook run": 1830.2},
+     "dwh":     {"cu": {"Warehouse Query": 8016.0}, "seconds": {"Warehouse Query": 1204.5},
                  "window": ["2026-09-17T03:20:00Z", "2026-09-17T03:51:00Z"]},
-     "dwh":     {"cu": {"Warehouse Query": 8016.0}, "seconds": {"Warehouse Query": 1204.5}, "window": ["...Z", "...Z"]},
      "spark":   {"cu": {"High Concurrency Session Livy Run": 24865.3}, "seconds": {"High Concurrency Session Livy Run": 2100.0},
                  "window": ["...Z", "...Z"], "partial": true}}}}}
 ```
 
-**A leg dispatched with `local_runner` reads three ways, not two.** duckrun's and iceberg's only
-compute GUID is the Fabric notebook, written by `remote_dbt.py`; build them on the GitHub runner
-and there is no GUID, so `measure_cu.attribute()` skips the leg and no row is ever made for that
-(run, engine) — **ABSENT, not zero**. That is the truth — GitHub compute is not Fabric capacity —
-but it is indistinguishable from a lost measurement, so check the run record's
-`inputs.local_runner` before reading a gap as a bug. **ducklake is the exception: it is PRESENT
-with `Sql Usage` alone.** Its catalog SQL DB is a compute item `provision.py` records whether the
-leg runs on Fabric or on the runner, so a local ducklake row has the catalog's usage and no
-`Jupyter Notebook Scheduled Run` beside it. Read that as "built on the runner", not as a lost
-notebook measurement.
-
 **Compute only, on purpose.** Every `OneLake …` operation is a storage transaction, and on a
-lakehouse shared by five engines the storage in any window is everybody's — there is nothing
-to attribute. The operation grain is kept so the compute is readable by name; storage never
-enters the ledger.
+shared lakehouse the storage in any window is everybody's — there is nothing to attribute.
+The operation grain is kept so the compute is readable by name; storage never enters the
+ledger.
 
 **How a leg's number is made.** `measure_cu.py` asks the Capacity Metrics model (table
 `Metrics By Item Operation And Hour`, DAX over `executeQueries`) for CU and duration per
@@ -107,7 +92,7 @@ you want settled sooner: dispatch `Capacity units` by hand (`gh workflow run "Ca
 **What the window cannot do, recorded rather than fixed:**
 
 - two runs less than an hour apart share an hour on dwh and spark, and both get that hour's
-  whole CU (the notebook legs are per-run items and immune);
+  whole CU;
 - a Livy session idling past leg-end bills into the next hour and is missed (spark is a lower
   bound);
 - a leg that died before `leg-end` (cancelled job, dead runner) has no `finished`; the ledger
@@ -121,7 +106,7 @@ you want settled sooner: dispatch `Capacity units` by hand (`gh workflow run "Ca
 | `CU_METRICS_WORKSPACE_ID` / `CU_METRICS_MODEL_ID` | secret | the Capacity Metrics app's workspace and semantic model |
 | `CU_CAPACITY_ID` | secret | pin it; unpinned costs an extra query plus a full read per capacity |
 | `CU_WORKSPACE_FILTER` | = `FABRIC_WORKSPACE_ID` | the only row filter, a column of the fact table itself |
-| `PBI_TOKEN` | optional | by-hand escape hatch; CI lets duckrun mint it from the OIDC login |
+| `PBI_TOKEN` | optional | by-hand escape hatch; unset, azure-identity mints it from the Azure CLI login (`azure/login` on CI) |
 | `CU_SINCE` | optional | override the floor, **in the model's clock** |
 | `CU_MODEL_OFFSET_HOURS` | `10` | the app's own UTC offset; a wrong value reads as "no activity", not as an error |
 | `CU_RETENTION_DAYS` / `CU_FALLBACK_HOURS` | `14` / `2` | |

@@ -1,15 +1,14 @@
 """Pin that every engine folds the same files, newest first.
 
 `process_limit` caps how many unprocessed archive-log files a fact model ingests per run. The
-CAP is fine on its own; the ORDER is what has to be identical across the five engines, and
+CAP is fine on its own; the ORDER is what has to be identical across the engines, and
 getting it wrong is the quietest failure in this repo:
 
-  * With no `ORDER BY` at all -- which is what the three DuckDB legs' pre-hooks carried until
-    2026-09-19 -- the engine folds ANY n of the backlog, and a different n per engine. dwh and
-    spark ordered theirs. So on any run whose process_limit was smaller than the backlog the
-    five engines built their gold tables from DIFFERENT INPUTS, and parity.py reported that as
-    a logic difference: the one measurement this repo exists to make, grading five engines on
-    five different samples.
+  * With no `ORDER BY` at all the engine folds ANY n of the backlog, and a different n per
+    engine. So on any run whose process_limit was smaller than the backlog the engines would
+    build their gold tables from DIFFERENT INPUTS, and parity.py would report that as a logic
+    difference: the one measurement this repo exists to make, grading engines on different
+    samples.
   * The direction matters on its own. Newest first means a partial load is RECENT data and the
     backlog is old data still queued, which is what lets the assert_all_*_files_processed_*
     tests be warnings rather than failures.
@@ -27,37 +26,17 @@ import pytest
 
 from _layout import REPO, singular_tests_dir
 
-# Where each engine decides which files to fold. The DuckDB family does it in a model pre-hook
-# (one per fact model); dwh and spark share one macro each.
-DUCKDB_MODELS = [
-    REPO / "dbt1" / "models" / "aemo" / engine / "marts" / f"{model}.sql"
-    for engine in ("duckrun", "iceberg", "ducklake")
-    for model in ("fct_price", "fct_price_today", "fct_scada", "fct_scada_today")
-]
+# Where each engine decides which files to fold: one macro each.
 MACROS = [
     REPO / "dbt1" / "macros" / "new_source_files.sql",    # dwh
     REPO / "dbt1" / "macros" / "spark_new_files.sql",     # spark
 ]
 
 
-@pytest.mark.parametrize("path", DUCKDB_MODELS, ids=lambda p: f"{p.parts[-3]}/{p.name}")
-def test_a_duckdb_pre_hook_orders_before_it_limits(path):
-    """A bare `LIMIT process_limit` inside the pre-hook returns an arbitrary subset, and DuckDB
-    is free to return a different one on the next run or on the next engine."""
-    src = path.read_text(encoding="utf-8")
-    assert "LIMIT {{ env_var('process_limit'" in src, (
-        f"{path.name} no longer caps its file list with process_limit"
-    )
-    assert "ORDER BY archive_path DESC LIMIT {{ env_var('process_limit'" in src, (
-        f"{path.name}'s pre-hook LIMITs without an ORDER BY archive_path DESC immediately "
-        f"before it -- the files it folds are then whichever ones DuckDB happened to emit"
-    )
-
-
 @pytest.mark.parametrize("path", MACROS, ids=lambda p: p.name)
 def test_a_macro_selection_is_ordered_newest_first(path):
     """dwh's TOP and spark's LIMIT both need the ORDER BY to mean anything, and both must point
-    the same way as the DuckDB pre-hooks."""
+    the same way."""
     src = path.read_text(encoding="utf-8")
     orders = re.findall(r"ORDER BY (?:l\.)?archive_path(?: (\w+))?", src)
     assert orders, f"{path.name} selects files with no ORDER BY archive_path"
@@ -79,7 +58,7 @@ def test_the_downloader_lands_newest_first():
     )
 
 
-@pytest.mark.parametrize("engine", ["duckrun", "iceberg", "ducklake", "dwh", "spark"])
+@pytest.mark.parametrize("engine", ["dwh", "spark"])
 def test_a_backlog_is_a_warning_on_every_engine(engine):
     """These five go red for files that have merely not been folded YET. That is not a defect
     -- the data is correct, just incomplete, and it converges run by run -- and a red build

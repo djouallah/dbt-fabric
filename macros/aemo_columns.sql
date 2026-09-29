@@ -1,18 +1,15 @@
 {#--
     THE AEMO CSV layout — the single source of truth for every engine.
 
-    Before this file existed the same lists were written out four times (a Jinja loop in
-    the iceberg repo, literal expansion in ducklake and delta, a Jinja list + cast_floats()
-    in dwh) — about 1,200 lines that were verified byte-for-byte identical as data and had
-    no business being copies. Every dialect's reader macro and every CAST select is now
-    generated from here, so a layout change lands in one place for all five engines.
+    Every dialect's reader macro and every CAST select is generated from here, so a layout
+    change lands in one place for both engines.
 
     Column ORDER is load-bearing: AEMO CSVs are headerless positional records, dwh's
     OPENROWSET binds by ORDINAL, and Spark's from_csv() binds by position too. Never
     reorder this list to make it tidier — append only.
 
     `aemo_spec(record)` returns, for record in price | scada | price_today | scada_today:
-      columns     [[name, duckdb_type], ...]  in file order
+      columns     [[name, type], ...]  in file order
       not_double  names NOT cast to DOUBLE in the select tail (identifiers, timestamps, flags)
       equals      [[column, literal], ...]     the record-selection predicate, as DATA —
                   each dialect renders it with its own quoting, but the RULE is here

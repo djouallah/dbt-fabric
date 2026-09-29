@@ -24,7 +24,7 @@ sys.path.insert(0, str(REPO / ".github" / "scripts"))
 import parity  # noqa: E402
 
 FINGERPRINT = {
-    "engine": "iceberg", "adapter": "duckdb", "model": "fct_summary",
+    "engine": "spark", "adapter": "fabricspark", "model": "fct_summary",
     "rows_total": 32994039, "duids": 393, "days": 845,
     "date_min": "2023-01-01", "date_max": "2026-09-16",
     "mw_sum": 1234.5, "price_sum": 678.9,
@@ -37,8 +37,8 @@ LOGS = {
     # dbt-core 1.12.5 in the Fabric notebook: the brace sits alone on its own line.
     "v1_plain": f"22:52:40  Running with dbt=1.12.5\n{BODY}\n22:52:41  Done.\n",
     # The same with dbt's ANSI-reset + timestamp ahead of the opening brace, which is what
-    # the notebook legs actually emit.
-    "v1_ansi": f"\x1b[0m22:52:40  Registered adapter: duckdb=1.11.0\n{BODY}\n",
+    # what a dbt log line actually looks like.
+    "v1_ansi": f"\x1b[0m22:52:40  Registered adapter: fabricspark=1.13.4\n{BODY}\n",
     # dbt OSS 2: engine output can share the closing line.
     "v2_suffix": f"12:36:13 Running with dbt=2.0.4\n{BODY[:-1]}\n}}  Finished 'run-operation'\n",
     # v2 with an ANSI-reset prefix, the way the demo run's log came back.
@@ -51,36 +51,19 @@ def test_capture_finds_the_fingerprint(name, tmp_path, monkeypatch, capsys):
     monkeypatch.setattr("sys.stdin", __import__("io").StringIO(LOGS[name]))
     assert parity.capture(tmp_path) == 0, f"{name}: capture() found no fingerprint"
 
-    written = tmp_path / "iceberg.json"
+    written = tmp_path / "spark.json"
     assert written.is_file(), f"{name}: nothing written"
     got = json.loads(written.read_text(encoding="utf-8"))
-    assert got["engine"] == "iceberg"
+    assert got["engine"] == "spark"
     assert got["rows_total"] == FINGERPRINT["rows_total"]
     capsys.readouterr()
-
-
-def test_remote_legs_feed_capture_the_raw_log():
-    """remote_dbt.py must hand parity.py `result.log`, not the text it printed.
-
-    duckrun streams the notebook's output to the Actions log with a `[remote] ` prefix on
-    every line. That copy is for humans: prefixing the fingerprint's own lines would make
-    the captured text invalid JSON. The raw `result.log` is what has to reach capture(),
-    and the distinction is invisible until a leg builds fine and yields no measurement.
-    """
-    src = (REPO / ".github" / "scripts" / "remote_dbt.py").read_text(encoding="utf-8")
-    assert "input=result.log" in src, (
-        "remote_dbt.py no longer passes the RAW notebook log to parity.py capture -- if it "
-        "now passes the printed/prefixed copy, every remote leg silently stops producing a "
-        "fingerprint while still reporting success"
-    )
 
 
 def test_capture_reports_failure_when_there_is_no_fingerprint(tmp_path, monkeypatch, capsys):
     """A build that died before the run-operation must be a non-zero exit, not an empty file.
 
-    remote_dbt.py turns this into "build succeeded but no fingerprint was captured" and
-    fails the leg -- which is the only thing standing between a silent measurement gap and a
-    parity run that compares four engines and calls it agreement.
+    The fingerprint step fails the leg on it -- which is the only thing standing between a
+    silent measurement gap and a parity run that compares one engine and calls it agreement.
     """
     monkeypatch.setattr("sys.stdin", __import__("io").StringIO("22:00:00  Done. PASS=60\n"))
     assert parity.capture(tmp_path) == 1

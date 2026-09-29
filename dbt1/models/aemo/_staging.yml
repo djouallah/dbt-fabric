@@ -1,7 +1,7 @@
 version: 2
 
-# Shared across all five engines. The model names are identical in models/aemo/duckrun,
-# /iceberg, /ducklake, /dwh and /spark, and exactly one of those trees is +enabled per run,
+# Shared across both engines. The model names are identical in models/aemo/dwh and
+# models/aemo/spark, and exactly one of those trees is +enabled per run,
 # so ONE patch file documents and tests whichever tree is live. These files must stay at
 # models/aemo/ — one level above the engine folders — because that is the folder segment
 # dbt_project.yml's data_tests block gates on.

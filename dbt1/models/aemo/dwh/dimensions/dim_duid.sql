@@ -13,12 +13,12 @@
 {#-- Reads the four DUID reference CSVs the downloader lands under Files/csv_raw/duid/. They keep
      their headers, so OPENROWSET(HEADER_ROW=TRUE) exposes the columns by name (no WITH /
      ordinal mapping). merge on DUID keeps the dimension current as attributes change.
-     The duckrun version had a parse-time run_query "new DUIDs?" probe to skip rebuilds;
-     dropped here — merge is naturally idempotent, so always rebuild + upsert. --#}
+     No parse-time "new DUIDs?" probe to skip rebuilds — merge is naturally idempotent, so
+     always rebuild + upsert. --#}
 
 {%- set duid_path = get_csv_archive_path() ~ '/duid' -%}
 
-{#-- Same logic as the duckrun version, but with the CTEs inlined as derived tables: dbt-fabric
+{#-- Same logic as the spark version, but with the CTEs inlined as derived tables: dbt-fabric
      wraps a `merge` model in `MERGE ... USING (<model sql>)`, and a leading top-level WITH is
      invalid inside that parenthesised source. Nested derived tables are equivalent. --#}
 

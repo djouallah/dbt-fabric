@@ -9,7 +9,7 @@
      {{ this }}, so the append stays idempotent at file grain. --#}
 
 {#-- Column layout comes from macros/aemo_columns.sql, the single source of truth shared
-     by all five engines. --#}
+     by both engines. --#}
 {%- set read_cols = aemo_columns('price_today') -%}
 {%- set num_cols = aemo_cast_columns('price_today') -%}
 

@@ -1,44 +1,40 @@
 #!/usr/bin/env python3
-"""What each engine WROTE: table layout and row-count parity over every engine's output, read
-back through Delta with duckrun.get_stats() and merged into the run record under `layout`. Run
-by the `layout` job of pipeline.yml. Ported from djouallah/direct-lake-parquet-layout's stats.py.
+"""What each engine WROTE: table layout and row-count parity over both engines' output, read
+back through the Delta log and merged into the run record under `layout`. Run by the `layout`
+job of pipeline.yml. Ported from djouallah/direct-lake-parquet-layout's stats.py.
 
 $GITHUB_STEP_SUMMARY gets ONE table -- `headline_table`, one row per engine. Every other table
 here is printed to the job log and recorded as numbers in `layout`, never on the run page; see
 write_outputs for why.
 
-    BUILD_ENGINES=duckrun,dwh python .github/scripts/layout.py
+    BUILD_ENGINES=dwh,spark python .github/scripts/layout.py
 
-ONE READER COVERS ALL FIVE. OneLake surfaces every table with a Delta log: duckrun writes Delta,
-spark writes Delta, ducklake's `delta_export()` writes each table's `_delta_log` in place,
-the Warehouse publishes one per table, and the Iceberg REST catalog's tables are virtualised as
-Delta by OneLake. So the question "how many files, row groups, bytes, which encodings, is it
-sorted" is asked the same way of every engine -- which is what makes the numbers comparable.
-Every engine is best-effort: a table that cannot be read is ABSENT from the document ("not
-measured"), never `{}`, and the job stays green; the first run tells whether iceberg's
-virtualised log is listed.
+ONE READER COVERS BOTH. OneLake surfaces every table with a Delta log: spark writes Delta and
+the Warehouse publishes one per table. So the question "how many files, row groups, bytes, which
+encodings, is it sorted" is asked the same way of each engine -- which is what makes the numbers
+comparable. Every engine is best-effort: a table that cannot be read is ABSENT from the document
+("not measured"), never `{}`, and the job stays green.
 
-TWO ITEMS, NOT FIVE. All the lakehouse engines share the `dbt` lakehouse and are separated by
-schema (`<engine>_landing` / `<engine>_mart`, or `<DBT_SCHEMA>_<engine>_*`), so one
-`duckrun.connect` over its Tables serves four engines; the Warehouse is the second connection.
-The schema rule comes from deploy.mart_schema() so there is no third copy of it.
+MICROSOFT SDKs FOR ACCESS, DuckDB AS A LIBRARY FOR FOOTERS. onelake.Store (azure-identity +
+azure-storage-file-datalake) lists the schemas and tables and reads each `_delta_log`; the live
+file set is replayed from the log here (`delta_files`). DuckDB's `parquet_metadata()` then reads
+those files' footers over abfss, with the same azure-identity token as a secret. No dbt adapter
+is involved.
 
-GLOB, NEVER A BARE `get_stats()`. A bare call sweeps every schema in the item -- each
-`test_*` isolation run's tables, every footer over OneLake -- so each engine asks for
-`<prefix>_*.*` and gets exactly its own landing and mart schemas: all eight models. The wide
-facts live in landing, and that is where files and row groups are interesting.
+GLOB, NEVER A BARE LISTING. Only `<prefix>_landing` and `<prefix>_mart` are read -- not every
+schema in the item, which would sweep each `test_*` isolation run's tables and every footer over
+OneLake. The wide facts live in landing, and that is where files and row groups are interesting.
 
-THE `fct_summary` DEEP DIVE reads ONE `get_stats(detailed=True)` fetch per engine -- DuckDB's
-raw `parquet_metadata()` over the mart's live files -- and answers three questions from it:
-per-column ENCODINGS (what Power BI has to transcode), ROW-GROUP ORDERING (do the row groups
-carve up each column's domain or all span it) and, from a bounded read of one sample file,
-RUN LENGTHS in physical row order (was the writer's sort real). Spark's per-file `VORDER`
-Delta tag is read off the log as the fourth. The source repo's README explains why each of
-those is worth a number; here they are simply recorded.
+THE `fct_summary` DEEP DIVE reads ONE `parquet_metadata()` fetch per engine over the mart's live
+files and answers three questions from it: per-column ENCODINGS (what Power BI has to
+transcode), ROW-GROUP ORDERING (do the row groups carve up each column's domain or all span it)
+and, from a bounded read of one sample file, RUN LENGTHS in physical row order (was the writer's
+sort real). Spark's per-file `VORDER` Delta tag is read off the log as the fourth. The source
+repo's README explains why each of those is worth a number; here they are simply recorded.
 
-HEAVY IMPORTS ARE LAZY. duckrun, provision (which reads FABRIC_WORKSPACE_ID at import) and
-obstore are imported inside the functions that need them, so the pure functions below import
-offline for tests_py/test_layout.py -- the same rule measure_cu.py follows.
+HEAVY IMPORTS ARE LAZY. duckdb, onelake (azure SDKs) and provision (which reads
+FABRIC_WORKSPACE_ID at import) are imported inside the functions that need them, so the pure
+functions below import offline for tests_py/test_layout.py -- the same rule measure_cu.py follows.
 """
 from __future__ import annotations
 
@@ -57,9 +53,9 @@ for p in (str(REPO), str(SCRIPTS)):
     if p not in sys.path:
         sys.path.insert(0, p)
 
-ALL_ENGINES = ("duckrun", "iceberg", "ducklake", "dwh", "spark")
-# The item each engine's tables live in: everything but dwh is in the shared lakehouse.
-LAKEHOUSE_ENGINES = ("duckrun", "iceberg", "ducklake", "spark")
+ALL_ENGINES = ("dwh", "spark")
+# The item each engine's tables live in: spark in the shared lakehouse, dwh in the Warehouse.
+LAKEHOUSE_ENGINES = ("spark",)
 
 # The canonical eight, in pipeline order -- inputs first, mart last -- so a disagreement in the
 # mart can be traced to its inputs on the rows above it.
@@ -71,19 +67,15 @@ MART = "fct_summary"
 
 # What actually wrote the parquet behind each engine's Delta log -- the interesting axis when
 # two engines produce the same rows in a very different physical layout.
-WRITER = {"duckrun": "delta-rs", "iceberg": "duckdb (iceberg)", "ducklake": "duckdb (ducklake)",
-          "spark": "spark", "dwh": "warehouse"}
+WRITER = {"spark": "spark", "dwh": "warehouse"}
 
-# Display only, and the SAME five labels as pipeline.yml's `plan` step and ci.yml's gating
-# matrix: the headline table and the Actions graph should name a leg identically, because they
+# Display only, and the SAME labels as pipeline.yml's `plan` step and ci.yml's gating matrix: the headline table and the Actions graph should name a leg identically, because they
 # are read side by side. `engine` remains the key everywhere else.
-LABEL = {"duckrun": "🦆 duckdb · delta-rs", "iceberg": "🧊 duckdb · iceberg",
-         "ducklake": "🌊 duckdb · ducklake", "dwh": "🏢 fabric · warehouse",
-         "spark": "⚡ fabric · spark"}
+LABEL = {"dwh": "🏢 fabric · warehouse", "spark": "⚡ fabric · spark"}
 
-# The headline heading counts the engines in words -- "Five engines, one gold layer" reads as a
+# The headline heading counts the engines in words -- "Two engines, one gold layer" reads as a
 # claim, "5 engine(s)" reads as a log line. A single-engine run still has to say something true.
-NUMBER = {1: "One", 2: "Two", 3: "Three", 4: "Four", 5: "Five"}
+NUMBER = {1: "One", 2: "Two"}
 
 # How many physical rows `run_lengths` reads from the sample file. A FIXED ROW BUDGET rather
 # than "the first row group", because the engines' row-group sizes differ by orders of magnitude
@@ -91,9 +83,7 @@ NUMBER = {1: "One", 2: "Two", 3: "Three", 4: "Four", 5: "Five"}
 # numbers to be one measurement.
 ORDERING_SAMPLE_ROWS = 4_000_000
 
-# The get_stats() detail carried per table (see stats_for) and how each column is rendered.
-# get_stats() column order: catalog, schema, table, total_rows, num_files, num_row_groups,
-# avg_row_group, size_mb, vorder, compression.
+# The detail carried per table (see stats_for) and how each column is rendered.
 DETAIL_KEYS = ("schema", "total_rows", "num_files", "num_row_groups",
                "avg_row_group", "size_mb", "vorder", "compression")
 DETAIL_COLS = [("total_rows", "rows", "num"), ("num_files", "files", "num"),
@@ -116,10 +106,15 @@ def build_engines() -> list[str]:
     return [e for e in ALL_ENGINES if not want or e in want]
 
 
-def schema_prefix(engine: str) -> str:
-    """`<engine>` or `<DBT_SCHEMA>_<engine>` -- generate_schema_name()'s rule, via deploy.py."""
-    from deploy import mart_schema
+def mart_schema(engine: str) -> str:
+    """The schema this engine's gold layer lives in -- the rule of generate_schema_name():
+    DBT_SCHEMA unset or 'mart' -> <engine>_mart, anything else -> <DBT_SCHEMA>_<engine>_mart."""
+    prefix = os.environ.get("DBT_SCHEMA", "mart")
+    return f"{engine}_mart" if prefix == "mart" else f"{prefix}_{engine}_mart"
 
+
+def schema_prefix(engine: str) -> str:
+    """`<engine>` or `<DBT_SCHEMA>_<engine>` -- generate_schema_name()'s rule."""
     m = mart_schema(engine)
     if not m.endswith("_mart"):
         raise ValueError(f"unexpected mart schema {m!r} for {engine}")
@@ -128,43 +123,126 @@ def schema_prefix(engine: str) -> str:
 
 # --------------------------------------------------------------------------------- readers
 
-def reader(guid: str, name: str):
-    """A read-only duckrun session over one item's Tables. The OneLake token comes from
-    duckrun's own OIDC exchange on the runner, exactly as in the `land` job."""
-    import duckrun
+class Item:
+    """One Fabric item's Tables section: `store` for listing and the Delta logs, `con` (a plain
+    DuckDB connection holding the same token) for parquet footers. `files` caches each table's
+    live file URIs so the deep dive does not replay a log twice."""
+
+    def __init__(self, store, con):
+        self.store, self.con, self.files = store, con, {}
+
+
+def reader(guid: str, name: str) -> Item:
+    """A read-only view of one item's Tables, on the runner's `azure/login` identity."""
+    import duckdb
     import provision
+    from onelake import Store
 
-    con = duckrun.connect(provision.abfss(guid, "Tables"), read_only=True, name=name)
-    transport = os.environ.get("AZURE_TRANSPORT_OPTION_TYPE")
-    if transport:
-        try:
-            con.con.sql(f"SET GLOBAL azure_transport_option_type='{transport}'")
-        except Exception:  # noqa: BLE001
-            pass
-    return con
+    store = Store(provision.abfss(guid, "Tables"))
+    con = duckdb.connect()
+    store.duckdb_secret(con)
+    return Item(store, con)
 
 
-def stats_for(con, prefix: str) -> dict:
+def _sql_list(uris) -> str:
+    return "[" + ", ".join("'" + u.replace("'", "''") + "'" for u in uris) + "]"
+
+
+def json_actions(store, log_rel: str, after: int = -1) -> list:
+    """Every action of every JSON commit in `log_rel` with a version above `after`, in commit
+    order. Commit files are zero-padded, so a lexicographic sort IS commit order."""
+    actions = []
+    for n in store.listdir(log_rel, dirs=False):
+        stem = n[: -len(".json")] if n.endswith(".json") else ""
+        if not stem.isdigit() or int(stem) <= after:
+            continue
+        body = (store.read(f"{log_rel}/{n}") or b"").decode("utf-8")
+        actions += [json.loads(line) for line in body.splitlines() if line.strip()]
+    return actions
+
+
+def delta_files(item: Item, rel: str) -> dict:
+    """`{uri: size}` of the table's LIVE files: the last checkpoint's adds, then every later
+    JSON commit replayed in order (add sets, remove clears). Also `vorder`: the table property
+    Fabric writers may set, which is not the per-file tag `vorder_tags` reads."""
+    store, log_rel = item.store, f"{rel}/_delta_log"
+    live, after, config = {}, -1, {}
+    last = store.read(f"{log_rel}/_last_checkpoint")
+    if last:
+        after = int(json.loads(last)["version"])
+        parts = [n for n in store.listdir(log_rel, dirs=False)
+                 if n.startswith(f"{after:020d}.checkpoint") and n.endswith(".parquet")]
+        uris = _sql_list(store.uri(f"{log_rel}/{n}") for n in parts)
+        for path, size in item.con.sql(
+                f"SELECT add.path, add.size FROM read_parquet({uris}, union_by_name=true) "
+                f"WHERE add IS NOT NULL").fetchall():
+            live[path] = size
+    for a in json_actions(store, log_rel, after):
+        if "add" in a:
+            live[a["add"]["path"]] = a["add"].get("size")
+        elif "remove" in a:
+            live.pop(a["remove"]["path"], None)
+        elif "metaData" in a:
+            config = a["metaData"].get("configuration") or {}
+
+    def uri(p):
+        return p if "://" in p else store.uri(f"{rel}/{unquote(p)}")
+
+    return {"files": {uri(p): size for p, size in live.items()},
+            "vorder": any(str(config.get(k, "")).lower() == "true"
+                          for k in ("delta.parquet.vorder.enabled", "delta.parquet.vorder.default"))}
+
+
+def table_stats(item: Item, schema: str, table: str) -> dict:
+    """The DETAIL_KEYS row for one table, from its live files' footers."""
+    log_ = delta_files(item, f"{schema}/{table}")
+    files = log_["files"]
+    item.files[f"{schema}.{table}"] = sorted(files)
+    d = {"schema": schema, "total_rows": 0, "num_files": len(files), "num_row_groups": 0,
+         "avg_row_group": None, "size_mb": round(sum(v or 0 for v in files.values()) / 1048576, 2),
+         "vorder": log_["vorder"], "compression": None}
+    if not files:
+        return d
+    rows, rgs, comp = item.con.sql(
+        f"""SELECT sum(n), count(*), mode(c) FROM (
+              SELECT file_name, row_group_id, any_value(row_group_num_rows) AS n,
+                     mode(compression) AS c
+              FROM parquet_metadata({_sql_list(sorted(files))})
+              GROUP BY file_name, row_group_id)""").fetchone()
+    d.update(total_rows=int(rows or 0), num_row_groups=int(rgs or 0),
+             avg_row_group=round((rows or 0) / rgs) if rgs else None, compression=comp)
+    return d
+
+
+def stats_for(item: Item, prefix: str) -> dict:
     """{table: {schema, total_rows, num_files, num_row_groups, avg_row_group, size_mb, vorder,
-    compression}} for every table in `<prefix>_landing` and `<prefix>_mart`.
+    compression}} for every Delta table in `<prefix>_landing` and `<prefix>_mart`.
 
-    `<prefix>_*.*` rather than a bare get_stats(): see the module docstring. A pattern that
-    matches nothing raises, and that is reported as "not measured" by the caller.
+    Only those two schemas: see the module docstring. Nothing found raises, and that is
+    reported as "not measured" by the caller.
     """
-    rows = con.get_stats(f"{prefix}_*.*").fetchall()
-    return {r[2]: dict(zip(DETAIL_KEYS, (r[1], r[3], r[4], r[5], r[6], r[7], r[8], r[9])))
-            for r in rows}
+    out = {}
+    for schema in (f"{prefix}_landing", f"{prefix}_mart"):
+        for table in item.store.listdir(schema, dirs=True):
+            if "_delta_log" in item.store.listdir(f"{schema}/{table}", dirs=True):
+                out[table] = table_stats(item, schema, table)
+    if not out:
+        raise LookupError(f"no Delta tables under {prefix}_landing / {prefix}_mart")
+    return out
 
 
-def mart_chunks(con, table: str):
-    """`(name -> index, rows)` of `get_stats(table, detailed=True)` -- ONE footer read for
-    everything the deep dive asks. `table` MUST be schema-qualified (`duckrun_mart.fct_summary`):
-    a bare name is looked up in the current schema and does not resolve.
+def mart_chunks(item: Item, table: str):
+    """`(name -> index, rows)` of `parquet_metadata()` over the table's live files -- ONE footer
+    read for everything the deep dive asks. `table` is schema-qualified (`spark_mart.fct_summary`)
+    and must already have been through `stats_for`, which cached its file list.
 
     `(None, [])` on any failure: every consumer treats that as "not measured".
     """
     try:
-        rel = con.get_stats(table, detailed=True)
+        files = item.files.get(table)
+        if not files:
+            return None, []
+        rel = item.con.sql(f"SELECT * FROM parquet_metadata({_sql_list(files)})")
         at = {name: i for i, name in enumerate(d[0] for d in rel.description)}
         return at, rel.fetchall()
     except Exception as e:  # noqa: BLE001 -- never fail the layout job
@@ -331,8 +409,8 @@ def run_lengths(con, at, rows) -> dict:
 def _vorder_from_log(actions, live_files) -> dict:
     """`{tagged, files, unknown}` -- how many LIVE parquet files carry Fabric's `VORDER` add tag.
 
-    Spark records V-Order per file as an `add.tags` entry, which duckrun's `vorder` column (a
-    table PROPERTY nobody sets) cannot see -- so this reads the commit JSON itself. Pure, so
+    Spark records V-Order per file as an `add.tags` entry, which the `vorder` table PROPERTY
+    in the detail rows cannot see -- so this reads the commit JSON itself. Pure, so
     the parsing is testable without a store. Last `add` per path wins and REMOVES ARE NOT
     REPLAYED: the live set comes from the file list `mart_chunks` already read, tombstones
     excluded. Matched on BASENAME (`file_name` is a full URI, `add.path` table-relative and
@@ -352,33 +430,19 @@ def _vorder_from_log(actions, live_files) -> dict:
             "unknown": sum(1 for f in live if f not in tags)}
 
 
-def vorder_tags(con, guid: str, schema: str, table: str, live_files) -> dict:
-    """`_vorder_from_log` over the table's `_delta_log/*.json`, read with obstore through the
-    session's own storage options. Commit files are zero-padded, so a lexicographic sort IS
-    commit order. ONLY MEANINGFUL FOR A SPARK-WRITTEN TABLE: the tag is the Fabric Spark
-    writer's marker; the Warehouse V-Orders by default and stamps none, delta-rs and DuckDB
-    never do. Best-effort: `{}` on anything at all."""
+def vorder_tags(item: Item, schema: str, table: str, live_files) -> dict:
+    """`_vorder_from_log` over the table's `_delta_log/*.json`. ONLY MEANINGFUL FOR A
+    SPARK-WRITTEN TABLE: the tag is the Fabric Spark writer's marker; the Warehouse V-Orders by
+    default and stamps none. Best-effort: `{}` on anything at all."""
     try:
-        import obstore
-        import provision
-        from dbt.adapters.duckrun import objectstore, secret
-
-        base = f"{provision.abfss(guid, 'Tables')}/{schema}/{table}/_delta_log"
-        store = objectstore.build_store(base, secret.refreshed(con.storage_options))
-        keys = sorted(o["path"].rsplit("/", 1)[-1]
-                      for batch in obstore.list(store) for o in batch
-                      if str(o["path"]).endswith(".json"))
-        actions = []
-        for k in keys:
-            body = bytes(obstore.get(store, k).bytes()).decode("utf-8")
-            actions += [json.loads(line) for line in body.splitlines() if line.strip()]
-        return _vorder_from_log(actions, live_files)
+        return _vorder_from_log(json_actions(item.store, f"{schema}/{table}/_delta_log"),
+                                live_files)
     except Exception as e:  # noqa: BLE001 -- never fail the layout job
         log(f"  vorder tags unavailable for {schema}.{table} ({type(e).__name__}: {e})")
         return {}
 
 
-def ordering_for(con, guid: str, schema: str, at, rows, engine: str) -> dict:
+def ordering_for(item: Item, schema: str, at, rows, engine: str) -> dict:
     """DID THE WRITER PHYSICALLY REORDER THE ROWS? Three signals over the mart, one document:
     `columns[c].rg_overlap_pct` (across row groups, free), `columns[c].runs` (within a file,
     one bounded read) and, for spark only, `vorder_files` (Fabric's per-file tag). Each part
@@ -387,13 +451,13 @@ def ordering_for(con, guid: str, schema: str, at, rows, engine: str) -> dict:
         return {}
     doc: dict = {"table": f"{schema}.{MART}"}
     cols = rg_ordering(at, rows)
-    rl = run_lengths(con, at, rows)
+    rl = run_lengths(item, at, rows)
     if rl:
         doc["sample"] = {"file": rl["file"], "rows": rl["rows"]}
         for c, n in rl["runs"].items():
             cols.setdefault(c, {})["runs"] = n
     if "file_name" in at and engine == "spark":
-        vt = vorder_tags(con, guid, schema, MART, {r[at["file_name"]] for r in rows})
+        vt = vorder_tags(item, schema, MART, {r[at["file_name"]] for r in rows})
         if vt:
             doc["vorder_files"] = vt
     if cols:
@@ -432,14 +496,13 @@ def headline_table(per_engine: dict, engines: list[str], encodings: dict,
     EVERY COLUMN IS `fct_summary` -- the table Power BI reads through Direct Lake, the table
     parity compares, the one this repo is about. Nothing here is summed over the other seven:
     a row count that mixes tables is not the parity claim, and it was also wrong in a way that
-    read as a real difference -- `stg_csv_archive_log` is a VIEW on four engines and leaves
-    nothing to measure, so the two engines that DO materialize it looked like the outliers.
+    read as a real difference -- `stg_csv_archive_log` is a VIEW and leaves nothing to
+    measure.
     ⚠️ marks an engine whose row count differs from the others.
 
     NO V-ORDER COLUMN. It cannot be stated in one cell without lying: only the Fabric Spark
-    writer stamps `add.tags.VORDER`, the Warehouse V-Orders by DEFAULT and stamps nothing, and
-    the DuckDB writers neither stamp nor V-Order -- so the same blank cell would mean three
-    different things. `ordering_table` still reports the per-file tags where they exist."""
+    writer stamps `add.tags.VORDER` and the Warehouse V-Orders by DEFAULT and stamps nothing --
+    so the same blank cell would mean two different things. `ordering_table` still reports the per-file tags where they exist."""
     out.append(f"## 🏁 {NUMBER.get(len(engines), str(len(engines)))} "
                f"{'engine' if len(engines) == 1 else 'engines'}, one gold layer\n")
     out.append(f"<sub>Every column is <code>{MART}</code>, the table Power BI reads through "
@@ -512,7 +575,7 @@ def parity_table(per_engine: dict, engines: list[str], out: list[str]) -> None:
 
 
 def detail_tables(per_engine: dict, engines: list[str], out: list[str]) -> None:
-    """Full get_stats() detail as ONE flat table, rows grouped by table so the engines sit
+    """Full per-table detail as ONE flat table, rows grouped by table so the engines sit
     directly under each other -- the only layout in which "same rows, wildly different
     files/row-groups" is visible at a glance."""
     out.append("## 🔬 Physical layout\n")
@@ -604,9 +667,8 @@ def build_doc(per_engine: dict, engines: list[str], items: dict, prefixes: dict,
         "run": {"id": os.environ.get("GITHUB_RUN_ID"),
                 "sha": os.environ.get("GITHUB_SHA"),
                 "written": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")},
-        "config": {"vcores": os.environ.get("FABRIC_CORES") or None,
-                   **({"spark": {"resource_profile": os.environ.get("SPARK_RESOURCE_PROFILE") or None}}
-                      if "spark" in engines else {})},
+        "config": ({"spark": {"resource_profile": os.environ.get("SPARK_RESOURCE_PROFILE") or None}}
+                   if "spark" in engines else {}),
         "engines": {e: {"item": items[e][1], "kind": items[e][0], "guid": items[e][2],
                         "schema_prefix": prefixes.get(e), "writer": WRITER.get(e, e)}
                     for e in engines if e in items},
@@ -649,18 +711,18 @@ def one_item(guid: str, name: str, engines: list[str], prefixes: dict) -> dict:
     """{engine: (stats, encodings, ordering)} for every engine whose tables live in this item.
     ONE connection per item, one `mart_chunks` fetch per engine. Engines are independent: a
     failure on one is logged and that engine is simply absent."""
-    con = reader(guid, name)
+    item = reader(guid, name)
     out = {}
     for e in engines:
         try:
-            st = stats_for(con, prefixes[e])
+            st = stats_for(item, prefixes[e])
         except Exception as ex:  # noqa: BLE001
             log(f"  {e}: no tables under {prefixes[e]}_* in {name} ({type(ex).__name__}: {ex})")
             out[e] = ({}, {}, {})
             continue
         schema = (st.get(MART) or {}).get("schema")
-        at, chunks = mart_chunks(con, f"{schema}.{MART}") if schema else (None, [])
-        out[e] = (st, encodings_from(at, chunks), ordering_for(con, guid, schema, at, chunks, e))
+        at, chunks = mart_chunks(item, f"{schema}.{MART}") if schema else (None, [])
+        out[e] = (st, encodings_from(at, chunks), ordering_for(item, schema, at, chunks, e))
     return out
 
 
