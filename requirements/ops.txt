@@ -4,6 +4,8 @@
 # adapter. Pinned to the version Fabric's Python notebook ships, so a script behaves the same on
 # a runner and in a notebook. OneLake access is Microsoft's own SDKs (ingest/onelake.py).
 duckdb==1.4.4
+# DuckDB imports pytz to hand a TIMESTAMPTZ back to Python; the notebook has it, a bare runner not.
+pytz
 azure-identity
 azure-storage-file-datalake
 requests

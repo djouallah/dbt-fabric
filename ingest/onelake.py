@@ -85,7 +85,8 @@ class Store:
 
     def duckdb_secret(self, con) -> None:
         """Let a DuckDB connection read this store's abfss URLs."""
-        con.sql("INSTALL azure; LOAD azure;")
+        con.install_extension("azure")
+        con.load_extension("azure")
         transport = os.environ.get("AZURE_TRANSPORT_OPTION_TYPE")
         if transport:
             # The runner's TLS stack fails DuckDB's default transport; curl works.
