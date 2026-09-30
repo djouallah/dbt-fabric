@@ -2,7 +2,7 @@
 # (.github/scripts/deploy.py).
 #
 # fabric-cicd is what Fabric Jumpstart installs with; the deploy calls it directly, on the
-# checkout instead of a clone from GitHub. The latest: deploy.py uses bulk publish.
+# checkout instead of a clone from GitHub. Kept on the latest release.
 fabric-cicd>=1.3.0
 # The project is uploaded to OneLake file by file, on Microsoft's own SDKs.
 azure-identity
