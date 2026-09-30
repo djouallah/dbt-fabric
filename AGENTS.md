@@ -51,12 +51,19 @@ Fabric workspace. CI checks the project offline and installs it; it never builds
 
 **Development is from VS Code against a DEV workspace, production is Fabric only.**
 `deploy.yml` installs the same items into DEV or PROD (`dev` / `production`, see below).
-`.github/scripts/dev.py <engine> <dbt args>` builds one engine into the DEV workspace named
-in the gitignored `.env`, as the developer's `az login`, run with that engine's own venv
-(`.venv-dwh`, `.venv-spark`). It creates nothing, and sets exactly the env vars the `run`
-notebook sets, with `deploy_config`'s values: `tests_py/test_fabric_items.py` pins the two
-sets equal, so a variable added to one must be added to the other. Nothing builds PROD but
-its `run_pipeline`.
+**`run` and `parity` run on a local Python kernel too**, and that IS the dev loop. There is
+no second copy of their code: every `notebookutils` use has an `except ImportError` branch.
+Off Fabric:
+- the settings are read from `variables.json`;
+- the workspace is `FABRIC_WORKSPACE_ID` from the gitignored `.env`;
+- tokens come from `az account get-access-token`, and the adapters use `FABRIC_AUTH=CLI`;
+- DuckDB uses an azure `credential_chain` secret;
+- the project is the repo working tree;
+- each engine gets its own venv, `.venv-<engine>`.
+
+`ingest` stays Fabric-only, because it writes to `/lakehouse/default`. Keep the laptop
+branch working when you touch a notebook; `tests_py/test_fabric_items.py` pins it. Nothing
+builds PROD but its `run_pipeline`.
 
 ## Running in Fabric
 

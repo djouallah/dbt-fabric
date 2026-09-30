@@ -20,8 +20,6 @@ tests/aemo/<engine>/                       the same 12 assertions, per dialect
 .github/scripts/check_gating.py            proves the gating, offline
 .github/scripts/provision.py               finds or creates the Fabric items (REST helpers
                                            for the scripts below)
-.github/scripts/dev.py                     a dbt build from VS Code, against the DEV
-                                           workspace, with the `run` notebook's env
 fabric_items/                              what gets installed in Fabric: the lakehouses, the
                                            warehouse, the pipeline and its three notebooks
                                            (ingest: one landing zone, plain CSV; run: dbt on

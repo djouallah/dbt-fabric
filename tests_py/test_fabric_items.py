@@ -275,13 +275,14 @@ def test_no_notebook_runs_a_python_script(name):
     assert not re.search(r"\.py\b", _code(name)), f"{name} names a .py file"
 
 
-def test_dev_launcher_sets_what_run_sets():
-    """dev.py builds from VS Code what the `run` notebook builds in Fabric. A variable one
-    sets and the other does not is a laptop build that differs from production."""
-    run = set(re.findall(r'os\.environ\["(\w+)"\] =', _code("run")))
-    dev = set(re.findall(r'env\["(\w+)"\] =',
-                         (REPO / ".github" / "scripts" / "dev.py").read_text(encoding="utf-8")))
-    assert run and dev == run, sorted(dev ^ run)
+@pytest.mark.parametrize("name", ("run", "parity"))
+def test_run_and_parity_also_run_outside_fabric(name):
+    """Developed in VS Code on a local kernel, where notebookutils does not exist: every use
+    of it has a laptop branch, with the settings from the library's file and the token from
+    the Azure CLI."""
+    code = _code(name)
+    assert "except ImportError:\n    notebookutils = None" in code
+    assert "variables.json" in code and '"az", "account", "get-access-token"' in code
 
 
 def test_only_ci_runs_on_push():

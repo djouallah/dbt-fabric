@@ -27,7 +27,6 @@ runs it as a two-way matrix, so each engine is validated against exactly its own
 The run is `run_pipeline`, in the workspace: see the [README](../README.md) for the two ways
 to install it. Its `ingest` notebook is the only thing that lands the AEMO files.
 
-To build from a laptop, run `.github/scripts/dev.py` against your DEV workspace. The
-[README](../README.md#develop-in-vs-code) covers the setup. `process_limit`, set in `.env`
-and defaulting to the Variable Library's `1000`, caps how many archive files each fact model
-folds per build. Set it low for a quick first build.
+`run` and `parity` also run from a laptop, in VS Code on a local kernel, against your DEV
+workspace, as your `az login`. The setup is in the
+[README](../README.md#develop-in-vs-code).

@@ -60,7 +60,7 @@ and nothing is fetched from GitHub at run time.
 
 | stage | where | what runs |
 |---|---|---|
-| develop | VS Code, against DEV | `dbt build` for each engine, as you (`az login`) |
+| develop | VS Code, against DEV | the `run` notebook for each engine, then `parity`, on a local kernel, as you (`az login`) |
 | check | GitHub, on every push | `ci`: the offline tests and the gating check, both engines |
 | deploy to DEV | `deploy` workflow, `dev` | publishes the items and the dbt project to DEV; run `run_pipeline` there to test a notebook or pipeline change end to end, parity included |
 | release | `deploy` workflow, `production` | the same, into PROD, after a reviewer approves |
@@ -82,35 +82,34 @@ and nothing is fetched from GitHub at run time.
 
 ### Develop in VS Code
 
-You need Python 3.12 and the [Azure CLI](https://learn.microsoft.com/cli/azure/install-azure-cli).
-`pip` is the whole install: `dbt-fabric` talks to the Warehouse with Microsoft's
-`mssql-python`, so there is no ODBC driver to install. The two adapters cannot share an
-environment, so each engine gets its own venv:
+The `run` and `parity` notebooks run on your laptop as well as in Fabric: open them in
+VS Code on a local Python kernel. Outside Fabric there is no `notebookutils`, so each one
+works this way instead:
+
+- **Settings:** read from `deploy_config`'s file in this repo.
+- **dbt project:** this repo as it is, uncommitted edits included.
+- **Tokens:** your Azure CLI login, for the Fabric API, the Warehouse, Livy and OneLake.
+
+You need Python 3.12 with `duckdb`, which `parity` uses, and the
+[Azure CLI](https://learn.microsoft.com/cli/azure/install-azure-cli).
 
 ```bash
-python -m venv .venv-dwh   && .venv-dwh/Scripts/pip install -r requirements/dwh.txt -r requirements/dev.txt
-python -m venv .venv-spark && .venv-spark/Scripts/pip install -r requirements/spark.txt -r requirements/dev.txt
-cp .env.example .env       # set FABRIC_WORKSPACE_ID to the DEV workspace
+cp .env.example .env       # FABRIC_WORKSPACE_ID = the DEV workspace; VS Code passes it to the kernel
 az login
 ```
 
-(`bin/` instead of `Scripts/` on Linux and macOS.) Then build either engine against DEV,
-with any dbt arguments:
+1. Open `fabric_items/run.Notebook/notebook-content.ipynb`, set `engine = "dwh"` and run all
+   cells. Then set `engine = "spark"` and run them again.
+2. Open `parity` and run it.
 
-```bash
-.venv-dwh/Scripts/python   .github/scripts/dev.py dwh   build
-.venv-spark/Scripts/python .github/scripts/dev.py spark build --select fct_summary
-```
+On its first run for an engine, `run` creates a venv for it in the repo, `.venv-dwh` or
+`.venv-spark` (the two adapters cannot share one), and pip-installs that engine's
+`requirements/`. That is the whole install: `dbt-fabric` reaches the Warehouse through
+Microsoft's `mssql-python`, with no ODBC driver. A change to a model is a change to both
+engines' copies (`models/aemo/dwh/`, `models/aemo/spark/`), so build both before you push.
 
-`dev.py` looks up DEV's items, sets what the `run` notebook sets in Fabric, with the
-settings in `deploy_config`, and runs dbt as you. VS Code's **Run Task** has the two builds,
-the tests and the gating check. A change to a model is a change to both engines' copies
-(`models/aemo/dwh/`, `models/aemo/spark/`): build both before you push.
-
-The notebooks run only in Fabric. Opened in VS Code on a local kernel, they stop at
-`import notebookutils`, which exists only in the Fabric runtime. To edit one in VS Code, use
-the Fabric Data Engineering extension and its Fabric runtime kernel, or change it in the
-repo and deploy to DEV.
+`ingest` runs only in Fabric. It writes to its default lakehouse, which Fabric mounts at
+`/lakehouse/default`. DEV's landed files come from DEV's `run_pipeline`.
 
 ### Why not Fabric's dbt job
 
