@@ -27,6 +27,6 @@ runs it as a two-way matrix, so each engine is validated against exactly its own
 The run is `run_pipeline`, in the workspace: see the [README](../README.md) for the two ways
 to install it. Its `ingest` notebook is the only thing that lands the AEMO files.
 
-`run` and `parity` also run from a laptop, in VS Code on a local kernel, against your DEV
+All three notebooks also run from a laptop, in VS Code on a local kernel, against your DEV
 workspace, as your `az login`. The setup is in the
 [README](../README.md#develop-in-vs-code).

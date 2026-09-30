@@ -61,8 +61,18 @@ Off Fabric:
 - the project is the repo working tree;
 - each engine gets its own venv, `.venv-<engine>`.
 
-`ingest` stays Fabric-only, because it writes to `/lakehouse/default`. Keep the laptop
-branch working when you touch a notebook; `tests_py/test_fabric_items.py` pins it. Nothing
+**`ingest` writes with obstore, straight to OneLake, never through the `/lakehouse/default`
+mount**, which only Fabric has.
+- The `AzureStore` is on `abfss://…/dbt_landing/Files`. Its `credential_provider` takes the
+  storage token from `notebookutils` in Fabric, or from `az` anywhere else.
+- obstore is pip-installed only where it is missing; it is the one package `ingest` may
+  install.
+- Not DuckDB `COPY … FORMAT BLOB`: that holds each file in memory, and cannot delete.
+- The project-folder step runs in Fabric only. On a laptop the library's default `repo_ref`
+  is not the workspace's value set, so it must not decide what Fabric builds.
+
+Keep the laptop branch working when you touch a notebook; `tests_py/test_fabric_items.py`
+pins it. Nothing
 builds PROD but its `run_pipeline`.
 
 ## Running in Fabric

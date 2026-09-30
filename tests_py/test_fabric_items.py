@@ -172,6 +172,15 @@ def test_every_activity_runs_a_notebook_in_this_folder_with_its_parameters():
     assert set(_constant("parity", "ENGINES")) == set(ENGINES)
 
 
+def test_ingest_writes_to_onelake_not_the_mount():
+    """ingest lands through obstore, straight to OneLake, so it runs from a laptop too. A
+    write through /lakehouse/default would work in Fabric only."""
+    code = _code("ingest")
+    assert "AzureStore.from_url(LANDING" in code
+    for fabric_only in ("/lakehouse/default", "shutil.copyfile", "os.makedirs"):
+        assert fabric_only not in code, fabric_only
+
+
 def test_only_ingest_lands():
     """The ingest notebook rewrites csv_raw_archive_log.parquet in place, so two steps
     landing at once would race on that one file, and the engines would be compared on
@@ -200,20 +209,24 @@ def test_the_run_notebook_installs_the_engines_own_requirements():
     assert '"pip", "install", "-q", "-r", f"requirements/{engine}.txt"' in _code("run")
     for engine in ENGINES:
         assert (REPO / "requirements" / f"{engine}.txt").is_file(), engine
-    for name in ("ingest", "parity"):
-        assert "pip" not in _code(name), f"{name} installs nothing"
+    assert "pip" not in _code("parity"), "parity installs nothing"
+    # ingest installs obstore, which writes to OneLake, and only where it is missing.
+    ingest = _code("ingest")
+    assert ingest.count("pip") == 1 and '"pip", "install", "-q", "obstore"' in ingest
+    assert 'find_spec("obstore") is None' in ingest
 
 
 def test_only_ingest_fetches_the_project_and_run_reads_it_from_onelake():
     """The two engines start together and must build from ONE folder, so the project is
     fetched once, by ingest, and never by run. A fixed tag need not be downloaded per run."""
-    assert _constant("ingest", "PROJECT") == _constant("run", "PROJECT")
+    # ingest writes to dbt_landing/Files through obstore; run reads it through the mount.
+    assert f"/lakehouse/default/Files/{_constant('ingest', 'PROJECT')}" == _constant("run", "PROJECT")
     assert "REPO_URL" in _code("ingest")
     for name in ("run", "parity"):
         assert "github.com" not in _code(name) and "repo_ref" not in _code(name), name
     # REF last-but-one and COMMIT last: a folder without COMMIT is an unfinished download.
     code = _code("ingest")
-    assert code.index('Path(PROJECT, "REF").write_text') < code.index('Path(PROJECT, "COMMIT").write_text')
+    assert code.index('f"{PROJECT}/REF", f"{ref}') < code.index('f"{PROJECT}/COMMIT", f"{archive')
 
 
 def test_ingest_downloads_what_the_deploy_uploads():
@@ -275,8 +288,8 @@ def test_no_notebook_runs_a_python_script(name):
     assert not re.search(r"\.py\b", _code(name)), f"{name} names a .py file"
 
 
-@pytest.mark.parametrize("name", ("run", "parity"))
-def test_run_and_parity_also_run_outside_fabric(name):
+@pytest.mark.parametrize("name", NOTEBOOKS)
+def test_every_notebook_also_runs_outside_fabric(name):
     """Developed in VS Code on a local kernel, where notebookutils does not exist: every use
     of it has a laptop branch, with the settings from the library's file and the token from
     the Azure CLI."""

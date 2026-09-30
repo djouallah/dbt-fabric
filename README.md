@@ -82,13 +82,16 @@ and nothing is fetched from GitHub at run time.
 
 ### Develop in VS Code
 
-The `run` and `parity` notebooks run on your laptop as well as in Fabric: open them in
-VS Code on a local Python kernel. Outside Fabric there is no `notebookutils`, so each one
-works this way instead:
+All three notebooks run on your laptop as well as in Fabric: open them in VS Code on a
+local Python kernel. In Fabric they are faster, because they run next to OneLake. Outside
+Fabric there is no `notebookutils`, so each one works this way instead:
 
 - **Settings:** read from `deploy_config`'s file in this repo.
 - **dbt project:** this repo as it is, uncommitted edits included.
 - **Tokens:** your Azure CLI login, for the Fabric API, the Warehouse, Livy and OneLake.
+- **Landing:** `ingest` writes the files straight to OneLake with
+  [obstore](https://developmentseed.org/obstore/), the same code as in Fabric. It installs
+  obstore if the kernel does not have it.
 
 You need Python 3.12 with `duckdb`, which `parity` uses, and the
 [Azure CLI](https://learn.microsoft.com/cli/azure/install-azure-cli).
@@ -98,9 +101,11 @@ cp .env.example .env       # FABRIC_WORKSPACE_ID = the DEV workspace; VS Code pa
 az login
 ```
 
-1. Open `fabric_items/run.Notebook/notebook-content.ipynb`, set `engine = "dwh"` and run all
-   cells. Then set `engine = "spark"` and run them again.
-2. Open `parity` and run it.
+1. Open `fabric_items/ingest.Notebook/notebook-content.ipynb` and run it. It lands the AEMO
+   files in the workspace's `dbt_landing`.
+2. Open `run`, set `engine = "dwh"` and run all cells. Then set `engine = "spark"` and run
+   them again.
+3. Open `parity` and run it.
 
 On its first run for an engine, `run` creates a venv for it in the repo, `.venv-dwh` or
 `.venv-spark` (the two adapters cannot share one), and pip-installs that engine's
@@ -108,8 +113,8 @@ On its first run for an engine, `run` creates a venv for it in the repo, `.venv-
 Microsoft's `mssql-python`, with no ODBC driver. A change to a model is a change to both
 engines' copies (`models/aemo/dwh/`, `models/aemo/spark/`), so build both before you push.
 
-`ingest` runs only in Fabric. It writes to its default lakehouse, which Fabric mounts at
-`/lakehouse/default`. DEV's landed files come from DEV's `run_pipeline`.
+On a laptop, `ingest` leaves `dbt_landing/Files/project/` alone. That folder is what
+Fabric's `run` builds, and on the laptop `run` builds your working tree instead.
 
 ### Why not Fabric's dbt job
 
