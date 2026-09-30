@@ -24,3 +24,4 @@ PLAN.md
 .env
 .venv-dwh/
 .venv-spark/
+fabric_cicd.error.log

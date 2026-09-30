@@ -54,7 +54,9 @@ Fabric workspace. CI checks the project offline and installs it; it never builds
 **`run` and `parity` run on a local Python kernel too**, and that IS the dev loop. There is
 no second copy of their code: every `notebookutils` use has an `except ImportError` branch.
 Off Fabric:
-- the settings are read from `variables.json`;
+- the settings are read from `variables.json` with the `dev` value set on top, because a
+  laptop always builds DEV. The value sets are per stage: `dev` lands a recent week
+  (`daily_download_limit`), and `production` keeps the backfill defaults;
 - the workspace is `FABRIC_WORKSPACE_ID` from the gitignored `.env`;
 - tokens come from `az account get-access-token`, and the adapters use `FABRIC_AUTH=CLI`;
 - DuckDB uses an azure `credential_chain` secret;

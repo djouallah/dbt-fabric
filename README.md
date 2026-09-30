@@ -118,7 +118,9 @@ where you are an admin.
 
    Once the GitHub setup above is done, the `deploy` workflow with `dev` does the same.
 
-**Then develop.** Each time, in VS Code, on a local Python kernel:
+**Then develop.** DEV runs with the `dev` settings in `deploy_config`, and so does your
+laptop: `ingest` downloads 7 daily files per run, the most recent week, where production
+downloads 60 to backfill. Each time, in VS Code, on a local Python kernel:
 
 1. Open `fabric_items/ingest.Notebook/ingest.ipynb` and run it. It lands the AEMO files in
    DEV's `dbt_landing`.

@@ -264,7 +264,12 @@ def test_a_deploy_never_falls_back_to_github():
         assert doc["name"] == name, "the file name must be the value set's name"
         overrides = {o["name"]: o["value"] for o in doc["variableOverrides"]}
         assert set(overrides) <= declared
-        assert overrides == {"repo_ref": ""}
+        assert overrides["repo_ref"] == "", name
+    # DEV, and a laptop, which builds DEV, land a recent slice, not production's backfill.
+    default = {v["name"]: v["value"] for v in json.loads(VARIABLES.read_text(encoding="utf-8"))["variables"]}
+    limit = {name: int({**default, **{o["name"]: o["value"] for o in doc["variableOverrides"]}}["daily_download_limit"])
+             for name, doc in sets.items()}
+    assert limit["dev"] < limit["production"], limit
     assert re.search(r"if not vl\.repo_ref:\n\s+#[^\n]*\n\s+#[^\n]*\n\s+raise", _source("ingest"))
 
 
