@@ -62,4 +62,5 @@ Then set the entry's `source.repo_ref` to the new tag. `main` keeps `repo_ref: m
 - **Audience:** data engineers who use dbt, or are choosing between Warehouse and Spark on
   Fabric.
 - **Dependencies:** a Fabric capacity. The data is public (AEMO nemweb and a GitHub archive),
-  and dbt is pip-installed by the `run` notebook at run time.
+  and the notebooks pip-install what Fabric's Python notebook lacks at run time: dbt and the
+  adapter in `run`, obstore in `ingest`.

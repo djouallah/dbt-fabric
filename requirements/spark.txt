@@ -1,6 +1,6 @@
 # spark: Fabric Spark over Livy.
 #
-# Set DBT_FABRICSPARK_SKIP_OPTIMIZE=true in CI: dbt-fabricspark 1.13.0 started running
+# The run notebook sets DBT_FABRICSPARK_SKIP_OPTIMIZE=true: dbt-fabricspark 1.13.0 started running
 # OPTIMIZE after every Delta build, which rewrites the layout the run just produced.
 # Pinned: 1.13.5 rejects this profile with "'database' is a required property",
 # even though the adapter's own FabricSparkCredentials marks database as
@@ -14,5 +14,3 @@ dbt-fabricspark==1.13.4
 # ModuleNotFoundError: No module named 'dbt.adapters.spark'. It only appears to work on a
 # machine where something else already pulled dbt-spark in.
 dbt-spark
-# provision.py talks to the Fabric REST API; stated rather than left to arrive transitively.
-requests

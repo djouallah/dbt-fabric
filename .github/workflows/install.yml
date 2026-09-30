@@ -21,6 +21,9 @@ jobs:
   install:
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    # The `dev` GitHub Environment: it holds the DEV workspace's id, and the OIDC federated
+    # credentials are per environment (README, "Set it up once").
+    environment: dev
     env:
       FABRIC_WORKSPACE_ID: ${{ secrets.FABRIC_WORKSPACE_ID }}
       # Outside a Fabric notebook Jumpstart has no notebookutils to ask.

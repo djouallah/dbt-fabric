@@ -130,7 +130,7 @@ def test_each_notebook_file_is_named_after_its_item():
 
 @pytest.mark.parametrize("name", NOTEBOOKS)
 def test_every_notebook_has_the_landing_lakehouse_as_its_default(name):
-    """Every path in the notebooks is under /lakehouse/default/Files. The binding is the
+    """`run` reads its project under /lakehouse/default/Files in Fabric. The binding is the
     lakehouse's logicalId and the all-zero workspace: fabric-cicd swaps both at install, the
     way it does for the notebook a pipeline activity names."""
     landing = _platform(ITEMS / "dbt_landing.Lakehouse")["config"]["logicalId"]

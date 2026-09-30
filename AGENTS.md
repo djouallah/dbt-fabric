@@ -15,16 +15,21 @@ Do not add a model, a column, or a filter to one engine only. If something genui
 expressed on one engine, say so in the model and in the README; do not quietly let the engines
 diverge.
 
-## Microsoft-supported components only
+## Supported components
 
 This repo is used for training and must rest on supported pieces:
 
 - **dbt adapters: `dbt-fabric` (dwh) and `dbt-fabricspark` (spark), nothing else.**
-- **Nothing but Microsoft's own SDKs for tokens, OneLake I/O and deploy.** Tokens come from `azure/login` + azure-identity (or `notebookutils` in a Fabric notebook);
-  `deploy.py` uploads to OneLake with azure-storage-file-datalake.
-- **DuckDB as a LIBRARY is fine** — the role pandas or pyarrow would play, and it ships
-  preinstalled in Fabric's Python notebook. The `ingest` notebook uses it for the nemweb
-  listings and the archive log, and installs nothing.
+- **Tokens:** `notebookutils` in a Fabric notebook. Everywhere else it is the Azure CLI login:
+  `azure/login` on CI, `az login` on a laptop. The scripts take it through azure-identity's
+  `AzureCliCredential`, and the notebooks' laptop branch runs `az account get-access-token`.
+- **Deploy:** `fabric-cicd`, and `deploy.py` uploads the project to OneLake with
+  azure-storage-file-datalake.
+- **Two libraries in the notebooks, in the role pandas or pyarrow would play.**
+  - **DuckDB** ships preinstalled in Fabric's Python notebook. `ingest` uses it for the
+    nemweb listings and the archive log, and `parity` uses it to read the gold tables.
+  - **obstore** is how `ingest` writes to OneLake, from Fabric or from a laptop alike (see
+    below). It is the one package `ingest` pip-installs, and only where it is missing.
 - **Installing into a workspace is Microsoft Fabric Jumpstart** (`fabric-jumpstart`, on
   `fabric-cicd`) for the demo, **and `fabric-cicd` itself from CI** for production, both from
   `fabric_items/`; see "Running in Fabric" below.
@@ -51,8 +56,8 @@ Fabric workspace. CI checks the project offline and installs it; it never builds
 
 **Development is from VS Code against a DEV workspace, production is Fabric only.**
 `deploy.yml` installs the same items into DEV or PROD (`dev` / `production`, see below).
-**`run` and `parity` run on a local Python kernel too**, and that IS the dev loop. There is
-no second copy of their code: every `notebookutils` use has an `except ImportError` branch.
+**All three notebooks run on a local Python kernel too**, and that IS the dev loop. There is
+no second copy of their code: every `notebookutils` use has a branch for when it is `None`.
 Off Fabric:
 - the settings are read from `variables.json` with the `dev` value set on top, because a
   laptop always builds DEV. The value sets are per stage: `dev` lands a recent week
@@ -70,8 +75,8 @@ mount**, which only Fabric has.
 - obstore is pip-installed only where it is missing; it is the one package `ingest` may
   install.
 - Not DuckDB `COPY … FORMAT BLOB`: that holds each file in memory, and cannot delete.
-- The project-folder step runs in Fabric only. On a laptop the library's default `repo_ref`
-  is not the workspace's value set, so it must not decide what Fabric builds.
+- The project-folder step runs in Fabric only. On a laptop `run` builds the working tree,
+  so what Fabric builds is decided by a deploy or an install, never by a laptop run.
 
 Keep the laptop branch working when you touch a notebook; `tests_py/test_fabric_items.py`
 pins it. Nothing
@@ -90,13 +95,16 @@ The user's path is two steps: install `fabric_items/`, then run or schedule
   SCRIPT**; the only things `run` runs are `pip` and `dbt`. They are there to be read: how
   the files land, how dbt gets installed, connected and run, how the engines are compared
   should not need a second file open. There is no `download_aemo.py`, `parity.py` or
-  `fabric_run.py`, and `provision.py` is for a build by hand from a laptop, not for Fabric. The price is that a change to a notebook reaches a workspace at the next
-  install or deploy, not at the next run.
+  `fabric_run.py`. `provision.py` is the Fabric REST helper that `deploy.py` and
+  `install_jumpstart.py` import, and no notebook runs it. The price is that a change to a
+  notebook reaches a workspace at the next install or deploy, not at the next run.
 - **Only `ingest` lands.** It rewrites `csv_raw_archive_log.parquet` in place, so two steps
   landing at once would race on that one file, and the engines would be compared on
   different inputs. `tests_py/test_fabric_items.py` pins it.
-- **All three notebooks have `dbt_landing` as their default lakehouse**, so every path is a
-  plain one under `/lakehouse/default/Files`. The binding in the notebook metadata is the
+- **All three notebooks have `dbt_landing` as their default lakehouse**, which is what gives
+  `run` its plain `/lakehouse/default/Files/project` path in Fabric. `ingest` and `parity`
+  address OneLake by `abfss://` instead, so they run from a laptop too. The binding in the
+  notebook metadata is the
   lakehouse's `logicalId` and the all-zero workspace id; `fabric-cicd` swaps both at install,
   the way it does for the `notebookId` of a pipeline activity. No `parameter.yml` rule.
 - **dbt runs as a subprocess of the `run` notebook, never imported into the kernel**, so the
@@ -152,8 +160,8 @@ The user's path is two steps: install `fabric_items/`, then run or schedule
   `deploy_config`'s `repo_ref`: tag `main` as it is and a `v1.0.0` install builds whatever
   `main` held on its first run. `main` keeps `repo_ref: main`. Steps in `jumpstart/README.md`;
   `tests_py/test_jumpstart_entry.py` pins the entry to `install_jumpstart.INSTALL`.
-- `.github/workflows/install.yml` and `deploy.yml` (both manual) install into the test
-  workspace and check every item landed; `tests_py/test_fabric_items.py` pins the items, the
+- `.github/workflows/install.yml` (into DEV) and `deploy.yml` (into DEV or PROD, its
+  choice) are both manual, and each checks every item landed; `tests_py/test_fabric_items.py` pins the items, the
   notebooks and the deploy's names offline.
 
 ## Gating
@@ -202,7 +210,8 @@ The user's path is two steps: install `fabric_items/`, then run or schedule
 - **`install.yml` and `deploy.yml` log in with `azure/login`** (OIDC, no secret). In a
   notebook each adapter asks `notebookutils` for its token, and each has its own name for
   that: `notebookutils` for dbt-fabric, `fabric_notebook` for dbt-fabricspark. On a laptop it
-  is the Azure CLI, and `provision.py` emits `FABRIC_AUTH=CLI` for that.
+  is the Azure CLI: the `run` notebook sets `FABRIC_AUTH=CLI` when `notebookutils` is
+  missing.
 - **`dbt retry` REBUILDS THE ORIGINAL COMMAND'S FLAGS, so `flags.WHICH` is `'build'` inside a
   retried build.** dbt 1.11's `dbt/task/retry.py` calls
   `set_flags(Flags.from_dict(CMD_DICT[previous_command], ...))` before it parses or runs

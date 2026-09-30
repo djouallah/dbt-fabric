@@ -60,7 +60,7 @@ and nothing is fetched from GitHub at run time.
 
 | stage | where | what runs |
 |---|---|---|
-| develop | VS Code, against DEV | the `run` notebook for each engine, then `parity`, on a local kernel, as you (`az login`) |
+| develop | VS Code, against DEV | the three notebooks on a local kernel, as you (`az login`): `ingest`, `run` for each engine, `parity` |
 | check | GitHub, on every push | `ci`: the offline tests and the gating check, both engines |
 | deploy to DEV | `deploy` workflow, `dev` | publishes the items and the dbt project to DEV; run `run_pipeline` there to test a notebook or pipeline change end to end, parity included |
 | release | `deploy` workflow, `production` | the same, into PROD, after a reviewer approves |
@@ -74,6 +74,7 @@ and nothing is fetched from GitHub at run time.
 3. In the repo's settings, create two **Environments**, `dev` and `production`. Give each the
    secret `FABRIC_WORKSPACE_ID` (its workspace) and add `AZURE_CLIENT_ID` and
    `AZURE_TENANT_ID` as repository secrets. On `production`, turn on **Required reviewers**.
+   The `install` workflow, the Jumpstart demo install, runs as `dev`.
 4. Give the service principal one federated credential per environment, entity type
    *Environment*, `dev` and `production`. There is no password to store or rotate: the login
    is OpenID Connect.
@@ -86,7 +87,8 @@ All three notebooks run on your laptop as well as in Fabric: open them in VS Cod
 local Python kernel. In Fabric they are faster, because they run next to OneLake. Outside
 Fabric there is no `notebookutils`, so each one works this way instead:
 
-- **Settings:** read from `deploy_config`'s file in this repo.
+- **Settings:** read from `deploy_config`'s files in this repo, the `dev` value set on top,
+  as in the DEV workspace.
 - **dbt project:** this repo as it is, uncommitted edits included.
 - **Tokens:** your Azure CLI login, for the Fabric API, the Warehouse, Livy and OneLake.
 - **Landing:** `ingest` writes the files straight to OneLake with

@@ -12,8 +12,10 @@ engines read different bytes, comparing their output means nothing.
 Landing is a prerequisite, not a modelling step, so it is a plain Python notebook rather
 than a dbt python model (dbt-fabric's python models are PySpark-via-Livy only). DuckDB is
 used there as a library — listings, the archive log, normalising the DUID CSVs — and it
-ships with the notebook. `dbt_landing` is the notebook's default lakehouse, so the files are
-written to `/lakehouse/default/Files` like any local folder. It is idempotent: the archive
+ships with the notebook. The files are written with obstore straight to OneLake, to
+`abfss://…/dbt_landing/Files`, not through the lakehouse mount, so the same notebook lands
+them from Fabric or from a laptop; obstore is pip-installed if the session lacks it. It is
+idempotent: the archive
 log is the watermark, so a re-run fetches only what it has not already landed.
 
 ## The three notebooks

@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
-"""Create the Fabric items one engine needs, and print the env vars its profile reads.
+"""The Fabric REST helpers deploy.py and install_jumpstart.py import (WS, req, find), and a
+by-hand way to create the items one engine needs and print the env vars its profile reads:
 
-    python .github/scripts/provision.py <engine> >> "$GITHUB_ENV"
-    python .github/scripts/provision.py landing  >> "$GITHUB_ENV"   # the shared items only
+    python .github/scripts/provision.py <engine>
+    python .github/scripts/provision.py landing     # the shared items only
 
 Idempotent: every item is create-if-missing, keep-if-present. Diagnostics go to stderr so
 stdout is nothing but KEY=value lines.
