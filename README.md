@@ -93,19 +93,38 @@ Fabric there is no `notebookutils`, so each one works this way instead:
   [obstore](https://developmentseed.org/obstore/), the same code as in Fabric. It installs
   obstore if the kernel does not have it.
 
-You need Python 3.12 with `duckdb`, which `parity` uses, and the
+You need Python 3.12 with `duckdb` and the
 [Azure CLI](https://learn.microsoft.com/cli/azure/install-azure-cli).
 
-```bash
-cp .env.example .env       # FABRIC_WORKSPACE_ID = the DEV workspace; VS Code passes it to the kernel
-az login
-```
+**First, set up the DEV workspace.** Do this once. It needs a workspace on a Fabric capacity
+where you are an admin.
 
-1. Open `fabric_items/ingest.Notebook/ingest.ipynb` and run it. It lands the AEMO
-   files in the workspace's `dbt_landing`.
-2. Open `run`, set `engine = "dwh"` and run all cells. Then set `engine = "spark"` and run
-   them again.
-3. Open `parity` and run it.
+1. Create the workspace in Fabric and copy its id, the GUID in its URL after `/groups/`.
+2. Install the items into it from your laptop. The install is the same `deploy.py` that CI
+   runs: it creates the lakehouses, the warehouse, `deploy_config`, the notebooks, the
+   pipeline and the semantic models, and uploads the dbt project.
+
+   ```powershell
+   az login
+   pip install -r requirements/deploy.txt
+   $env:FABRIC_WORKSPACE_ID = "<DEV workspace id>"   # bash: export FABRIC_WORKSPACE_ID=...
+   python .github/scripts/deploy.py dev
+   ```
+
+   Once the GitHub setup above is done, the `deploy` workflow with `dev` does the same.
+3. Create a `.env` file at the repo root. VS Code passes it to the notebook's kernel.
+
+   ```
+   FABRIC_WORKSPACE_ID=<DEV workspace id>
+   ```
+
+**Then develop.** Each time, in VS Code, on a local Python kernel:
+
+1. Open `fabric_items/ingest.Notebook/ingest.ipynb` and run it. It lands the AEMO files in
+   DEV's `dbt_landing`.
+2. Open `run.ipynb`, set `engine = "dwh"` and run all cells. Then set `engine = "spark"` and
+   run them again.
+3. Open `parity.ipynb` and run it.
 
 On its first run for an engine, `run` creates a venv for it in the repo, `.venv-dwh` or
 `.venv-spark` (the two adapters cannot share one), and pip-installs that engine's
