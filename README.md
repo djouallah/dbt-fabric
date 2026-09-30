@@ -100,23 +100,23 @@ You need Python 3.12 with `duckdb` and the
 where you are an admin.
 
 1. Create the workspace in Fabric and copy its id, the GUID in its URL after `/groups/`.
-2. Install the items into it from your laptop. The install is the same `deploy.py` that CI
-   runs: it creates the lakehouses, the warehouse, `deploy_config`, the notebooks, the
-   pipeline and the semantic models, and uploads the dbt project.
-
-   ```powershell
-   az login
-   pip install -r requirements/deploy.txt
-   $env:FABRIC_WORKSPACE_ID = "<DEV workspace id>"   # bash: export FABRIC_WORKSPACE_ID=...
-   python .github/scripts/deploy.py dev
-   ```
-
-   Once the GitHub setup above is done, the `deploy` workflow with `dev` does the same.
-3. Create a `.env` file at the repo root. VS Code passes it to the notebook's kernel.
+2. Create a `.env` file at the repo root with the workspace id. VS Code passes it to the
+   notebook's kernel, and `deploy.py` reads it too.
 
    ```
    FABRIC_WORKSPACE_ID=<DEV workspace id>
    ```
+3. Install the items into it from your laptop. The install is the same `deploy.py` that CI
+   runs: it creates the lakehouses, the warehouse, `deploy_config`, the notebooks, the
+   pipeline and the semantic models, and uploads the dbt project.
+
+   ```bash
+   az login
+   pip install -r requirements/deploy.txt
+   python .github/scripts/deploy.py dev
+   ```
+
+   Once the GitHub setup above is done, the `deploy` workflow with `dev` does the same.
 
 **Then develop.** Each time, in VS Code, on a local Python kernel:
 

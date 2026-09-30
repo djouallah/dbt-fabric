@@ -2,7 +2,10 @@
 """Deploy from CI: publish fabric_items/ from THIS CHECKOUT, and upload the project
 to OneLake for the `run` notebook to read.
 
-    FABRIC_WORKSPACE_ID=<guid> python .github/scripts/deploy.py <dev | production>
+    python .github/scripts/deploy.py <dev | production>
+
+The workspace is FABRIC_WORKSPACE_ID: set by CI from the GitHub Environment, or on a laptop
+read from the repo's .env, the same file the notebooks use.
 
 THE PRODUCTION INSTALL, into the DEV workspace or the PRODUCTION one: the same items, the
 same project, a different value set. deploy.yml runs it as the GitHub Environment of the
@@ -102,7 +105,19 @@ def upload() -> None:
     print(f"uploaded {len(files)} files of {commit} to {provision.LANDING_LAKEHOUSE}/{PROJECT}")
 
 
+def dotenv() -> None:
+    """A laptop's .env, KEY=value lines. What the environment already sets wins, so CI,
+    which has no .env, is unaffected."""
+    path = REPO / ".env"
+    if path.exists():
+        for line in path.read_text(encoding="utf-8").splitlines():
+            key, sep, value = line.partition("=")
+            if sep and not key.strip().startswith("#"):
+                os.environ.setdefault(key.strip(), value.strip())
+
+
 def main() -> int:
+    dotenv()
     if len(sys.argv) != 2 or sys.argv[1] not in ENVIRONMENTS:
         print(f"usage: deploy.py <{' | '.join(ENVIRONMENTS)}>", file=sys.stderr)
         return 2
