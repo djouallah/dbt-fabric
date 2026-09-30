@@ -101,7 +101,7 @@ cp .env.example .env       # FABRIC_WORKSPACE_ID = the DEV workspace; VS Code pa
 az login
 ```
 
-1. Open `fabric_items/ingest.Notebook/notebook-content.ipynb` and run it. It lands the AEMO
+1. Open `fabric_items/ingest.Notebook/ingest.ipynb` and run it. It lands the AEMO
    files in the workspace's `dbt_landing`.
 2. Open `run`, set `engine = "dwh"` and run all cells. Then set `engine = "spark"` and run
    them again.

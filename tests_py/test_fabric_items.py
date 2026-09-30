@@ -39,7 +39,7 @@ def _platform(folder) -> dict:
 
 
 def _notebook(name: str) -> dict:
-    path = ITEMS / f"{name}.Notebook" / "notebook-content.ipynb"
+    path = ITEMS / f"{name}.Notebook" / f"{name}.ipynb"
     return json.loads(path.read_text(encoding="utf-8"))
 
 
@@ -118,6 +118,14 @@ def test_notebook_cell_sources_are_arrays_of_lines(name):
         assert isinstance(c["source"], list) and all(isinstance(s, str) for s in c["source"])
         if c["cell_type"] == "code":
             compile("".join(c["source"]), name, "exec")
+
+
+def test_each_notebook_file_is_named_after_its_item():
+    """ingest.ipynb, run.ipynb, parity.ipynb: three tabs in VS Code that say what they are.
+    fabric-cicd publishes any .ipynb in the item folder as the ipynb definition."""
+    for name in NOTEBOOKS:
+        files = sorted(p.name for p in (ITEMS / f"{name}.Notebook").iterdir())
+        assert files == [".platform", f"{name}.ipynb"], files
 
 
 @pytest.mark.parametrize("name", NOTEBOOKS)
