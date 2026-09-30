@@ -56,8 +56,12 @@ UPLOADED = ["dbt_project.yml", "profiles.yml", "models", "macros", "tests", "req
 
 def publish(environment: str) -> None:
     from azure.identity import AzureCliCredential
-    from fabric_cicd import FabricWorkspace, publish_all_items
+    from fabric_cicd import FabricWorkspace, append_feature_flag, publish_all_items
 
+    # Bulk publish (1.2+, experimental): every item in ONE Fabric bulk-import call instead of
+    # one publish per item. main() still checks every item landed.
+    append_feature_flag("enable_experimental_features")
+    append_feature_flag("enable_bulk_publish")
     with tempfile.TemporaryDirectory() as tmp:
         # The layout Jumpstart publishes from: parameter.yml at the root, the items in a
         # folder named after the logical_id, which becomes the workspace folder.

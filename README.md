@@ -139,9 +139,9 @@ Fabric's `run` builds, and on the laptop `run` builds your working tree instead.
 
 ### Why not Fabric's dbt job
 
-Fabric's own dbt job item is still in preview, and `fabric-cicd` cannot deploy it. It also
-runs adapter versions of its own choosing, which are older than what this project pins. And
-it cannot run the two engines and the parity check as one run.
+Fabric's own dbt job item is still in preview. It runs adapter versions of its own choosing,
+which are older than what this project pins, and it cannot run the two engines and the
+parity check as one run.
 
 ### What differs from the demo install
 
