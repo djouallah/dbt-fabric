@@ -36,7 +36,6 @@ quietly comparing different inputs.
 from __future__ import annotations
 
 import os
-import subprocess
 import sys
 import time
 
@@ -67,9 +66,9 @@ FABRIC_RESOURCE = "https://api.fabric.microsoft.com"
 
 
 def token(resource: str = FABRIC_RESOURCE) -> str:
-    """A bearer token for `resource`: notebookutils inside Fabric, the Azure CLI (after
-    `azure/login` on CI, or `az login` on a laptop) everywhere else."""
-    # Inside a Fabric notebook `az` does not exist.
+    """A bearer token for `resource`: notebookutils inside Fabric, the Azure CLI login
+    (`azure/login` on CI, `az login` on a laptop) everywhere else, through the same
+    azure-identity credential fabric-cicd publishes with."""
     # notebookutils names the Fabric REST audience `pbi`.
     try:
         import notebookutils  # type: ignore
@@ -77,11 +76,9 @@ def token(resource: str = FABRIC_RESOURCE) -> str:
         return notebookutils.credentials.getToken("pbi" if resource == FABRIC_RESOURCE else resource)
     except ImportError:
         pass
-    return subprocess.run(
-        ["az", "account", "get-access-token", "--resource", resource,
-         "--query", "accessToken", "-o", "tsv"],
-        capture_output=True, text=True, check=True,
-    ).stdout.strip()
+    from azure.identity import AzureCliCredential
+
+    return AzureCliCredential().get_token(f"{resource}/.default").token
 
 
 def req(method: str, path: str, **kw):
