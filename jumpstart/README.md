@@ -1,8 +1,9 @@
 # The Fabric Jumpstart catalog entry
 
 This folder holds what the catalog needs to list this repo, so that
-`jumpstart.install("fabric-medallion-dbt")` works. It is ready to submit, and nothing here
-has been submitted yet. Nothing in this folder is installed into a workspace.
+`jumpstart.install("fabric-medallion-dbt")` works. It is submitted as
+microsoft/fabric-jumpstart#231, and this folder stays its source: change it here, then copy it
+to the PR branch. Nothing in this folder is installed into a workspace.
 
 | here | goes to, in a fork of `microsoft/fabric-jumpstart` |
 |---|---|
@@ -13,11 +14,17 @@ has been submitted yet. Nothing in this folder is installed into a workspace.
 `tests_py/test_jumpstart_entry.py` pins the entry to `install_jumpstart.INSTALL`, and to the
 rules of the catalog's own schema.
 
-The two diagram SVGs are the repo's own architecture diagram,
-`docs/medallion-fabric-dbt.svg`. It is an Excalidraw dark-mode export, and the dark SVG is
-that file unchanged. The light SVG is the same file without the root `filter="invert(...)"`.
-Re-make both when the diagram changes. The entry's `mermaid_diagram` is kept too, because the
-catalog's CI asks for these two files only when an entry has one.
+The two diagram SVGs are the entry's `mermaid_diagram` rendered by the catalog's own
+generator, so they carry its theme, as the maintainers asked. Re-render both whenever the
+mermaid changes: in a clone of `microsoft/fabric-jumpstart`, `npm install`, `npm install` in
+`src/fabric_jumpstart_web`, then `npm run render-diagrams`, or paste the mermaid into
+<https://jumpstart.fabric.microsoft.com/tools/diagram-generator> with the slug
+`fabric-medallion-dbt`. On Windows the script finds no entries: line 169 hands `glob` a
+backslashed path, so run it with `glob.sync('*.yml', { cwd: dir, absolute: true })` there.
+
+The page's picture, `content/fabric-medallion-dbt/images/medallion-fabric-dbt.svg`, is the
+repo's own Excalidraw drawing, `docs/medallion-fabric-dbt.svg`, in its LIGHT form, without
+the root `filter="invert(...)"`, because light is the site's default theme.
 
 ## Before submitting
 

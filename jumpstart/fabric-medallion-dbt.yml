@@ -44,8 +44,8 @@ mermaid_diagram: |
     %% FABRIC WORKSPACE
     subgraph Fabric:::Workspace
       direction LR
-      PIPE[run_pipeline]:::DataPipeline
       CFG[deploy_config]:::VariableLibrary
+      PIPE[run_pipeline]:::DataPipeline
       INGEST[ingest]:::Notebook
       LAND[dbt_landing]:::Lakehouse
       RUN[run x2]:::Notebook
@@ -60,13 +60,11 @@ mermaid_diagram: |
     NEM -.-> INGEST
     ARCH -.-> INGEST
     CFG -.-> PIPE
-    PIPE --> INGEST
+    PIPE -.-> INGEST
     INGEST --> LAND
-    PIPE --> RUN
     LAND --> RUN
     RUN --> DWH
     RUN --> LH
-    PIPE --> PARITY
     DWH --> PARITY
     LH --> PARITY
     DWH --> SMD

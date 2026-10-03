@@ -81,17 +81,28 @@ def test_the_entry_installs_a_tag():
     assert re.fullmatch(r"v\d+\.\d+\.\d+", ref), ref
 
 
-def test_the_diagram_has_both_themes_and_is_the_repos_own():
-    """The catalog needs a light AND a dark SVG for an entry with a mermaid_diagram. Both are
-    docs/medallion-fabric-dbt.svg, an Excalidraw dark-mode export: dark as it is, light
-    without its inverting filter."""
+def test_the_diagram_has_both_themes_from_the_catalogs_generator():
+    """The catalog needs a light AND a dark SVG for an entry with a mermaid_diagram, rendered
+    from that mermaid by Jumpstart's own generator (`tools/render-diagrams.ts` in
+    microsoft/fabric-jumpstart, or its /tools/diagram-generator page) so they carry the
+    catalog's theme. Re-render both whenever the mermaid changes: every node is in both."""
+    labels = re.findall(r"\[([^\]]+)\]:::", _entry()["mermaid_diagram"])
+    assert labels
+    for variant in ("light", "dark"):
+        svg = (JUMPSTART / f"{INSTALL['logical_id']}_{variant}.svg").read_text(encoding="utf-8")
+        missing = [label for label in labels if f">{label}<" not in svg]
+        assert not missing, f"re-render the {variant} SVG: {missing}"
+
+
+def test_the_docs_page_shows_the_light_drawing():
+    """Light is the catalog site's default theme. The page's picture is the repo's own
+    drawing, docs/medallion-fabric-dbt.svg, an Excalidraw dark-mode export, without its
+    inverting filter."""
     source = (REPO / "docs" / "medallion-fabric-dbt.svg").read_text(encoding="utf-8")
     invert = ' filter="invert(93%) hue-rotate(180deg)"'
     assert source.count(invert) == 1
-    svg = {v: (JUMPSTART / f"{INSTALL['logical_id']}_{v}.svg").read_text(encoding="utf-8")
-           for v in ("light", "dark")}
-    assert svg["dark"] == source, "re-copy the dark SVG from docs/"
-    assert svg["light"] == source.replace(invert, ""), "re-make the light SVG from docs/"
+    page = (CONTENT / "images" / "medallion-fabric-dbt.svg").read_text(encoding="utf-8")
+    assert page == source.replace(invert, ""), "re-make the page's light SVG from docs/"
 
 
 def test_the_docs_page_meets_the_content_contract():
